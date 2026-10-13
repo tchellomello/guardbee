@@ -403,7 +403,7 @@
     <div class="demo-item danger reveal">
       <p class="demo-badge" style="color:var(--drop)">04 / Verdict</p>
       <h3>Looked correct. Wasn't.</h3>
-      <img src="images/04-verdict-regression.png" alt="Verdict tab showing 8 NEWLY_DROPPED flows after running the looks-correct candidate policy" loading="lazy">
+      <img src="images/04-verdict-regression.png" alt="Verdict tab showing 10 NEWLY_DROPPED flows after running the looks-correct candidate policy" loading="lazy">
       <div class="demo-stats">
         <span class="stat-pill">NEWLY_DROPPED · Prometheus metrics scrape on :8123</span>
         <span class="stat-pill">NEWLY_DROPPED · kubelet health probe on :8123</span>
@@ -420,7 +420,7 @@
     <div class="demo-item safe reveal">
       <p class="demo-badge" style="color:var(--unchanged)">06 / Re-verify</p>
       <h3>Now it's safe to ship</h3>
-      <img src="images/06-verdict-clean.png" alt="Verdict tab showing the corrected policy: 252 flows sampled, zero newly dropped, zero newly allowed" loading="lazy">
+      <img src="images/06-verdict-clean.png" alt="Verdict tab showing the corrected policy: 219 flows sampled, zero newly dropped, zero newly allowed" loading="lazy">
       <p class="cap">Same candidate, corrected. Every real flow: <b style="color:var(--unchanged)">unchanged</b>.</p>
     </div>
   </div>
