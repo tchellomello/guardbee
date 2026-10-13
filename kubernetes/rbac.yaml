@@ -1,0 +1,76 @@
+# Read-only identity for the guardbee CLI
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: guardbee
+  namespace: guardbee
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: guardbee-token
+  namespace: guardbee
+  annotations:
+    kubernetes.io/service-account.name: guardbee
+type: kubernetes.io/service-account-token
+---
+# Cluster-wide: the CLI must see policy and identity state across every namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: guardbee-read
+rules:
+  - apiGroups: ["cilium.io"]
+    resources:
+      - ciliumnetworkpolicies
+      - ciliumclusterwidenetworkpolicies
+      - ciliumidentities
+      - ciliumendpoints
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: guardbee-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: guardbee-read
+subjects:
+  - kind: ServiceAccount
+    name: guardbee
+    namespace: guardbee
+---
+# Scoped to cilium-system only: lets the CLI port-forward to hubble-relay. RBAC for
+# `kubectl port-forward svc/hubble-relay` resolves to a backing pod client-side, so it
+# needs get/list on pods (to resolve the Service's selector) plus create on
+# pods/portforward - there is no way to further scope this to one Service by label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: guardbee-hubble-relay
+  namespace: cilium-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: guardbee-hubble-relay
+  namespace: cilium-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: guardbee-hubble-relay
+subjects:
+  - kind: ServiceAccount
+    name: guardbee
+    namespace: guardbee
