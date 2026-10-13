@@ -3,6 +3,8 @@ import { FlowsPanel } from './components/FlowsPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
 import { VerdictPanel } from './components/VerdictPanel'
 import { ThemeToggle } from './components/ThemeToggle'
+import { HomepageLink } from './components/HomepageLink'
+import { GitHubLink } from './components/GitHubLink'
 import { ThemeProvider } from './theme'
 import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 
@@ -53,12 +55,12 @@ function AppContent() {
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5 lg:px-10">
           <div className="rise-in">
             <div className="flex items-center gap-2.5">
-              <img src="/guardbee-logo.svg" alt="GuardBee" className="h-6 w-6 shrink-0 rounded" />
+              <img src="/guardbee-logo.svg" alt="GuardBee" className="h-14 w-14 shrink-0 rounded" />
               <h1 className="font-display text-lg font-bold tracking-[0.08em] text-ink uppercase">
                 GuardBee
               </h1>
             </div>
-            <p className="mt-1 pl-8.5 text-xs text-ink-dim">
+            <p className="mt-1 pl-16.5 text-xs text-ink-dim">
               which real flows on this cluster would a candidate policy break or newly allow?
             </p>
           </div>
@@ -74,6 +76,8 @@ function AppContent() {
                 Policy Editor
               </TabButton>
             </nav>
+            <HomepageLink />
+            <GitHubLink />
             <ThemeToggle />
           </div>
         </div>
