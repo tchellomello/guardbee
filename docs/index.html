@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuardBee — Ship the policy. Not the outage.</title>
+<meta name="description" content="Test a CiliumNetworkPolicy against real cluster traffic before it merges. GuardBee: open source CLI + web UI embedding Cilium's own policy engine.">
+<link rel="icon" type="image/svg+xml" href="branding/guardbee-logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#06090a;
+    --panel:#0b1012;
+    --panel-raised:#0f1619;
+    --line:#1c2a2c;
+    --ink:#cfe8e4;
+    --ink-dim:#6e8886;
+    --ink-faint:#45595a;
+    --signal:#22e9c7;
+    --signal-dim:#0f6d5f;
+    --drop:#ff5d5d;
+    --drop-bg:#2a0f12;
+    --unchanged:#5ee8a5;
+    --font-display:"Martian Mono", ui-monospace, monospace;
+    --font-mono:"IBM Plex Mono", ui-monospace, monospace;
+    --wrap: min(1180px, 100% - 48px);
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:var(--void);
+    color:var(--ink);
+    font-family:var(--font-mono);
+    font-size:17px;
+    line-height:1.6;
+    overflow-x:hidden;
+  }
+
+  /* faint scanline / grid texture for the console feel */
+  body::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:0;
+    background-image:
+      linear-gradient(rgba(34,233,199,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34,233,199,0.035) 1px, transparent 1px);
+    background-size:48px 48px;
+    mask-image:radial-gradient(ellipse 80% 60% at 50% 0%, #000 0%, transparent 70%);
+  }
+
+  .wrap{width:var(--wrap);margin-inline:auto;position:relative;z-index:1}
+  section{position:relative;z-index:1}
+
+  a{color:inherit}
+  .mono-eyebrow{
+    font-family:var(--font-display);
+    font-size:13px;
+    font-weight:600;
+    letter-spacing:0.3em;
+    text-transform:uppercase;
+    color:var(--signal);
+  }
+
+  h1,h2,h3{font-family:var(--font-display);margin:0;color:var(--ink);font-weight:700}
+  p{margin:0}
+
+  /* ---------- NAV ---------- */
+  .nav{
+    position:sticky;top:0;z-index:20;
+    background:rgba(6,9,10,0.82);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  .nav-inner{
+    width:var(--wrap);margin-inline:auto;
+    height:64px;display:flex;align-items:center;justify-content:space-between;
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:0.04em;color:var(--ink)}
+  .brand-dot{width:9px;height:9px;border-radius:50%;background:var(--signal);box-shadow:0 0 12px var(--signal)}
+  .nav-cta{
+    font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:0.08em;
+    border:1px solid var(--signal);color:var(--signal);
+    padding:9px 16px;border-radius:999px;text-decoration:none;text-transform:uppercase;
+    transition:background .15s ease, color .15s ease;
+    white-space:nowrap;
+  }
+  .nav-cta:hover{background:var(--signal);color:var(--void)}
+
+  /* ---------- HERO ---------- */
+  .hero{
+    padding:120px 0 96px;
+    background:radial-gradient(ellipse 60% 50% at 50% 0%, rgba(15,109,95,0.35) 0%, transparent 65%);
+    text-align:center;
+    display:flex;flex-direction:column;align-items:center;gap:28px;
+  }
+  .hero h1{
+    font-size:clamp(40px, 7vw, 92px);
+    line-height:1.08;
+    max-width:17ch;
+  }
+  .hero h1 .accent{color:var(--drop)}
+  .hero p.sub{
+    max-width:640px;color:var(--ink-dim);font-size:clamp(16px,2vw,20px);line-height:1.55;
+  }
+  .hero-ctas{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+  .btn{
+    font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:0.06em;
+    text-transform:uppercase;text-decoration:none;padding:16px 28px;border-radius:10px;
+    display:inline-flex;align-items:center;gap:10px;transition:transform .15s ease, opacity .15s ease;
+  }
+  .btn:hover{transform:translateY(-2px)}
+  .btn-primary{background:var(--signal);color:var(--void)}
+  .btn-ghost{border:1px solid var(--line);color:var(--ink)}
+  .btn-ghost:hover{border-color:var(--signal);color:var(--signal)}
+
+  .hero-badges{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:4px}
+  .pill{
+    font-size:13px;color:var(--ink-dim);border:1px solid var(--line);background:var(--panel);
+    padding:8px 16px;border-radius:999px;
+  }
+
+  /* ---------- reveal-on-scroll ---------- */
+  .reveal{opacity:0;transform:translateY(24px);transition:opacity .6s ease, transform .6s ease}
+  .reveal.is-visible{opacity:1;transform:translateY(0)}
+
+  /* ---------- WAR STORY ---------- */
+  .story{padding:96px 0;border-top:1px solid var(--line)}
+  .story-eyebrow{text-align:center;margin-bottom:28px}
+  .story-stat{
+    font-family:var(--font-display);font-size:clamp(72px,16vw,180px);font-weight:800;
+    color:var(--drop);text-align:center;line-height:1;letter-spacing:-0.02em;
+  }
+  .story-stat .blink{display:inline-block;animation:blink 1.1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .story-sub{text-align:center;color:var(--ink-dim);font-size:clamp(17px,2.4vw,24px);max-width:640px;margin:20px auto 0}
+
+  .story-checks{max-width:560px;margin:56px auto 0;display:flex;flex-direction:column;gap:18px}
+  .check-row{display:flex;align-items:center;gap:16px;font-size:19px}
+  .check-row .tick{color:var(--unchanged);font-weight:700;font-family:var(--font-display)}
+  .story-then{
+    text-align:center;font-family:var(--font-display);font-size:clamp(32px,5vw,52px);
+    color:var(--drop);margin-top:48px;font-weight:700;
+  }
+
+  .story-damage{
+    max-width:720px;margin:56px auto 0;border:1px solid var(--line);background:var(--panel);
+    border-radius:16px;padding:36px 40px;
+  }
+  .story-damage li{margin-bottom:14px;font-size:17px;color:var(--ink)}
+  .story-damage li:last-child{margin-bottom:0}
+  .story-damage .lede{color:var(--ink-dim);font-size:15px;margin-top:20px;border-top:1px solid var(--line);padding-top:20px}
+
+  /* ---------- CARD GRID (sound familiar / why different) ---------- */
+  .section-head{text-align:center;max-width:720px;margin:0 auto 48px}
+  .section-head h2{font-size:clamp(28px,4vw,44px);line-height:1.2}
+  .section-head p{color:var(--ink-dim);font-size:17px;margin-top:14px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(260px,1fr));gap:20px}
+  .card{
+    background:var(--panel-raised);border:1px solid var(--line);border-radius:14px;padding:28px;
+    transition:border-color .15s ease, transform .15s ease;
+  }
+  .card:hover{border-color:var(--signal);transform:translateY(-3px)}
+  .card h3{font-size:19px;color:var(--signal);margin-bottom:10px}
+  .card p{color:var(--ink-dim);font-size:15px;line-height:1.55}
+
+  .band{padding:72px 0;border-top:1px solid var(--line)}
+
+  /* ---------- ACCENT STATEMENT ---------- */
+  .statement{
+    background:var(--signal);color:var(--void);padding:96px 0;text-align:center;
+  }
+  .statement h2{
+    color:var(--void);font-size:clamp(30px,5vw,56px);line-height:1.25;max-width:20ch;margin-inline:auto;
+  }
+
+  /* ---------- HOW IT WORKS ---------- */
+  .flow{display:flex;flex-direction:column;align-items:center;gap:0;max-width:760px;margin-inline:auto}
+  .flow-box{
+    width:100%;background:var(--panel-raised);border:1px solid var(--line);border-radius:14px;
+    padding:24px 28px;text-align:center;font-size:17px;
+  }
+  .flow-box small{display:block;color:var(--ink-dim);font-size:13px;margin-top:6px}
+  .flow-box.engine{background:var(--signal-dim);border-color:var(--signal)}
+  .flow-box.output{background:var(--drop-bg);border-color:var(--drop);color:var(--drop)}
+  .flow-arrow{font-family:var(--font-display);color:var(--signal);font-size:22px;padding:10px 0}
+  .flow-pair{display:flex;gap:20px;width:100%}
+  .flow-pair .flow-box{flex:1}
+
+  /* ---------- DEMO SCREENSHOTS ---------- */
+  .demo-item{
+    display:flex;flex-direction:column;gap:20px;align-items:center;
+    padding:48px 0;border-top:1px solid var(--line);
+  }
+  .demo-item:first-of-type{border-top:none}
+  .demo-badge{
+    font-family:var(--font-display);font-size:13px;letter-spacing:0.15em;color:var(--signal);
+    text-transform:uppercase;
+  }
+  .demo-item h3{font-size:clamp(22px,3vw,32px);text-align:center;max-width:600px}
+  .demo-item.danger h3{color:var(--drop)}
+  .demo-item.safe h3{color:var(--unchanged)}
+  .demo-item img{
+    width:100%;max-width:980px;border-radius:14px;border:1px solid var(--line);
+    box-shadow:0 30px 80px -20px rgba(0,0,0,0.6);
+  }
+  .demo-item .cap{color:var(--ink-dim);font-size:15px;text-align:center;max-width:560px}
+  .demo-item .cap b{color:var(--ink)}
+  .demo-stats{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  .stat-pill{
+    border:1px solid var(--drop);background:var(--drop-bg);color:var(--drop);
+    border-radius:999px;padding:10px 20px;font-size:14px;
+  }
+  .stat-pill.good{border-color:var(--unchanged);background:rgba(94,232,165,0.08);color:var(--unchanged)}
+
+  /* ---------- CLI ---------- */
+  .cli-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  .term{
+    border-radius:14px;padding:28px;background:var(--panel-raised);font-size:14.5px;line-height:1.7;
+  }
+  .term.bad{border:1px solid var(--drop)}
+  .term.good{border:1px solid var(--unchanged)}
+  .term .cmd{color:var(--ink-faint)}
+  .term .line-bad{color:var(--drop);font-weight:600}
+  .term .line-good{color:var(--unchanged);font-weight:600}
+  .term .result{color:var(--ink);margin-top:10px;display:block}
+
+  /* ---------- TABLE ---------- */
+  table.compare{width:100%;border-collapse:collapse;font-size:16px}
+  table.compare th,table.compare td{padding:18px 20px;text-align:left;border-bottom:1px solid var(--line)}
+  table.compare th{font-family:var(--font-display);font-size:13px;letter-spacing:0.08em;text-transform:uppercase}
+  table.compare th.before{color:var(--drop)}
+  table.compare th.after{color:var(--unchanged)}
+  table.compare td.label{color:var(--ink-dim)}
+  table.compare tr:last-child td{border-bottom:none}
+
+  /* ---------- ROADMAP ---------- */
+  .roadmap{display:flex;flex-direction:column;gap:20px;max-width:640px;margin-inline:auto}
+  .roadmap-row{display:flex;align-items:center;gap:18px;font-size:18px}
+  .roadmap-row .dot{width:12px;height:12px;border-radius:50%;flex:none}
+  .roadmap-row.done .dot{background:var(--unchanged)}
+  .roadmap-row.next .dot{background:var(--ink-faint)}
+  .roadmap-row.done span.label{color:var(--ink)}
+  .roadmap-row.next span.label{color:var(--ink-dim);font-style:italic}
+
+  /* ---------- FOOTER CTA ---------- */
+  .final-cta{padding:120px 0;text-align:center}
+  .final-cta h2{font-size:clamp(32px,6vw,64px)}
+  .repo-badge{
+    display:inline-block;margin-top:32px;font-family:var(--font-display);font-size:15px;
+    background:var(--panel-raised);border:1px solid var(--line);border-radius:999px;
+    padding:14px 28px;color:var(--signal);
+  }
+  footer{border-top:1px solid var(--line);padding:32px 0;text-align:center;color:var(--ink-faint);font-size:13px}
+
+  @media (max-width:760px){
+    .cli-grid{grid-template-columns:1fr}
+    .flow-pair{flex-direction:column}
+    table.compare{font-size:14px}
+    table.compare th,table.compare td{padding:12px 10px}
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="brand"><img src="branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</div>
+    <a class="nav-cta" href="#get-it">View on GitHub</a>
+  </div>
+</nav>
+
+<header class="hero wrap">
+  <p class="mono-eyebrow">open source · local-first</p>
+  <h1>Ship the policy.<br>Not <span class="accent">the outage</span>.</h1>
+  <p class="sub">Test a CiliumNetworkPolicy against what's actually happening on your cluster — before it merges, not after it pages someone.</p>
+  <div class="hero-ctas">
+    <a class="btn btn-primary" href="#get-it">Try it →</a>
+    <a class="btn btn-ghost" href="#demo">See it catch a real regression</a>
+  </div>
+  <div class="hero-badges">
+    <span class="pill">Go CLI + web UI, one binary</span>
+    <span class="pill">Embeds Cilium's real policy engine</span>
+    <span class="pill">Your kubeconfig, read-only RBAC</span>
+  </div>
+</header>
+
+<section class="story">
+  <div class="wrap">
+    <p class="mono-eyebrow story-eyebrow" style="text-align:center">true story. sort of.</p>
+    <p class="story-stat">02:4<span class="blink">7</span></p>
+    <p class="story-sub">Your phone buzzes. PagerDuty: 14 pods restarting. Grafana: dashboards gone blank.</p>
+
+    <div class="story-checks reveal">
+      <div class="check-row"><span class="tick">✓</span> Code review: approved</div>
+      <div class="check-row"><span class="tick">✓</span> CI: green</div>
+      <div class="check-row"><span class="tick">✓</span> Matched every flow anyone tested by hand</div>
+    </div>
+    <p class="story-then reveal">Then it shipped.</p>
+
+    <div class="story-damage reveal">
+      <ul>
+        <li>Liveness probes start failing — the kubelet can't reach the port anymore</li>
+        <li>Pods restart in a loop — nothing about that <i>looks</i> like a network problem</li>
+        <li>The Prometheus scrape target goes dark — dashboards just stop updating</li>
+        <li>"It only allowed <b>less</b> traffic. How could that break anything?"</li>
+      </ul>
+      <p class="lede">40 minutes to find it. Zero minutes it would have taken to catch before merge.<br>A composite of the kind of incident every platform team has lived through.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>If this sounds familiar, it's not bad luck.</h2>
+    </div>
+    <div class="grid reveal">
+      <div class="card">
+        <h3>Forgot the host entity</h3>
+        <p>Kubelet and node-level health probes silently stop being reachable.</p>
+      </div>
+      <div class="card">
+        <h3>Forgot DNS egress</h3>
+        <p>Everything resolves nothing. Timeouts everywhere — looks like a different outage entirely.</p>
+      </div>
+      <div class="card">
+        <h3>Scoped too narrow</h3>
+        <p>Observability or a sidecar's traffic gets quietly dropped. Dashboards go dark, not red.</p>
+      </div>
+      <div class="card">
+        <h3>Right in isolation, wrong combined</h3>
+        <p>The rule you wrote is correct. It just isn't the only rule that matters.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="statement">
+  <div class="wrap">
+    <h2 class="reveal">What if you could diff a candidate policy against real traffic — before it ships?</h2>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div style="display:flex;justify-content:center;margin-bottom:16px;">
+        <img src="branding/guardbee-logo.svg" alt="GuardBee Logo" style="width:64px;height:64px;filter:drop-shadow(0 0 16px rgba(34,233,199,0.3));border-radius:12px;">
+      </div>
+      <p class="mono-eyebrow">introducing</p>
+      <h2 style="margin-top:14px">GuardBee</h2>
+      <p>A local-first tool that tests your policy against what's actually happening on the cluster — not against a test case someone imagined.</p>
+    </div>
+    <div class="flow reveal">
+      <div class="flow-pair">
+        <div class="flow-box">Your candidate policy<small>CiliumNetworkPolicy YAML</small></div>
+        <div class="flow-box">Real recent flows<small>Hubble Relay</small></div>
+      </div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-box engine">Cilium's own policy engine<small>embedded pkg/policy — not a reimplementation</small></div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-box output">Verdict: what would break, what's newly allowed</div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="demo">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="mono-eyebrow">live demo</p>
+      <h2 style="margin-top:14px">Let's watch it catch a real regression.</h2>
+      <p>Every screenshot below is a live run against a real homelab Kubernetes cluster running Cilium. Not a mockup.</p>
+    </div>
+
+    <div class="demo-item reveal">
+      <p class="demo-badge">01 / Flows</p>
+      <h3>Start with what's actually happening</h3>
+      <img src="images/01-flows-tab.png" alt="Flows tab showing real live Hubble traffic for the homeassistant namespace" loading="lazy">
+      <p class="cap">Real Hubble flows, sampled live — not a synthetic test fixture.</p>
+    </div>
+
+    <div class="demo-item reveal">
+      <p class="demo-badge">02 / Policy Editor</p>
+      <h3>Build the policy visually</h3>
+      <img src="images/02-policy-editor-graph.png" alt="Policy Editor topology graph with a target workload node and two ingress rule nodes" loading="lazy">
+      <p class="cap">The graph <i>is</i> the editor — click a node to edit it in place.</p>
+    </div>
+
+    <div class="demo-item reveal">
+      <p class="demo-badge">03 / Cluster-grounded</p>
+      <h3>Peers come from the cluster, not guesses</h3>
+      <img src="images/03-cluster-grounded-picker.png" alt="Label picker dropdown showing a real running pod matched live from the cluster" loading="lazy">
+      <p class="cap">Pick labels from real running pods — no hand-typed selector that silently matches nothing.</p>
+    </div>
+
+    <div class="demo-item danger reveal">
+      <p class="demo-badge" style="color:var(--drop)">04 / Verdict</p>
+      <h3>Looked correct. Wasn't.</h3>
+      <img src="images/04-verdict-regression.png" alt="Verdict tab showing 8 NEWLY_DROPPED flows after running the looks-correct candidate policy" loading="lazy">
+      <div class="demo-stats">
+        <span class="stat-pill">NEWLY_DROPPED · Prometheus metrics scrape on :8123</span>
+        <span class="stat-pill">NEWLY_DROPPED · kubelet health probe on :8123</span>
+      </div>
+    </div>
+
+    <div class="demo-item reveal">
+      <p class="demo-badge">05 / Fix</p>
+      <h3>Fix it without leaving the tool</h3>
+      <img src="images/05-add-to-policy.png" alt="Policy Editor with a new ingress rule auto-opened, host entity and port 8123 pre-filled" loading="lazy">
+      <p class="cap">One click appends the missing rule straight from the regression — no retyping labels or ports.</p>
+    </div>
+
+    <div class="demo-item safe reveal">
+      <p class="demo-badge" style="color:var(--unchanged)">06 / Re-verify</p>
+      <h3>Now it's safe to ship</h3>
+      <img src="images/06-verdict-clean.png" alt="Verdict tab showing the corrected policy: 252 flows sampled, zero newly dropped, zero newly allowed" loading="lazy">
+      <p class="cap">Same candidate, corrected. Every real flow: <b style="color:var(--unchanged)">unchanged</b>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>Same engine, if you live in a terminal</h2>
+    </div>
+    <div class="cli-grid reveal">
+      <div class="term bad">
+        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n homeassistant allow-mosquitto.yaml</span>
+        <span class="result line-bad">NEWLY_DROPPED  prometheus → :8123</span>
+        <span class="result line-bad">NEWLY_DROPPED  reserved:host → :8123 (×4)</span>
+        <span class="result">131 flows sampled — 5 would BREAK if merged as-is</span>
+      </div>
+      <div class="term good">
+        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n homeassistant merge-ready.yaml</span>
+        <span class="result line-good">0 newly dropped</span>
+        <span class="result line-good">0 newly allowed</span>
+        <span class="result">159 flows sampled — safe to merge</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>This isn't a linter.</h2>
+    </div>
+    <div class="grid reveal">
+      <div class="card">
+        <h3>Real engine</h3>
+        <p>Embeds Cilium's actual <i>pkg/policy</i> code — the same engine your cluster runs. Not a reimplementation that can drift.</p>
+      </div>
+      <div class="card">
+        <h3>Real traffic</h3>
+        <p>Diffs against live Hubble flows from your cluster, not synthetic test cases someone imagined.</p>
+      </div>
+      <div class="card">
+        <h3>Local-first</h3>
+        <p>Runs with your own kubeconfig. No new cluster footprint, no agent to deploy, nothing leaves your laptop.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>Before / After</h2>
+    </div>
+    <div class="reveal" style="overflow-x:auto">
+      <table class="compare">
+        <tr><th></th><th class="before">Before</th><th class="after">With GuardBee</th></tr>
+        <tr><td class="label">Confidence source</td><td>Code review, hope</td><td>Real traffic, verified</td></tr>
+        <tr><td class="label">When you find out</td><td>After it ships, from pages</td><td>Before you merge</td></tr>
+        <tr><td class="label">Fixing a gap</td><td>Guess, patch, redeploy, wait</td><td>One click, re-validate instantly</td></tr>
+        <tr><td class="label">Blast radius</td><td>Discovered in prod</td><td>Visible in a diff</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>What's next</h2>
+    </div>
+    <div class="roadmap reveal">
+      <div class="roadmap-row done"><span class="dot"></span><span class="label">CLI verdict engine — shipped</span></div>
+      <div class="roadmap-row done"><span class="dot"></span><span class="label">Web UI, graph-based policy editor — shipped</span></div>
+      <div class="roadmap-row next"><span class="dot"></span><span class="label">Natural-language policy authoring — describe it in English, the tool drafts and validates the candidate (exploring)</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="final-cta" id="get-it">
+  <div class="wrap">
+    <div style="display:flex;justify-content:center;margin-bottom:24px;">
+      <img src="branding/guardbee-mascot.png" alt="Barnaby the Guardbee" style="width:130px;height:auto;filter:drop-shadow(0 15px 35px rgba(0,0,0,0.6));border-radius:20px;">
+    </div>
+    <p class="mono-eyebrow">try it on your own cluster</p>
+    <h2 style="margin-top:18px">Go CLI + embedded web UI.<br>One binary.</h2>
+    <p class="sub" style="margin:20px auto 0;color:var(--ink-dim)">Your kubeconfig, read-only RBAC. No new cluster footprint.</p>
+    <div class="repo-badge">github.com/tchellomello/guardbee</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">GuardBee — open source · built on Cilium's own policy engine</div>
+</footer>
+
+<script>
+  var els = document.querySelectorAll('.reveal');
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){ e.target.classList.add('is-visible'); io.unobserve(e.target); }
+    });
+  }, {threshold:0.15});
+  els.forEach(function(el){ io.observe(el); });
+</script>
+
+</body>
+</html>

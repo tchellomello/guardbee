@@ -1,0 +1,29 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: homeassistant-allow-iot
+  namespace: homeassistant
+  annotations:
+    policy-simulator.cilium.io/display-name: "Home Assistant & MQTT"
+spec:
+  description: "Allow Mosquitto MQTT ingress and Prometheus metrics scraping"
+  endpointSelector:
+    matchLabels:
+      app: "homeassistant"
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: "mosquitto"
+            io.kubernetes.pod.namespace: "mosquitto"
+      toPorts:
+        - ports:
+            - port: "1883"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: "prometheus"
+            io.kubernetes.pod.namespace: "observability"
+      toPorts:
+        - ports:
+            - port: "8123"
+              protocol: TCP

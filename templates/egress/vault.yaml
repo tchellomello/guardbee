@@ -1,0 +1,23 @@
+# Egress rule preset: only spec.egress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+# No namespace is baked in here — add one via the rule editor's peer picker
+# once you've loaded this preset, to match where Vault actually runs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-rule-preset-vault
+  annotations:
+    policy-simulator.cilium.io/display-name: "Vault"
+spec:
+  description: "Allow outbound to HashiCorp Vault for secrets (port 8200) — set the peer's namespace to match your deployment"
+  endpointSelector:
+    matchLabels: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: "vault"
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP

@@ -1,0 +1,156 @@
+// Typed client for the Go backend's JSON API (see ../../ui.go). Field names
+// and shapes mirror ui.go's verdictRequest/verdictResponse/flowsResponse
+// exactly — these two files are the one contract, kept in sync by hand since
+// there's no shared schema generation for a project this size yet.
+
+import type { EgressRule, IngressRule, PolicyModel } from './policy'
+
+export interface VerdictRequest {
+  namespace: string // "" = all namespaces
+  candidateYAML: string
+  last: number
+  showUnchanged: boolean
+}
+
+export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'UNCHANGED'
+
+export interface VerdictRow {
+  change: VerdictChange
+  source: string
+  destination: string
+  protocol: string
+  port: number
+  count: number
+  explanation: string
+}
+
+export interface VerdictCounts {
+  unchanged: number
+  newlyDropped: number
+  newlyAllowed: number
+  notSimulated: number
+  replySkipped: number
+  total: number
+}
+
+export interface VerdictResponse {
+  namespace: string
+  candidateRuleCount: number
+  baselineRuleCount: number
+  flowsRequested: number
+  flowsSampled: number
+  counts: VerdictCounts
+  rows: VerdictRow[]
+}
+
+export interface Flow {
+  time: string
+  verdict: string
+  source: string
+  destination: string
+  l4: string
+}
+
+export interface FlowsResponse {
+  namespace: string
+  flows: Flow[]
+}
+
+export interface NamespacesResponse {
+  namespaces: string[]
+}
+
+async function parseErrorOrJSON<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `request failed: ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
+export function runVerdict(req: VerdictRequest): Promise<VerdictResponse> {
+  return fetch('/api/verdict', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  }).then((res) => parseErrorOrJSON<VerdictResponse>(res))
+}
+
+export function fetchFlows(namespace: string, last: number): Promise<FlowsResponse> {
+  const params = new URLSearchParams({ last: String(last) })
+  if (namespace) params.set('namespace', namespace)
+  return fetch(`/api/flows?${params}`).then((res) => parseErrorOrJSON<FlowsResponse>(res))
+}
+
+export function fetchNamespaces(): Promise<NamespacesResponse> {
+  return fetch('/api/namespaces').then((res) => parseErrorOrJSON<NamespacesResponse>(res))
+}
+
+export interface Pod {
+  name: string
+  labels: Record<string, string>
+}
+
+export interface PodsResponse {
+  namespace: string
+  pods: Pod[]
+}
+
+export function fetchPods(namespace: string): Promise<PodsResponse> {
+  return fetch(`/api/pods?namespace=${encodeURIComponent(namespace)}`).then((res) =>
+    parseErrorOrJSON<PodsResponse>(res)
+  )
+}
+
+export interface PolicyValidationResult {
+  valid: boolean
+  ruleCount?: number
+  error?: string
+}
+
+export function validatePolicy(namespace: string, candidateYAML: string): Promise<PolicyValidationResult> {
+  return fetch('/api/policy/validate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ namespace, candidateYAML }),
+  }).then((res) => parseErrorOrJSON<PolicyValidationResult>(res))
+}
+
+// Policy Editor preset templates — read server-side from a directory of real
+// CiliumNetworkPolicy YAML (see ../../templates.go) rather than hardcoded
+// here. Rule shapes omit "id": the frontend assigns a fresh one wherever a
+// template is actually loaded or a rule preset added to the canvas.
+export interface GenericPolicyTemplate {
+  id: string
+  name: string
+  description: string
+  policy: Omit<PolicyModel, 'ingressRules' | 'egressRules'> & {
+    ingressRules: Omit<IngressRule, 'id'>[]
+    egressRules: Omit<EgressRule, 'id'>[]
+  }
+}
+
+export interface IngressRuleTemplate {
+  id: string
+  name: string
+  description: string
+  rule: Omit<IngressRule, 'id'>
+}
+
+export interface EgressRuleTemplate {
+  id: string
+  name: string
+  description: string
+  rule: Omit<EgressRule, 'id'>
+}
+
+export interface TemplatesResponse {
+  generic: GenericPolicyTemplate[]
+  ingress: IngressRuleTemplate[]
+  egress: EgressRuleTemplate[]
+}
+
+export function fetchTemplates(): Promise<TemplatesResponse> {
+  return fetch('/api/templates').then((res) => parseErrorOrJSON<TemplatesResponse>(res))
+}
+

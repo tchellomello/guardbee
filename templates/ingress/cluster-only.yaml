@@ -1,0 +1,16 @@
+# Ingress rule preset: only spec.ingress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-rule-preset-cluster-only
+  annotations:
+    policy-simulator.cilium.io/display-name: "Cluster-internal only"
+spec:
+  description: "Allow ingress only from other pods inside the cluster (any port)"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEntities:
+        - cluster

@@ -1,0 +1,12 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: isolate-workload
+  namespace: default
+  annotations:
+    policy-simulator.cilium.io/display-name: "Default Deny (Isolation)"
+spec:
+  description: "Isolate workload by enabling default deny on all ingress and egress"
+  endpointSelector:
+    matchLabels:
+      app: "backend"

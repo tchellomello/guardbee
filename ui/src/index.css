@@ -1,0 +1,195 @@
+@import "tailwindcss";
+
+/* ── Design system: "console" ───────────────────────────────────────────
+   This tool is a CLI wearing a browser. The design leans into that instead
+   of hiding it behind generic SaaS chrome: crisp monospace typography,
+   adaptive dark phosphor CRT and light technical lab console schemes,
+   an electric signature accent kept deliberately distinct from the
+   red/amber/green verdict semantics (NEWLY_DROPPED/NEWLY_ALLOWED/
+   UNCHANGED), sharp hairline borders instead of soft rounded cards, and a
+   faint scanline + grid texture for atmosphere. */
+
+:root {
+  --theme-void: #06090a;
+  --theme-panel: #0b1012;
+  --theme-panel-raised: #0f1619;
+  --theme-line: #1c2b2c;
+  --theme-line-bright: #2a4345;
+  --theme-ink: #cfe8e4;
+  --theme-ink-dim: #6e8886;
+  --theme-ink-faint: #45595a;
+
+  --theme-signal: #22e9c7;
+  --theme-signal-dim: #0f6d5f;
+  --theme-signal-glow: rgba(34, 233, 199, 0.4);
+
+  --theme-drop: #ff5d5d;
+  --theme-allow: #ffb648;
+  --theme-unchanged: #5ee8a5;
+
+  --theme-scanline: rgba(34, 233, 199, 0.025);
+  --theme-radial: rgba(34, 233, 199, 0.06);
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"],
+html.light {
+  --theme-void: #f6f8f8;
+  --theme-panel: #ffffff;
+  --theme-panel-raised: #edf2f2;
+  --theme-line: #d0dddc;
+  --theme-line-bright: #9eb5b3;
+  --theme-ink: #091617;
+  --theme-ink-dim: #43605e;
+  --theme-ink-faint: #7b9795;
+
+  --theme-signal: #007a68;
+  --theme-signal-dim: #ccfbf1;
+  --theme-signal-glow: rgba(0, 122, 104, 0.25);
+
+  --theme-drop: #dc2626;
+  --theme-allow: #b45309;
+  --theme-unchanged: #15803d;
+
+  --theme-scanline: rgba(0, 122, 104, 0.02);
+  --theme-radial: rgba(0, 122, 104, 0.035);
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"],
+html.dark {
+  --theme-void: #06090a;
+  --theme-panel: #0b1012;
+  --theme-panel-raised: #0f1619;
+  --theme-line: #1c2b2c;
+  --theme-line-bright: #2a4345;
+  --theme-ink: #cfe8e4;
+  --theme-ink-dim: #6e8886;
+  --theme-ink-faint: #45595a;
+
+  --theme-signal: #22e9c7;
+  --theme-signal-dim: #0f6d5f;
+  --theme-signal-glow: rgba(34, 233, 199, 0.4);
+
+  --theme-drop: #ff5d5d;
+  --theme-allow: #ffb648;
+  --theme-unchanged: #5ee8a5;
+
+  --theme-scanline: rgba(34, 233, 199, 0.025);
+  --theme-radial: rgba(34, 233, 199, 0.06);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-display: "Martian Mono", ui-monospace, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-void: var(--theme-void);
+  --color-panel: var(--theme-panel);
+  --color-panel-raised: var(--theme-panel-raised);
+  --color-line: var(--theme-line);
+  --color-line-bright: var(--theme-line-bright);
+  --color-ink: var(--theme-ink);
+  --color-ink-dim: var(--theme-ink-dim);
+  --color-ink-faint: var(--theme-ink-faint);
+
+  --color-signal: var(--theme-signal);
+  --color-signal-dim: var(--theme-signal-dim);
+  --color-signal-glow: var(--theme-signal-glow);
+
+  --color-drop: var(--theme-drop);
+  --color-allow: var(--theme-allow);
+  --color-unchanged: var(--theme-unchanged);
+}
+
+html {
+  background: var(--color-void);
+}
+
+body {
+  margin: 0;
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  position: relative;
+  min-height: 100svh;
+}
+
+/* Faint scanlines + a wide radar-grid wash, fixed to the viewport so they
+   read as ambient console atmosphere rather than a tiled, "AI-default"
+   background pattern. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      var(--theme-scanline) 0px,
+      var(--theme-scanline) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(ellipse 80% 50% at 50% -10%, var(--theme-radial), transparent 60%);
+}
+
+::selection {
+  background: var(--color-signal-dim);
+  color: var(--color-ink);
+}
+
+/* Scrollbars: thin, hairline, console-tinted instead of the OS default. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-bright) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line-bright);
+  border-radius: 0;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise-in {
+  /* No "both"/"forwards" fill mode: once the animation ends its transform
+     reverts to the cascade's un-set value instead of staying pinned at
+     translateY(0), which would otherwise make this element a containing
+     block for any position:fixed descendant (e.g. a dropdown's full-screen
+     click-outside backdrop) — confining it to this box instead of the
+     viewport. */
+  animation: rise-in 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 var(--color-signal-glow);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+.glow-pulse {
+  animation: glow-pulse 1.6s ease-in-out infinite;
+}

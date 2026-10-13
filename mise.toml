@@ -1,0 +1,67 @@
+[tools]
+go = "1.26.8"
+# Node is deliberately NOT pinned here via mise: mise's node plugin has no
+# prebuilt binary for NixOS, so pinning it triggers a from-source Node build
+# (V8 + ICU + abseil, 20-60+ minutes) instead of a download. On NixOS, pin
+# Node through the system's own Nix config instead; elsewhere, any Node
+# matching what's in ui/package.json works fine unpinned. `ui-build`/`ui-dev`
+# just use whatever `node`/`npm` is already on PATH.
+
+[tasks.ui-install]
+description = "Install the \"ui\" subcommand's frontend dependencies (run once, or after package.json changes)"
+dir = "ui"
+run = "npm install"
+
+[tasks.ui-build]
+description = "Build the frontend's production assets into ui/dist, embedded into the Go binary by \"build\""
+dir = "ui"
+depends = ["ui-install"]
+run = "npm run build"
+
+[tasks.ui-dev]
+description = "Run the frontend's dev server (hot reload, proxies /api to a separately-running \"guardbee ui\" backend on :4747)"
+dir = "ui"
+depends = ["ui-install"]
+run = "npm run dev"
+
+[tasks.build]
+description = "Build the frontend, then the binary (name read from globals.go) with it embedded via go:embed"
+depends = ["ui-build"]
+run = "go build -o \"$(sed -n 's/.*const binName = \"\\(.*\\)\"/\\1/p' globals.go)\" ."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.test]
+description = "Run the test suite (engine spike + verdict engine regression tests)"
+run = "go test ./..."
+
+[tasks.check]
+description = "build + vet + test, in that order"
+depends = ["build", "vet", "test"]
+
+[tasks.clean]
+description = "Remove the built binary"
+run = "rm -f \"$(sed -n 's/.*const binName = \"\\(.*\\)\"/\\1/p' globals.go)\""
+
+[tasks.completions]
+description = "Regenerate bash/fish/zsh completions from globals.go"
+run = "bash scripts/gen-completions.sh"
+
+[tasks.install-completions]
+description = "Regenerate completions, then install them into the standard per-shell user directories"
+depends = ["completions"]
+run = '''
+name=$(sed -n 's/.*const binName = "\(.*\)"/\1/p' globals.go)
+mkdir -p "$HOME/.local/share/bash-completion/completions" "$HOME/.config/fish/completions" "$HOME/.zsh/completions"
+# bash-completion's dynamic loader finds a completion by the command's exact
+# name with no extension, not by the "*.bash" filename gen-completions.sh uses.
+cp "completions/${name}.bash" "$HOME/.local/share/bash-completion/completions/${name}"
+cp "completions/${name}.fish" "$HOME/.config/fish/completions/${name}.fish"
+cp "completions/_${name}" "$HOME/.zsh/completions/_${name}"
+echo "Installed completions for '${name}':"
+echo "  bash: ~/.local/share/bash-completion/completions/${name} (auto-loaded if bash-completion is set up)"
+echo "  fish: ~/.config/fish/completions/${name}.fish (auto-loaded next fish session, nothing else to do)"
+echo "  zsh:  ~/.zsh/completions/_${name} (make sure that dir is on \$fpath, then run compinit)"
+'''

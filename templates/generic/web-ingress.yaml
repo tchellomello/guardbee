@@ -1,0 +1,22 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-web-ingress
+  namespace: default
+  annotations:
+    policy-simulator.cilium.io/display-name: "Web Service Ingress"
+spec:
+  description: "Allow web traffic to frontend service"
+  endpointSelector:
+    matchLabels:
+      app: "frontend"
+  ingress:
+    - fromEntities:
+        - world
+        - cluster
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP

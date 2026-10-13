@@ -1,0 +1,56 @@
+# A genuinely merge-ready version of homeassistant-allow-mosquitto.yaml.
+# That one looked correct in isolation but silently broke three things that
+# running `verdict` against it actually caught, one round at a time:
+#   - Prometheus scraping :8123 (observability/prometheus-toca-0, confirmed
+#     via `kubectl get pods -n observability -l app.kubernetes.io/name=prometheus`)
+#   - kubelet's TCP liveness/readiness probe on :8123 (confirmed via the Pod
+#     spec: livenessProbe/readinessProbe both use tcpSocket port "http" =
+#     8123, polled every 10s — that's the real source of the "reserved:host"
+#     flows the tool flagged with no namespace/pod)
+#   - Envoy Gateway's proxy fronting the Home Assistant UI (private-gateway/
+#     private-6ddc498f6-*, app.kubernetes.io/name=envoy — found on a second
+#     pass with a bigger -number sample, after the first three rules already
+#     looked complete; confirmed via `kubectl get pods -n private-gateway
+#     --show-labels`)
+# This version explicitly allows all four. Expect UNCHANGED across the
+# board against real traffic, not NEWLY_DROPPED.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: homeassistant-merge-ready
+  namespace: homeassistant
+spec:
+  endpointSelector:
+    matchLabels:
+      app: homeassistant
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: mosquitto
+            io.kubernetes.pod.namespace: mosquitto
+      toPorts:
+        - ports:
+            - port: "1883"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: prometheus
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "8123"
+              protocol: TCP
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "8123"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: envoy
+            io.kubernetes.pod.namespace: private-gateway
+      toPorts:
+        - ports:
+            - port: "8123"
+              protocol: TCP

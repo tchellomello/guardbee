@@ -1,0 +1,16 @@
+# Egress rule preset: only spec.egress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-rule-preset-cluster-only
+  annotations:
+    policy-simulator.cilium.io/display-name: "Cluster-internal only"
+spec:
+  description: "Allow egress only to other pods inside the cluster (any port)"
+  endpointSelector:
+    matchLabels: {}
+  egress:
+    - toEntities:
+        - cluster

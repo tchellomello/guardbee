@@ -1,0 +1,24 @@
+# Egress rule preset: only spec.egress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-rule-preset-dns
+  annotations:
+    policy-simulator.cilium.io/display-name: "DNS (kube-dns)"
+spec:
+  description: "Allow DNS resolution via kube-dns in kube-system (port 53, UDP + TCP)"
+  endpointSelector:
+    matchLabels: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: "kube-dns"
+            io.kubernetes.pod.namespace: "kube-system"
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

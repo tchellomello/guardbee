@@ -1,0 +1,20 @@
+# Egress rule preset: only spec.egress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-rule-preset-world-https
+  annotations:
+    policy-simulator.cilium.io/display-name: "Internet (HTTPS)"
+spec:
+  description: "Allow outbound HTTPS (443) to the world"
+  endpointSelector:
+    matchLabels: {}
+  egress:
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

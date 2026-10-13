@@ -1,0 +1,22 @@
+# Ingress rule preset: only spec.ingress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-rule-preset-prometheus
+  annotations:
+    policy-simulator.cilium.io/display-name: "Prometheus scrape"
+spec:
+  description: "Allow metrics scraping from Prometheus in the observability namespace (port 9090)"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: "prometheus"
+            io.kubernetes.pod.namespace: "observability"
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP

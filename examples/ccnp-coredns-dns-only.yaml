@@ -1,0 +1,34 @@
+# CiliumClusterwideNetworkPolicy candidate: looks correct but isn't — the
+# CCNP counterpart to examples/homeassistant-allow-mosquitto.yaml, same
+# lesson, different shape. Restricts ingress on CoreDNS (kube-system,
+# k8s-app=kube-dns) to just DNS queries from any in-cluster pod. That part is
+# real and correct (confirmed live: node-local-dns, adguard-home, and other
+# pods across many different namespaces all querying port 53) — but CoreDNS
+# also exposes a Prometheus metrics port (9153) and kubelet liveness/readiness
+# probes (8080/8181), none covered here. Run with --all-namespaces, not -n
+# kube-system alone, so the sample also includes the real cross-namespace
+# source traffic (e.g. observability/prometheus-*) this policy's own
+# destination-side blast radius depends on seeing.
+#
+# Expect: UNCHANGED on port 53, NEWLY_DROPPED on 8080/8181 (kubelet) and 9153
+# (Prometheus scrape) — the exact same "default-deny flip" class of mistake
+# the mosquitto example caught, just cluster-wide instead of namespaced.
+# See examples/ccnp-coredns-merge-ready.yaml for the corrected version.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: coredns-dns-only
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s:io.kubernetes.pod.namespace: kube-system
+      k8s:k8s-app: kube-dns
+  ingress:
+    - fromEntities:
+        - cluster
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

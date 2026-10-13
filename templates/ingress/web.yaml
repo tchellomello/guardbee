@@ -1,0 +1,23 @@
+# Ingress rule preset: only spec.ingress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-rule-preset-web
+  annotations:
+    policy-simulator.cilium.io/display-name: "Web (HTTP/HTTPS)"
+spec:
+  description: "Allow HTTP (80) and HTTPS (443) ingress from the world and the cluster"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEntities:
+        - world
+        - cluster
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP

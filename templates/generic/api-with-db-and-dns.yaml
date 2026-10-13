@@ -1,0 +1,36 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: api-service-policy
+  namespace: default
+  annotations:
+    policy-simulator.cilium.io/display-name: "API Service (DB & DNS Egress)"
+spec:
+  description: "API service with frontend ingress and restricted database & DNS egress"
+  endpointSelector:
+    matchLabels:
+      app: "api"
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: "frontend"
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app: "postgres"
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: "kube-dns"
+            io.kubernetes.pod.namespace: "kube-system"
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
