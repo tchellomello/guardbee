@@ -1,0 +1,77 @@
+name: Bug report
+description: Report wrong output or unexpected behavior from guardbee
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: check the README's "Known v1 simplifications" section
+        and CLAUDE.md's "Gotchas already hit" — a few behaviors that look like
+        bugs are documented, intentional limits (e.g. `--last` being a ceiling
+        not a guarantee, L7/FQDN flows reporting NOT_SIMULATED).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The exact guardbee command you ran (redact anything sensitive).
+      placeholder: guardbee verdict -n myapp --last 50 candidate.yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output / error
+      description: Relevant terminal output, error message, or verdict output.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: guardbee-version
+    attributes:
+      label: guardbee version or commit
+      description: A released tag (e.g. v0.1.0), or the git commit if built from source.
+    validations:
+      required: true
+
+  - type: input
+    id: cilium-version
+    attributes:
+      label: Cluster's Cilium version
+      description: >-
+        guardbee embeds Cilium's own pkg/policy engine pinned to a specific
+        Cilium version in go.mod — a mismatch between that and your cluster's
+        actual running Cilium is the most likely cause of a wrong verdict.
+      placeholder: e.g. 1.20.2 (run `cilium version` or check your Cilium Helm chart)
+    validations:
+      required: true
+
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes distribution and version
+      placeholder: e.g. k3s v1.31.2, EKS 1.30, kubeadm 1.29
+
+  - type: textarea
+    id: policy
+    attributes:
+      label: Candidate policy YAML
+      description: The CiliumNetworkPolicy/CCNP you passed to `verdict`, if relevant. Redact anything sensitive.
+      render: yaml
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else worth knowing — cluster size, traffic patterns, etc.
