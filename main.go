@@ -36,9 +36,9 @@ func main() {
 	}
 }
 
-// printHelp is the top-level --help: every command, every flag, worked
-// examples, and how to load shell completions. Run "<command> -h" for a
-// command's own usage (same content, scoped to that command).
+// printHelp is the top-level --help: just the command list and the flags
+// shared by all of them. Each subcommand owns its own full usage (flags,
+// examples) via its fs.Usage — run "<command> --help" for that.
 func printHelp(w *os.File) {
 	fmt.Fprintf(w, `%[1]s — GuardBee: Cilium Policy Pre-Flight Simulator CLI
 
@@ -55,7 +55,7 @@ COMMANDS
   verdict     Diff a candidate policy's verdicts against real recent flows
   ui          Start a local web UI for flows/verdict (milestone 1, read-only)
 
-GLOBAL FLAGS (every command)
+GLOBAL FLAGS (every command except ui)
   --kubeconfig string     path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)
   --namespace, -n string  namespace to scope the query to; omit (or pass --all-namespaces)
                           to query cluster-wide
@@ -65,49 +65,7 @@ GLOBAL FLAGS (every command)
                           plain CiliumNetworkPolicy should always get --namespace instead,
                           since it can only ever affect its own namespace
 
-POLICIES
-  %[1]s policies [-n <namespace>|-A]
-
-  Example:
-    %[1]s policies -n testing
-
-FLOWS
-  %[1]s flows [-n <namespace>|-A] [--last N] [-f]
-
-  --last uint   number of recent flows to print (default 20) — a ceiling, not a
-                guarantee; run "%[1]s flows -h" for why
-  --follow, -f  keep streaming new flows until Ctrl+C instead of stopping after --last
-
-  Examples:
-    %[1]s flows -n testing --last 50
-    %[1]s flows -n myapp --follow
-    %[1]s flows --all-namespaces --last 100
-
-VERDICT
-  %[1]s verdict [-n <namespace>|-A] [--last N] [-f] <candidate.yaml>
-
-  --last uint          number of recent flows to sample (default 50) — a ceiling, not a
-                       guarantee; run "%[1]s verdict -h" for why
-  --follow, -f         keep judging new flows until Ctrl+C instead of stopping after --last
-  --show-unchanged     also print UNCHANGED rows (what's confirmed still working), not
-                       just what changed — grouped after the regressions
-
-  Examples:
-    %[1]s verdict -n myapp examples/myapp-merge-ready.yaml
-    %[1]s verdict -n myapp --last 200 examples/myapp-wrong-port.yaml
-    %[1]s verdict -n myapp --follow examples/myapp-merge-ready.yaml
-    %[1]s verdict --all-namespaces examples/ccnp-coredns-merge-ready.yaml
-    %[1]s verdict -n myapp --show-unchanged examples/myapp-merge-ready.yaml
-
-UI
-  %[1]s ui [--addr host:port]
-
-  --addr string   address to listen on (default 127.0.0.1:4747)
-
-  Example:
-    %[1]s ui
-
-  Run "%[1]s <command> -h" for that command's usage on its own.
+Run "%[1]s <command> --help" for that command's flags and examples.
 
 SHELL COMPLETIONS (bash/fish/zsh)
   Generated from globals.go into completions/ (regenerate with
