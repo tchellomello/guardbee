@@ -8,6 +8,7 @@ _guardbee() {
     'flows:stream recent Hubble flows for a namespace'
     'verdict:diff a candidate policy'"'"'s verdicts against real flows'
     'ui:start a local web UI for flows/verdict'
+    'version:print the version this binary was built from'
   )
 
   if (( CURRENT == 2 )); then

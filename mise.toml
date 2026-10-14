@@ -27,7 +27,17 @@ run = "npm run dev"
 [tasks.build]
 description = "Build the frontend, then the binary (name read from globals.go) with it embedded via go:embed"
 depends = ["ui-build"]
-run = "go build -o \"$(sed -n 's/.*const binName = \"\\(.*\\)\"/\\1/p' globals.go)\" ."
+run = '''
+name=$(sed -n 's/.*const binName = "\(.*\)"/\1/p' globals.go)
+# Release builds overwrite this via .github/workflows/release.yml's own
+# -ldflags, set to the published tag instead — this is the dev-build path
+# only. Falls back to version.go's "dev-unknown" default outside a git
+# checkout (e.g. a source tarball with no .git).
+sha=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+dirty=""
+[ -n "$(git status --porcelain 2>/dev/null)" ] && dirty="-dirty"
+go build -ldflags "-X main.version=dev-${sha}${dirty}" -o "$name" .
+'''
 
 [tasks.vet]
 description = "Run go vet"
@@ -44,6 +54,14 @@ depends = ["build", "vet", "test"]
 [tasks.clean]
 description = "Remove the built binary"
 run = "rm -f \"$(sed -n 's/.*const binName = \"\\(.*\\)\"/\\1/p' globals.go)\""
+
+[tasks.lab-up]
+description = "Spin up a disposable kind+Cilium cluster with the lab's web/postgres/prometheus scenario (see docs/guide/lab.md). Checks for docker/kind/helm/kubectl, never installs them."
+run = "bash lab/scripts/lab-up.sh"
+
+[tasks.lab-down]
+description = "Tear down the kind cluster \"lab-up\" created — deletes only that disposable cluster, nothing else"
+run = "bash lab/scripts/lab-down.sh"
 
 [tasks.completions]
 description = "Regenerate bash/fish/zsh completions from globals.go"

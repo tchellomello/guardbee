@@ -47,7 +47,7 @@ jobs:
             goarch="${target#*/}"
             out="${name}-${goos}-${goarch}"
             echo "Building ${out}..."
-            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$out" .
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "-X main.version=${VERSION}" -o "$out" .
             tar -czf "dist/${name}_${VERSION}_${goos}_${goarch}.tar.gz" "$out" README.md LICENSE
             rm "$out"
           done

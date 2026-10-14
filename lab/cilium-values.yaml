@@ -1,0 +1,16 @@
+# Helm values for the lab's Cilium install (see scripts/lab-up.sh, which
+# passes --version alongside this file). The version itself is pinned in
+# lab-up.sh, not here — it must match go.mod's own
+# github.com/cilium/cilium version exactly (see AGENTS.md's "Architecture
+# principle" section on why). Bumping one without the other silently
+# breaks the "a verdict from this tool must be a verdict from Cilium's own
+# code" guarantee this whole project rests on.
+#
+# hubble.relay is the one setting that matters beyond Cilium's own
+# defaults: guardbee's flows/verdict subcommands port-forward directly to
+# hubble-relay in cilium-system (hardcoded, see flows.go's hubbleNamespace
+# constant) — without it, there's nothing for guardbee to talk to.
+hubble:
+  enabled: true
+  relay:
+    enabled: true

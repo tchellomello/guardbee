@@ -1,0 +1,16 @@
+# Cilium replaces this cluster's CNI entirely — kind's own default CNI has
+# to be disabled, or the two fight over pod networking. Matches Cilium's
+# own kind installation guide: https://docs.cilium.io/en/stable/installation/kind
+#
+# kube-proxy is deliberately left running (kind's own default) — Cilium
+# coexists with it fine, and full kube-proxy-replacement needs extra
+# wiring (k8sServiceHost/k8sServicePort pointed at the kind control-plane
+# container) this lab doesn't need just to demonstrate a verdict.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: guardbee-lab
+networking:
+  disableDefaultCNI: true
+nodes:
+  - role: control-plane
+  - role: worker

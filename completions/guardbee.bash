@@ -5,7 +5,7 @@ _guardbee_complete() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    subcommands="policies flows verdict ui"
+    subcommands="policies flows verdict ui version"
     common_flags="--kubeconfig --namespace -n --all-namespaces -A"
 
     if [[ "$COMP_CWORD" -eq 1 ]]; then

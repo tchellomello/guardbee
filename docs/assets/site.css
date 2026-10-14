@@ -330,12 +330,35 @@
 .docs-page li{margin-bottom:6px}
 .docs-page li>p{margin-bottom:6px}
 .docs-page code{font-family:var(--font-mono);background:var(--panel-raised);border:1px solid var(--line);border-radius:4px;padding:2px 6px;font-size:0.92em;color:var(--ink)}
-.docs-page pre{background:var(--panel-raised);border:1px solid var(--line);border-radius:10px;padding:18px 20px;overflow-x:auto;margin:0 0 20px}
-.docs-page pre code{border:none;background:none;padding:0}
+.docs-page pre{background:var(--panel-raised);border:1px solid var(--line);border-radius:10px;padding:18px 20px;overflow-x:auto;margin:0 0 20px;font-size:14px;line-height:1.6}
+.docs-page pre code{border:none;background:none;padding:0;font-size:1em}
+/* Rouge's diff-lexer spans (```diff fences) — unstyled otherwise */
+.docs-page pre .gd{color:var(--drop)}
+.docs-page pre .gi{color:var(--unchanged)}
+.docs-page pre .p{color:var(--ink-faint)}
 .docs-page blockquote{border-left:3px solid var(--signal);padding-left:16px;color:var(--ink-dim);margin:0 0 16px}
 .docs-page img{max-width:100%;border-radius:10px;border:1px solid var(--line);margin:8px 0}
-.docs-page p.img-row{display:flex;gap:16px;flex-wrap:wrap}
-.docs-page p.img-row img{flex:1;min-width:260px;margin:0}
+.docs-page .img-row{display:flex;gap:16px;flex-wrap:wrap}
+.docs-page .img-row img,.docs-page .img-row .shot{flex:1;min-width:260px;margin:0}
+.docs-page .img-row .shot img{min-width:0}
+
+/* ---------- WINDOW CHROME (screenshots framed like the landing page's demo video) ---------- */
+.docs-page .shot{
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px;
+  background:var(--panel-raised);
+}
+.docs-page .shot-titlebar{
+  display:flex;align-items:center;gap:8px;padding:10px 16px;
+  background:var(--panel);border-bottom:1px solid var(--line);
+}
+.docs-page .shot-dot{width:10px;height:10px;border-radius:50%;flex:none}
+.docs-page .shot-dot.red{background:#ff5d5d}
+.docs-page .shot-dot.yellow{background:#f5c842}
+.docs-page .shot-dot.green{background:#5ee8a5}
+.docs-page .shot-label{
+  font-family:var(--font-display);font-size:12px;letter-spacing:0.02em;color:var(--ink-dim);margin-left:6px;
+}
+.docs-page .shot img{display:block;margin:0;border:none;border-radius:0}
 .docs-page table{width:100%;border-collapse:collapse;margin:0 0 24px;font-size:15px}
 .docs-page th,.docs-page td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left}
 .docs-page th{font-family:var(--font-display);font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);font-weight:600}
@@ -358,3 +381,59 @@
   max-width:100%;max-height:100%;border-radius:12px;border:1px solid var(--line);
   box-shadow:0 30px 80px -20px rgba(0,0,0,0.6);
 }
+
+/* ---------- COPY BUTTON (click-to-copy code blocks, see assets/copy-button.js) ---------- */
+/* The button lives in this wrapper, as a sibling of `pre` — never a
+   child of it, so its own label text can never end up swept into
+   `pre.textContent` (see copy-button.js's own comment on this). */
+.docs-page .code-block{position:relative}
+.docs-page .code-block pre{padding-top:46px}
+.docs-page .code-block .copy-btn{
+  position:absolute;top:10px;right:10px;font-family:var(--font-display);font-size:11px;
+  letter-spacing:0.04em;text-transform:uppercase;color:var(--ink-dim);background:var(--panel);
+  border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;
+}
+.docs-page .code-block .copy-btn:hover{border-color:var(--signal);color:var(--signal)}
+.docs-page .code-block .copy-btn.copied{border-color:var(--unchanged);color:var(--unchanged)}
+
+/* ---------- EXPECT BLOCK (self-verifying step output, lab.md) ---------- */
+/* Styled like a terminal screenshot: a title bar (traffic-light dots +
+   label) above the actual output, not just a labeled box. */
+.docs-page .expect{
+  border:1px solid var(--unchanged);background:rgba(94,232,165,0.04);border-radius:10px;
+  margin:0 0 20px;overflow:hidden;padding:0;
+}
+.docs-page .expect-titlebar{
+  display:flex;align-items:center;gap:8px;padding:10px 16px;
+  background:rgba(94,232,165,0.1);border-bottom:1px solid rgba(94,232,165,0.3);
+}
+.docs-page .expect-dot{width:10px;height:10px;border-radius:50%;flex:none}
+.docs-page .expect-dot.red{background:#ff5d5d}
+.docs-page .expect-dot.yellow{background:#f5c842}
+.docs-page .expect-dot.green{background:#5ee8a5}
+.docs-page .expect-titlebar .expect-label{
+  font-family:var(--font-display);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;
+  color:var(--unchanged);margin-left:6px;
+}
+.docs-page .expect-body{padding:16px 20px}
+.docs-page .expect-body > :last-child{margin-bottom:0}
+.docs-page .expect pre{background:none;border:none;padding:0;margin:0}
+
+/* ---------- COLLAPSIBLE ASIDE (native <details>, deeper troubleshooting notes) ---------- */
+.docs-page details{
+  border:1px solid var(--line);border-radius:10px;padding:14px 20px;margin:0 0 20px;
+  background:var(--panel-raised);
+}
+.docs-page details[open]{padding-bottom:18px}
+.docs-page details summary{
+  cursor:pointer;color:var(--ink);font-weight:600;list-style:none;
+}
+.docs-page details summary::-webkit-details-marker{display:none}
+.docs-page details summary::before{
+  content:"▸";display:inline-block;color:var(--signal);margin-right:10px;
+  transition:transform .15s ease;
+}
+.docs-page details[open] summary::before{transform:rotate(90deg)}
+.docs-page details summary code{font-size:0.85em}
+.docs-page details summary + *{margin-top:14px}
+.docs-page details > :last-child{margin-bottom:0}

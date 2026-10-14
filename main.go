@@ -29,6 +29,8 @@ func main() {
 		runVerdict(os.Args[2:])
 	case "ui":
 		runUI(os.Args[2:])
+	case "version":
+		runVersion(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "%s: unknown command %q\n\n", binName, os.Args[1])
 		printHelp(os.Stderr)
@@ -54,6 +56,7 @@ COMMANDS
   flows       Stream recent Hubble flows for a namespace
   verdict     Diff a candidate policy's verdicts against real recent flows
   ui          Start a local web UI for flows/verdict (milestone 1, read-only)
+  version     Print the version this binary was built from
 
 GLOBAL FLAGS (every command except ui)
   --kubeconfig string     path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)

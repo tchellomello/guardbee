@@ -1,0 +1,36 @@
+# Stands in for a real app server: all that matters for the lab is that
+# something in the webapp namespace opens real TCP connections to
+# postgres:5432 on a short interval, so Hubble has live flows to sample
+# within seconds of the cluster coming up. Reuses the postgres image
+# purely for its pg_isready binary — no app code needed to tell this
+# story.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp
+  namespace: webapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+        - name: webapp
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                pg_isready -h postgres.postgres.svc.cluster.local -p 5432 >/dev/null 2>&1
+                sleep 5
+              done
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h postgres.postgres.svc.cluster.local -p 5432"]
+            periodSeconds: 5

@@ -1,0 +1,22 @@
+# The single most obvious rule anyone locking down a database would
+# write first — and it's genuinely correct for the traffic it covers.
+# Never applied to the cluster: guardbee verdict reads this file directly
+# and simulates it, so it only tells you what WOULD happen if it merged.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-allow-webapp
+  namespace: postgres
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: webapp
+            io.kubernetes.pod.namespace: webapp
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

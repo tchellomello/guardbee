@@ -1,12 +1,12 @@
 ---
 layout: doc
 title: Commands
-description: GuardBee's four subcommands — policies, flows, verdict, and ui.
+description: GuardBee's subcommands — policies, flows, verdict, ui, and version.
 ---
 
 # Commands
 
-All four are read-only against the cluster.
+Every one of these except `version` is read-only against the cluster.
 
 ## `policies`
 
@@ -71,3 +71,19 @@ guardbee ui [--addr host:port]
 ```
 
 > Calls the exact same `computeVerdict`/`fetchFlows` functions the CLI uses — never a parallel implementation, so the UI and CLI can't disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via `go:embed` (the same pattern Argo CD's own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.
+
+---
+
+## `version`
+
+Prints the version this binary was built from — never touches the cluster.
+
+```
+guardbee version
+```
+
+| Build | Output |
+|---|---|
+| A released binary | the published tag, e.g. `v0.3.0` |
+| `mise run build` | `dev-<short-sha>`, plus `-dirty` if the working tree has uncommitted changes |
+| Plain `go build` (no `-ldflags`) | `dev-unknown` |

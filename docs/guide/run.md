@@ -30,11 +30,13 @@ export KUBECONFIG=/path/to/kubeconfig
 ./guardbee ui
 ```
 
-> `examples/*.yaml` are real catches from the author's own homelab cluster
-> — they won't find matching traffic on a *different* cluster. They're
-> there to show the kind of regression GuardBee catches, not to run as-is
-> against your own. Point `verdict` at your own namespace and candidate
-> instead.
+> `examples/*.yaml` are real catches, not made-up fixtures — but a real
+> catch only means something on the cluster it came from. Run one as-is
+> anywhere else and it'll find nothing, not because the tool is broken,
+> but because that exact regression doesn't exist on your traffic. They're
+> here to show the *kind* of thing GuardBee catches — point `verdict` at
+> your own namespace and candidate to see it catch one of yours. Want a
+> guaranteed match first? Try the [Lab](lab.html).
 
 ---
 

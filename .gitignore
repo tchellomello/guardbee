@@ -6,3 +6,8 @@ AGENTS.local.md
 
 ## AI stuff
 .playwright-mcp
+
+## Jekyll (docs/) local build output
+docs/_site
+docs/.jekyll-cache
+docs/.jekyll-metadata

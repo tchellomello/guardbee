@@ -18,7 +18,7 @@ _${fn}_complete() {
     COMPREPLY=()
     cur="\${COMP_WORDS[COMP_CWORD]}"
     prev="\${COMP_WORDS[COMP_CWORD-1]}"
-    subcommands="policies flows verdict ui"
+    subcommands="policies flows verdict ui version"
     common_flags="--kubeconfig --namespace -n --all-namespaces -A"
 
     if [[ "\$COMP_CWORD" -eq 1 ]]; then
@@ -55,6 +55,7 @@ complete -c ${name} -f -n "__fish_use_subcommand" -a "policies" -d "list live Ci
 complete -c ${name} -f -n "__fish_use_subcommand" -a "flows" -d "stream recent Hubble flows for a namespace"
 complete -c ${name} -f -n "__fish_use_subcommand" -a "verdict" -d "diff a candidate policy's verdicts against real flows"
 complete -c ${name} -f -n "__fish_use_subcommand" -a "ui" -d "start a local web UI for flows/verdict"
+complete -c ${name} -f -n "__fish_use_subcommand" -a "version" -d "print the version this binary was built from"
 
 complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict ui" -l kubeconfig -d "path to kubeconfig"
 complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict" -l namespace -s n -d "namespace to scope the query to"
@@ -77,6 +78,7 @@ _${fn}() {
     'flows:stream recent Hubble flows for a namespace'
     'verdict:diff a candidate policy'"'"'s verdicts against real flows'
     'ui:start a local web UI for flows/verdict'
+    'version:print the version this binary was built from'
   )
 
   if (( CURRENT == 2 )); then
