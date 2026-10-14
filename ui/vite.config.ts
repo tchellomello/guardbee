@@ -5,6 +5,22 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        // Split vendor deps from app code so the warning-prone 500kB chunk
+        // is react/react-dom/@xyflow/react (which barely ever changes), not
+        // this project's own code — keeps both chunks under Vite's default
+        // size warning and lets the browser cache the vendor chunk across
+        // rebuilds of this tool's own code.
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            return 'vendor'
+          }
+        },
+      },
+    },
+  },
   server: {
     // During `npm run dev`, proxy API calls to the real Go backend (started
     // separately with `guardbee ui`) instead of needing CORS
