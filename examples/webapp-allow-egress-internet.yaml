@@ -1,0 +1,27 @@
+# Generic "my app needs internet access" pattern: once an endpoint has
+# any egress rule at all, egress flips to default-deny — so this is both
+# "allow egress to the internet" and, implicitly, "deny every other
+# egress destination" at the same time. That's the part worth noticing:
+# webapp's real traffic in this lab is to postgres (cluster-internal,
+# not "world") — applied for real, this specific rule would silently
+# break that connection, the exact "scoped too narrow" mistake the whole
+# Lab is built around, just on the egress side this time.
+#
+# `guardbee verdict` can't show you that, though: GuardBee's v1 engine
+# only evaluates ingress-at-destination (see docs/guide/how-it-works.html's
+# "Known v1 simplifications") — egress rules parse and would apply for
+# real, but today's verdict is blind to their effect. Included as a
+# generic, real, standalone pattern — and as an honest example of this
+# tool's current blind spot, not a demo of something it can catch yet.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: webapp-allow-egress-internet
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: webapp
+  egress:
+    - toEntities:
+        - world

@@ -1,0 +1,33 @@
+# Deliberately broken, same lesson as homeassistant-wrong-port.yaml: the
+# selector matches webapp correctly, but the port is a typo — 5433
+# instead of postgres's real 5432. Once this policy selects postgres,
+# every port not explicitly allowed flips from default-allow to
+# default-deny, including the one real connection the author clearly
+# meant to keep working.
+#
+# Matches the self-paced Lab exactly (docs/guide/lab.html) — run it
+# there: guardbee verdict -n postgres --last 50 <this file>
+#
+# Expect: NEWLY_DROPPED on webapp's real 5432 traffic (the wrong-port
+# typo), plus the postgres-exporter scrape (9187) and kubelet's host
+# probe (5432 from reserved:host) — neither covered by this candidate
+# either. See lab/candidates/merge-ready.yaml for a policy that covers
+# all three correctly.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-wrong-port
+  namespace: postgres
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: webapp
+            io.kubernetes.pod.namespace: webapp
+      toPorts:
+        - ports:
+            - port: "5433"
+              protocol: TCP

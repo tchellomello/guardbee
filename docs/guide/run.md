@@ -30,13 +30,18 @@ export KUBECONFIG=/path/to/kubeconfig
 ./guardbee ui
 ```
 
-> `examples/*.yaml` are real catches, not made-up fixtures — but a real
-> catch only means something on the cluster it came from. Run one as-is
-> anywhere else and it'll find nothing, not because the tool is broken,
+> Most of `examples/*.yaml` are real catches, not made-up fixtures — but a
+> real catch only means something on the cluster it came from. Run one as
+> is anywhere else and it'll find nothing, not because the tool is broken,
 > but because that exact regression doesn't exist on your traffic. They're
 > here to show the *kind* of thing GuardBee catches — point `verdict` at
-> your own namespace and candidate to see it catch one of yours. Want a
-> guaranteed match first? Try the [Lab](lab.html).
+> your own namespace and candidate to see it catch one of yours.
+>
+> The `postgres-*.yaml` and `ccnp-postgres-*.yaml` ones are the
+> exception: they're built against the [Lab](lab.html)'s own scenario, so
+> they're guaranteed to match if you're running it —
+> `guardbee verdict -n postgres examples/postgres-wrong-port.yaml` works
+> as-is.
 
 ---
 

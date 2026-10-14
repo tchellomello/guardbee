@@ -1,0 +1,31 @@
+# The most aggressive generic lockdown: deny everything, both
+# directions, no exceptions. Combines examples/postgres-default-deny.yaml
+# (ingress only) with the egress equivalent.
+#
+# Matches the self-paced Lab exactly (docs/guide/lab.html) — run it
+# there: guardbee verdict -n postgres --last 50 <this file>
+#
+# Expect: NEWLY_DROPPED across the board on the ingress side — webapp's
+# real traffic, the postgres-exporter scrape, and kubelet's host probe
+# all at once, same as postgres-default-deny.yaml.
+#
+# The egressDeny half is real and would matter if this were actually
+# applied (postgres's own outbound connections, if it had any, would be
+# blocked too) — but `guardbee verdict` won't show a difference from the
+# ingress-only version above, because GuardBee's v1 engine only evaluates
+# ingress-at-destination (see docs/guide/how-it-works.html's "Known v1
+# simplifications"). It's included here anyway as the complete, correct
+# Cilium pattern, not because `verdict` can prove the egress half.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-deny-all
+  namespace: postgres
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingressDeny:
+    - {}
+  egressDeny:
+    - {}

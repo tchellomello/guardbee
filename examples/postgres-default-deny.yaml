@@ -1,0 +1,30 @@
+# The most generic example in this directory — no postgres-specific
+# knowledge needed to make this mistake. `ingressDeny: - {}` is an
+# explicit, empty-match deny rule: it matches every source on every
+# port, so it's the valid Cilium way to write "lock this down, full
+# stop" (a bare empty `ingress: []` doesn't work for this — Cilium's own
+# Sanitize() rejects a rule with no Ingress/IngressDeny/Egress/EgressDeny
+# at all, confirmed directly against this repo's vendored
+# github.com/cilium/cilium@v1.20.2 rather than assumed). Selecting a
+# workload with this blocks every real flow to it at once, with nothing
+# explicitly allowed back.
+#
+# Matches the self-paced Lab exactly (docs/guide/lab.html) — run it
+# there: guardbee verdict -n postgres --last 50 <this file>
+#
+# Expect: NEWLY_DROPPED across the board — webapp's real traffic, the
+# postgres-exporter scrape, and kubelet's host probe all at once. The
+# maximal version of the lesson lab/candidates/looks-correct.yaml teaches
+# more narrowly (that one remembers the app, forgets the rest; this one
+# remembers nothing).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-default-deny
+  namespace: postgres
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingressDeny:
+    - {}

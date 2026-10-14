@@ -35,53 +35,42 @@ Documented in code, not silent:
 
 ## Two regressions it caught
 
-Both examples are real runs against the author's own homelab cluster — not
-synthetic fixtures.
+Both are real runs against the self-paced [Lab](lab.html)'s own cluster
+— not synthetic fixtures, and reproducible on your own machine, not just
+the author's.
 
 > A blank source/destination in the output (e.g. `reserved:host`) is a
 > non-pod peer, not a bug — most commonly kubelet's TCP liveness/readiness
 > probe.
 
-### Scoped-too-narrow MQTT allow
+### Scoped-too-narrow Postgres allow
 
-`examples/homeassistant-allow-mosquitto.yaml` looks correct — it does
-correctly keep real MQTT traffic working:
-
-```
-guardbee verdict -n homeassistant \
-  examples/homeassistant-allow-mosquitto.yaml
-```
-
-But it would *also* silently break a Prometheus `:8123` scrape and
-kubelet's health check on the same port — both confirmed via the
-Kubernetes API, not guessed. `examples/homeassistant-merge-ready.yaml` is
-the corrected version, re-run against the same cluster:
+A `CiliumNetworkPolicy` that correctly allows an app's traffic to its
+database — and looks completely reasonable — but silently breaks a
+Prometheus scrape and kubelet's own health probe on the same pod. The
+[Lab](lab.html) walks through this exact candidate end to end:
 
 <p class="img-row">
-  <img src="../images/04-verdict-regression.png" alt="Verdict tab showing 8 NEWLY_DROPPED flows after running the looks-correct candidate policy" />
-  <img src="../images/06-verdict-clean.png" alt="Verdict tab showing the corrected policy: zero newly dropped, zero newly allowed" />
+  <img src="../images/lab-04-verdict-regression.png" alt="Verdict tab showing 12 NEWLY_DROPPED flows for the looks-correct candidate, with red dashed edges on the flow graph" />
+  <img src="../images/lab-06-verdict-clean.png" alt="Verdict tab showing the corrected policy: zero newly dropped, zero newly allowed" />
 </p>
 
-> Left: looks correct, isn't. Right: same candidate, fixed — every real flow
-> unchanged.
+> Left: looks correct, isn't. Right: same candidate, fixed — every real
+> flow unchanged. `examples/postgres-wrong-port.yaml` is a variation on
+> the same mistake (a typo'd port instead of a forgotten peer), and
+> `examples/postgres-deny-all.yaml` is the maximal version (nothing
+> allowed at all) — both runnable against the Lab the same way.
 
-### Cluster-wide CoreDNS lockdown
+### Cluster-wide lockdown
 
-The same lesson, one level up. `examples/ccnp-coredns-dns-only.yaml` is a
-`CiliumClusterwideNetworkPolicy` that correctly restricts CoreDNS ingress to
-DNS queries from any in-cluster pod:
+The same lesson, one level up: `examples/ccnp-postgres-lockdown.yaml` is
+the `CiliumClusterwideNetworkPolicy` version of the same story —
 
 ```
-guardbee verdict --all-namespaces --last 15000 \
-  examples/ccnp-coredns-dns-only.yaml
+guardbee verdict --all-namespaces --last 50 \
+  examples/ccnp-postgres-lockdown.yaml
 ```
 
-It would *also* break kubelet's liveness/readiness probes and the
-observability namespace's Prometheus scrape, across all CoreDNS pods.
-`examples/ccnp-coredns-merge-ready.yaml` adds explicit rules for all three
-and comes back with zero regressions on the same sample size.
-
-> This one needs `--all-namespaces`, not a single namespace — the
-> regression lives on the *source* side, which a namespace filter pinned to
-> the destination's own namespace wouldn't rule out, and you may not know a
-> CCNP's full blast radius in advance anyway.
+— needing `--all-namespaces`, not `-n postgres`, to simulate correctly.
+A namespace filter pinned to one destination namespace can miss a CCNP's
+true blast radius, and you may not know it in advance anyway.

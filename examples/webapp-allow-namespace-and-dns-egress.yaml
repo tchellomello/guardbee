@@ -1,0 +1,38 @@
+# Generic least-privilege egress pattern: only allow talking to other
+# pods in the same namespace, plus DNS — a common "lock it down to just
+# what it obviously needs" starting point. The gap is the same shape as
+# examples/postgres-wrong-port.yaml's lesson, just on egress: webapp's
+# real dependency, postgres, lives in a *different* namespace
+# (`postgres`, not `webapp`), so this rule doesn't cover it. Applied for
+# real, this would break webapp's actual database connection while
+# looking completely reasonable in isolation.
+#
+# `guardbee verdict` can't show you that: GuardBee's v1 engine only
+# evaluates ingress-at-destination (see docs/guide/how-it-works.html's
+# "Known v1 simplifications"), so an egress-only candidate like this one
+# always comes back with no regressions today, regardless of what it
+# would actually do if applied. Included as a generic, real, standalone
+# pattern — and as an honest example of this tool's current blind spot.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: webapp-allow-namespace-and-dns-egress
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: webapp
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: webapp
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

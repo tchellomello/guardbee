@@ -1,0 +1,33 @@
+# The same "locked down to just the app" mistake as
+# lab/candidates/looks-correct.yaml, but authored as a
+# CiliumClusterwideNetworkPolicy instead of a namespaced one — the CCNP
+# counterpart, same lesson, different shape (compare
+# examples/ccnp-coredns-dns-only.yaml, which does the same thing for a
+# different real catch). A CCNP has no namespace field: endpointSelector
+# matches app: postgres cluster-wide, so simulating it needs
+# --all-namespaces, not -n postgres alone — a namespace filter pinned to
+# one destination namespace can miss a CCNP's true blast radius.
+#
+# Matches the self-paced Lab exactly (docs/guide/lab.html) — run it
+# there: guardbee verdict --all-namespaces --last 50 <this file>
+#
+# Expect the same two NEWLY_DROPPED flows lab/candidates/looks-correct.yaml
+# catches: the postgres-exporter scrape (9187) and kubelet's host probe
+# (5432, reserved:host) — just reached via --all-namespaces this time.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: postgres-lockdown-ccnp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: webapp
+            io.kubernetes.pod.namespace: webapp
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
