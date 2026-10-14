@@ -59,3 +59,9 @@ source completions/guardbee.fish
 # zsh: anywhere on your $fpath, then `compinit`
 cp completions/_guardbee ~/.zsh/completions/
 ```
+
+> `mise run install-completions` does all three at once — regenerates,
+> then copies each one into its shell's standard user completions
+> directory (`~/.local/share/bash-completion/completions`,
+> `~/.config/fish/completions`, `~/.zsh/completions`). Skips the manual
+> `source`/`cp` above entirely; just open a new shell afterward.

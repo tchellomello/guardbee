@@ -54,8 +54,8 @@ today's live policy state, judging real recent Hubble flows against both,
 using Cilium's own `pkg/policy` engine. See the
 **[full command reference](https://tchellomello.github.io/guardbee/guide/commands.html)**
 and **[how verdict works](https://tchellomello.github.io/guardbee/guide/how-it-works.html)**
-for flag-by-flag detail, known v1 simplifications, and two real regressions
-it caught on the author's own cluster.
+for flag-by-flag detail, known v1 simplifications, and two real
+regressions it caught.
 
 ## Quickstart
 

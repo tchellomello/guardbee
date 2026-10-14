@@ -95,7 +95,7 @@
   <div class="wrap">
     <div class="section-head reveal">
       <div style="display:flex;justify-content:center;margin-bottom:16px;">
-        <img src="branding/guardbee-logo.svg" alt="GuardBee Logo" style="width:64px;height:64px;filter:drop-shadow(0 0 16px rgba(34,233,199,0.3));border-radius:12px;">
+        <img src="branding/guardbee-logo.svg" alt="GuardBee Logo" style="width:120px;height:120px;filter:drop-shadow(0 0 16px rgba(34,233,199,0.3));border-radius:16px;">
       </div>
       <p class="mono-eyebrow">introducing</p>
       <h2 style="margin-top:14px">GuardBee</h2>
@@ -168,13 +168,13 @@
     </div>
     <div class="cli-grid reveal">
       <div class="term bad">
-        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n homeassistant allow-mosquitto.yaml</span>
-        <span class="result line-bad">NEWLY_DROPPED  prometheus → :8123</span>
-        <span class="result line-bad">NEWLY_DROPPED  reserved:host → :8123 (×4)</span>
+        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n messaging allow-mqtt.yaml</span>
+        <span class="result line-bad">NEWLY_DROPPED  prometheus → :8883</span>
+        <span class="result line-bad">NEWLY_DROPPED  reserved:host → :8883 (×4)</span>
         <span class="result">131 flows sampled — 5 would BREAK if merged as-is</span>
       </div>
       <div class="term good">
-        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n homeassistant merge-ready.yaml</span>
+        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n messaging allow-mqtt-merge-ready.yaml</span>
         <span class="result line-good">0 newly dropped</span>
         <span class="result line-good">0 newly allowed</span>
         <span class="result">159 flows sampled — safe to merge</span>

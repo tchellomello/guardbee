@@ -14,8 +14,4 @@ description: GuardBee documentation — commands, the verdict engine, building, 
 - **[Run](run.html)** — RBAC, kubeconfig, and running each subcommand against
   a real cluster.
 - **[Lab](lab.html)** — a self-paced, copy-paste lab that reproduces a real
-  catch end-to-end on your own machine, no homelab cluster required.
-
-See the repo's [`AGENTS.md`](https://github.com/tchellomello/guardbee/blob/main/AGENTS.md)
-for architecture principles, known engine gotchas, and house style before
-changing the verdict engine itself.
+  catch end-to-end on your own machine, no cluster of your own required.

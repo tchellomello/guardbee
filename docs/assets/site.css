@@ -437,3 +437,17 @@
 .docs-page details summary code{font-size:0.85em}
 .docs-page details summary + *{margin-top:14px}
 .docs-page details > :last-child{margin-bottom:0}
+
+/* ---------- GUARANTEE (safety/read-only claims worth not missing) ---------- */
+.docs-page .guarantee{
+  display:flex;align-items:center;gap:12px;
+  border:1px solid var(--unchanged);background:rgba(94,232,165,0.1);
+  border-radius:10px;padding:16px 20px;margin:0 0 20px;
+}
+.docs-page .guarantee::before{
+  content:"✓";flex:none;color:var(--unchanged);font-family:var(--font-display);font-size:18px;
+}
+.docs-page .guarantee p{
+  margin:0;color:var(--unchanged);font-family:var(--font-display);font-size:15px;font-weight:700;
+  letter-spacing:0.02em;
+}

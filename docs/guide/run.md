@@ -15,7 +15,11 @@ repo):
 | CNPs, CCNPs, `CiliumIdentity`, `CiliumEndpoint`, namespaces | `get`/`list`/`watch` |
 | `cilium-system` (for `hubble-relay`) | pod `get`/`list` + port-forward |
 
-> Nothing GuardBee does writes to the cluster.
+<div class="guarantee" markdown="1">
+
+Nothing GuardBee does writes to the cluster.
+
+</div>
 
 ---
 

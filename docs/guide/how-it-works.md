@@ -35,13 +35,8 @@ Documented in code, not silent:
 
 ## Two regressions it caught
 
-Both are real runs against the self-paced [Lab](lab.html)'s own cluster
-— not synthetic fixtures, and reproducible on your own machine, not just
-the author's.
-
-> A blank source/destination in the output (e.g. `reserved:host`) is a
-> non-pod peer, not a bug — most commonly kubelet's TCP liveness/readiness
-> probe.
+Both are real runs against the self-paced [Lab](lab.html)'s own cluster —
+not synthetic fixtures, and reproducible on your own machine.
 
 ### Scoped-too-narrow Postgres allow
 
@@ -71,6 +66,7 @@ guardbee verdict --all-namespaces --last 50 \
   examples/ccnp-postgres-lockdown.yaml
 ```
 
-— needing `--all-namespaces`, not `-n postgres`, to simulate correctly.
-A namespace filter pinned to one destination namespace can miss a CCNP's
-true blast radius, and you may not know it in advance anyway.
+— needing `--all-namespaces` instead of `-n postgres` to simulate
+correctly. A namespace filter pinned to one destination namespace can
+miss a CCNP's true blast radius, and you may not know it in advance
+anyway.

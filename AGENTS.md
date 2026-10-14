@@ -108,7 +108,7 @@ embed.go          go:embed of ui/dist (Argo CD's own UI packaging pattern)
 colors.go         ANSI color helpers (NO_COLOR-aware, terminal-detecting)
 kubernetes/rbac.yaml  read-only ServiceAccount/ClusterRole for the CLI's own access, validated live
 templates/        generic/ingress/egress CiliumNetworkPolicy YAML presets (real, standalone CNPs)
-examples/         ready-to-run candidate policies demonstrating real catches from the author's cluster
+examples/         ready-to-run candidate policies matching the self-paced Lab's scenario, plus generic patterns
 ui/               React + TypeScript + Vite + Tailwind + @xyflow/react frontend (milestone 1 web UI)
 ```
 
@@ -182,11 +182,13 @@ follows [hubble CLI](https://github.com/cilium/cilium/tree/main/hubble)'s own
 conventions (`-n`, `-A`, `-f`, `--last`) everywhere this tool overlaps with
 it.
 
-The `testing` namespace (on the author's homelab cluster) already has real
-CNPs — convenient for a first smoke test. `examples/*.yaml` are **real
-catches from the author's own cluster**, not synthetic fixtures — they won't
-find matching traffic against a different cluster; point `verdict` at your
-own namespace/candidate instead.
+For a first smoke test without a cluster of your own, spin up the
+self-paced Lab (`mise run lab-up` — see `docs/guide/lab.md`):
+`examples/postgres-*.yaml` and `examples/ccnp-postgres-*.yaml` are built
+to match its scenario exactly. The rest of `examples/*.yaml` are generic
+patterns (deny-all, egress-only) demonstrating real Cilium policy
+mistakes, not tied to any one cluster; point `verdict` at your own
+namespace/candidate for anything beyond what's there.
 
 ## House style in this codebase (match it, don't "improve" it)
 
