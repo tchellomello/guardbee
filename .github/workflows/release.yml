@@ -1,0 +1,61 @@
+name: Release
+
+# Fires when a GitHub Release is published (manually, via `gh release
+# create`, or via the create-github-release skill) — not on every tag push,
+# so a tag can exist without triggering a build.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write # softprops/action-gh-release needs to upload assets to the release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs the exact Go version pinned in mise.toml, so CI never drifts
+      # from what `mise run build` uses locally. Node is deliberately not
+      # pinned via mise (see mise.toml's own comment on this) — setup-node
+      # below handles it instead.
+      - uses: jdx/mise-action@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # Frontend is platform-independent — built once, embedded into every
+      # GOOS/GOARCH binary below via go:embed.
+      - name: Build frontend
+        run: mise run ui-build
+
+      # All four targets cross-compile cleanly with CGO_ENABLED=0 (verified
+      # locally — none of the embedded Cilium packages pull in cgo), so a
+      # single ubuntu-latest runner builds every target; no macOS runner
+      # needed just to produce a macOS binary.
+      - name: Cross-compile release binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          name=$(sed -n 's/.*const binName = "\(.*\)"/\1/p' globals.go)
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            out="${name}-${goos}-${goarch}"
+            echo "Building ${out}..."
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$out" .
+            tar -czf "dist/${name}_${VERSION}_${goos}_${goarch}.tar.gz" "$out" README.md LICENSE
+            rm "$out"
+          done
+          ( cd dist && sha256sum ./*.tar.gz > SHA256SUMS )
+
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS

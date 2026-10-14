@@ -40,7 +40,7 @@ func main() {
 // shared by all of them. Each subcommand owns its own full usage (flags,
 // examples) via its fs.Usage — run "<command> --help" for that.
 func printHelp(w *os.File) {
-	fmt.Fprintf(w, `%[1]s — GuardBee: Cilium Policy Pre-Flight Simulator CLI
+	fmt.Fprintf(w, `%[1]s — GuardBee: ship the policy. not the outage.
 
 Diffs a candidate CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy against
 real cluster traffic before you merge it: which flows would it newly block
