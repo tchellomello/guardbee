@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commands — GuardBee Docs</title>
+<meta name="description" content="GuardBee's four subcommands — policies, flows, verdict, and ui.">
+<link rel="icon" type="image/svg+xml" href="../branding/guardbee-logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="brand" style="text-decoration:none"><img src="../branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</a>
+    <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">View on GitHub</a>
+  </div>
+</nav>
+
+<main class="wrap docs-page">
+  <nav class="doc-nav">
+    <a href="commands.html" class="active">Commands</a>
+    <a href="how-it-works.html">How it works</a>
+    <a href="build.html">Build</a>
+    <a href="run.html">Run</a>
+  </nav>
+
+  <h1 id="commands">Commands</h1>
+
+<p>All four are read-only against the cluster.</p>
+
+<h2 id="policies"><code class="language-plaintext highlighter-rouge">policies</code></h2>
+
+<p>Lists live policies touching a namespace.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>guardbee policies [-n &lt;namespace&gt;|-A]
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Flag</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-n</code>, <code class="language-plaintext highlighter-rouge">--namespace</code></td>
+      <td>One namespace’s CNPs</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-A</code>, <code class="language-plaintext highlighter-rouge">--all-namespaces</code></td>
+      <td>Every namespace’s CNPs, plus cluster-wide CCNPs</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>Uses the generated Cilium clientset — a direct read, nothing hand-parsed.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="flows"><code class="language-plaintext highlighter-rouge">flows</code></h2>
+
+<p>Streams real traffic from Hubble.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>guardbee flows [-n &lt;namespace&gt;|-A] [--last N] [-f]
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Flag</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-n</code>, <code class="language-plaintext highlighter-rouge">--namespace</code> / <code class="language-plaintext highlighter-rouge">-A</code>, <code class="language-plaintext highlighter-rouge">--all-namespaces</code></td>
+      <td>Scope flows to one namespace or every namespace</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">--last N</code></td>
+      <td>Ceiling on flows fetched — Hubble’s ring buffer may hold fewer</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-f</code>, <code class="language-plaintext highlighter-rouge">--follow</code></td>
+      <td>Keep tailing new flows until Ctrl+C, instead of stopping after <code class="language-plaintext highlighter-rouge">--last</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>Port-forwards to the cluster’s <code class="language-plaintext highlighter-rouge">hubble-relay</code> pod (<code class="language-plaintext highlighter-rouge">cilium-system</code>) and streams via Hubble’s <code class="language-plaintext highlighter-rouge">Observer.GetFlows</code> gRPC API.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="verdict"><code class="language-plaintext highlighter-rouge">verdict</code></h2>
+
+<p>The engine. Diffs a candidate policy against live traffic — judged once against today’s policy, once with the candidate added.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>guardbee verdict [-n &lt;namespace&gt;|-A] [--last N] [-f] &lt;candidate.yaml&gt;
+</code></pre></div></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Flag</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-n</code>, <code class="language-plaintext highlighter-rouge">--namespace</code></td>
+      <td>Right for a CNP candidate — it can only ever affect its own namespace</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-A</code>, <code class="language-plaintext highlighter-rouge">--all-namespaces</code></td>
+      <td>Right for a CCNP candidate — it can span namespaces, so sampling needs to as well</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">--last N</code> / <code class="language-plaintext highlighter-rouge">-f</code>, <code class="language-plaintext highlighter-rouge">--follow</code></td>
+      <td>Same as <code class="language-plaintext highlighter-rouge">flows</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">--show-unchanged</code></td>
+      <td>Also print <code class="language-plaintext highlighter-rouge">UNCHANGED</code> rows (default: just a count)</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>Output is three buckets: <code class="language-plaintext highlighter-rouge">NEWLY_DROPPED</code> and <code class="language-plaintext highlighter-rouge">NEWLY_ALLOWED</code> (each with a one-line plain-English reason), and <code class="language-plaintext highlighter-rouge">UNCHANGED</code>. See <a href="how-it-works.html">how verdict works</a> for the engine mechanics.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="ui"><code class="language-plaintext highlighter-rouge">ui</code></h2>
+
+<p>A local web UI for the same engine — pick a namespace, build or paste a candidate, see the verdict as a graph.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>guardbee ui [--addr host:port]
+</code></pre></div></div>
+
+<blockquote>
+  <p>Calls the exact same <code class="language-plaintext highlighter-rouge">computeVerdict</code>/<code class="language-plaintext highlighter-rouge">fetchFlows</code> functions the CLI uses — never a parallel implementation, so the UI and CLI can’t disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via <code class="language-plaintext highlighter-rouge">go:embed</code> (the same pattern Argo CD’s own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.</p>
+</blockquote>
+
+</main>
+
+<footer>
+  <div class="wrap">GuardBee — open source · built on Cilium's own policy engine</div>
+</footer>
+
+<script src="../assets/lightbox.js"></script>
+
+</body>
+</html>

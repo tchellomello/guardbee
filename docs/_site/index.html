@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuardBee — Ship the policy. Not the outage.</title>
+<meta name="description" content="Test a CiliumNetworkPolicy against real cluster traffic before it merges. GuardBee: open source CLI + web UI embedding Cilium's own policy engine.">
+<link rel="icon" type="image/svg+xml" href="branding/guardbee-logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="brand"><img src="branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</div>
+    <div style="display:flex;align-items:center;gap:20px">
+      <a href="guide/index.html" style="font-size:14px;color:var(--ink-dim);text-decoration:none">Docs</a>
+      <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">View on GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero wrap">
+  <p class="mono-eyebrow">open source · local-first</p>
+  <h1>Ship the policy.<br>Not <span class="accent">the outage</span>.</h1>
+  <p class="sub">Test a CiliumNetworkPolicy against what's actually happening on your cluster — before it merges, not after it pages someone.</p>
+  <div class="hero-ctas">
+    <a class="btn btn-primary" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">Try it →</a>
+    <a class="btn btn-ghost" href="#demo">See it catch a real regression</a>
+  </div>
+  <p class="sub" style="margin-top:-8px">Go CLI + embedded web UI. One binary.<br>Your kubeconfig, read-only RBAC. No new cluster footprint.</p>
+</header>
+
+<section class="story">
+  <div class="wrap">
+    <p class="mono-eyebrow story-eyebrow" style="text-align:center">true story. sort of.</p>
+    <p class="story-stat">02:4<span class="blink">7</span></p>
+    <p class="story-sub">Your phone buzzes. PagerDuty: 14 pods restarting. Grafana: dashboards gone blank.</p>
+
+    <div class="story-checks reveal">
+      <div class="check-row"><span class="tick">✓</span> Code review: approved</div>
+      <div class="check-row"><span class="tick">✓</span> CI: green</div>
+      <div class="check-row"><span class="tick">✓</span> Matched every flow anyone tested by hand</div>
+    </div>
+    <p class="story-then reveal">Then it shipped.</p>
+
+    <div class="story-damage reveal">
+      <ul>
+        <li>Liveness probes start failing — the kubelet can't reach the port anymore</li>
+        <li>Pods restart in a loop — nothing about that <i>looks</i> like a network problem</li>
+        <li>The Prometheus scrape target goes dark — dashboards just stop updating</li>
+        <li>"It only allowed <b>less</b> traffic. How could that break anything?"</li>
+      </ul>
+      <p class="lede">40 minutes to find it. Zero minutes it would have taken to catch before merge.<br>A composite of the kind of incident every platform team has lived through.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>If this sounds familiar, it's not bad luck.</h2>
+    </div>
+    <div class="grid reveal">
+      <div class="card">
+        <h3>Forgot the host entity</h3>
+        <p>Kubelet and node-level health probes silently stop being reachable.</p>
+      </div>
+      <div class="card">
+        <h3>Forgot DNS egress</h3>
+        <p>Everything resolves nothing. Timeouts everywhere — looks like a different outage entirely.</p>
+      </div>
+      <div class="card">
+        <h3>Scoped too narrow</h3>
+        <p>Observability or a sidecar's traffic gets quietly dropped. Dashboards go dark, not red.</p>
+      </div>
+      <div class="card">
+        <h3>Right in isolation, wrong combined</h3>
+        <p>The rule you wrote is correct. It just isn't the only rule that matters.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="statement">
+  <div class="wrap">
+    <h2 class="reveal">What if you could diff a candidate policy against real traffic — before it ships?</h2>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div style="display:flex;justify-content:center;margin-bottom:16px;">
+        <img src="branding/guardbee-logo.svg" alt="GuardBee Logo" style="width:64px;height:64px;filter:drop-shadow(0 0 16px rgba(34,233,199,0.3));border-radius:12px;">
+      </div>
+      <p class="mono-eyebrow">introducing</p>
+      <h2 style="margin-top:14px">GuardBee</h2>
+      <p>A local-first tool that tests your policy against what's actually happening on the cluster — not against a test case someone imagined.</p>
+    </div>
+    <div class="flow reveal">
+      <div class="flow-pair">
+        <div class="flow-box">Your candidate policy<small>CiliumNetworkPolicy YAML</small></div>
+        <div class="flow-box">Real recent flows<small>Hubble Relay</small></div>
+      </div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-box engine">Cilium's own policy engine<small>embedded pkg/policy — not a reimplementation</small></div>
+      <div class="flow-arrow">↓</div>
+      <div class="flow-box output">Verdict: what would break, what's newly allowed</div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="demo">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <p class="mono-eyebrow">live demo</p>
+      <h2 style="margin-top:14px">Watch it catch a real regression in 30 seconds.</h2>
+      <p>A real scenario on a live Kubernetes cluster: author a policy, detect dropped kubelet probes before merge, patch with one click, and re-verify.</p>
+    </div>
+
+    <div class="demo-player reveal">
+      <div class="demo-player-bar">
+        <span class="demo-player-dot"></span>
+        <span class="demo-player-dot"></span>
+        <span class="demo-player-dot"></span>
+        <span class="demo-player-title">guardbee-demo · live cluster simulation</span>
+      </div>
+      <video class="demo-video" controls autoplay loop muted playsinline poster="assets/guardbee-demo-poster.png">
+        <source src="assets/guardbee-demo.mp4" type="video/mp4">
+        <source src="assets/guardbee-demo.webm" type="video/webm">
+        Your browser does not support the video tag.
+      </video>
+    </div>
+
+    <div class="demo-steps reveal">
+      <div class="step-card">
+        <span class="step-num">01 / INSPECT</span>
+        <h4>Sample Real Traffic</h4>
+        <p>Ground truth directly from Hubble Relay flows — never synthetic test cases.</p>
+      </div>
+      <div class="step-card">
+        <span class="step-num">02 / SIMULATE</span>
+        <h4>Diff Against Baseline</h4>
+        <p>Evaluates candidate policy twice using Cilium's embedded <i>pkg/policy</i> engine.</p>
+      </div>
+      <div class="step-card danger">
+        <span class="step-num">03 / CATCH</span>
+        <h4>Flag Silent Regressions</h4>
+        <p>Instantly detects <code>NEWLY_DROPPED</code> flows (like kubelet health probes) before merge.</p>
+      </div>
+      <div class="step-card safe">
+        <span class="step-num">04 / REMEDIATE</span>
+        <h4>One-Click Fix & Re-verify</h4>
+        <p>Appends missing rules in one click, re-runs simulator, and confirms 100% unchanged.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>Same engine, if you live in a terminal</h2>
+    </div>
+    <div class="cli-grid reveal">
+      <div class="term bad">
+        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n homeassistant allow-mosquitto.yaml</span>
+        <span class="result line-bad">NEWLY_DROPPED  prometheus → :8123</span>
+        <span class="result line-bad">NEWLY_DROPPED  reserved:host → :8123 (×4)</span>
+        <span class="result">131 flows sampled — 5 would BREAK if merged as-is</span>
+      </div>
+      <div class="term good">
+        <span class="cmd">$ guardbee verdict \<br>&nbsp;&nbsp;-n homeassistant merge-ready.yaml</span>
+        <span class="result line-good">0 newly dropped</span>
+        <span class="result line-good">0 newly allowed</span>
+        <span class="result">159 flows sampled — safe to merge</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>This isn't a linter.</h2>
+    </div>
+    <div class="grid reveal">
+      <div class="card">
+        <h3>Real engine</h3>
+        <p>Embeds Cilium's actual <i>pkg/policy</i> code — the same engine your cluster runs. Not a reimplementation that can drift.</p>
+      </div>
+      <div class="card">
+        <h3>Real traffic</h3>
+        <p>Diffs against live Hubble flows from your cluster, not synthetic test cases someone imagined.</p>
+      </div>
+      <div class="card">
+        <h3>Local-first</h3>
+        <p>Runs with your own kubeconfig. No new cluster footprint, no agent to deploy, nothing leaves your laptop.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <h2>Before / After</h2>
+    </div>
+    <div class="reveal" style="overflow-x:auto">
+      <table class="compare">
+        <tr><th></th><th class="before">Before</th><th class="after">With GuardBee</th></tr>
+        <tr><td class="label">Confidence source</td><td>Code review, hope</td><td>Real traffic, verified</td></tr>
+        <tr><td class="label">When you find out</td><td>After it ships, from pages</td><td>Before you merge</td></tr>
+        <tr><td class="label">Fixing a gap</td><td>Guess, patch, redeploy, wait</td><td>One click, re-validate instantly</td></tr>
+        <tr><td class="label">Blast radius</td><td>Discovered in prod</td><td>Visible in a diff</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">GuardBee — open source · built on Cilium's own policy engine</div>
+</footer>
+
+<script>
+  var els = document.querySelectorAll('.reveal');
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){ e.target.classList.add('is-visible'); io.unobserve(e.target); }
+    });
+  }, {threshold:0.15});
+  els.forEach(function(el){ io.observe(el); });
+
+  var video = document.querySelector('.demo-video');
+  if (video) {
+    var vio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          video.play().catch(function(){});
+        } else {
+          video.pause();
+        }
+      });
+    }, {threshold:0.2});
+    vio.observe(video);
+  }
+</script>
+<script src="assets/lightbox.js"></script>
+
+</body>
+</html>

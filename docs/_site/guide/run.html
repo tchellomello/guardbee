@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run — GuardBee Docs</title>
+<meta name="description" content="RBAC, kubeconfig, and running GuardBee's subcommands against a real cluster.">
+<link rel="icon" type="image/svg+xml" href="../branding/guardbee-logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="brand" style="text-decoration:none"><img src="../branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</a>
+    <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">View on GitHub</a>
+  </div>
+</nav>
+
+<main class="wrap docs-page">
+  <nav class="doc-nav">
+    <a href="commands.html">Commands</a>
+    <a href="how-it-works.html">How it works</a>
+    <a href="build.html">Build</a>
+    <a href="run.html" class="active">Run</a>
+  </nav>
+
+  <h1 id="run">Run</h1>
+
+<p>Needs a kubeconfig with read access to your cluster — either your own, or
+a dedicated service account scoped with <code class="language-plaintext highlighter-rouge">kubernetes/rbac.yaml</code> (this
+repo):</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Scope</th>
+      <th>Access</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>CNPs, CCNPs, <code class="language-plaintext highlighter-rouge">CiliumIdentity</code>, <code class="language-plaintext highlighter-rouge">CiliumEndpoint</code>, namespaces</td>
+      <td><code class="language-plaintext highlighter-rouge">get</code>/<code class="language-plaintext highlighter-rouge">list</code>/<code class="language-plaintext highlighter-rouge">watch</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">cilium-system</code> (for <code class="language-plaintext highlighter-rouge">hubble-relay</code>)</td>
+      <td>pod <code class="language-plaintext highlighter-rouge">get</code>/<code class="language-plaintext highlighter-rouge">list</code> + port-forward</td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>Nothing GuardBee does writes to the cluster.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="commands">Commands</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>export KUBECONFIG=/path/to/kubeconfig
+./guardbee policies -n your-namespace
+./guardbee flows -n your-namespace --last 20
+./guardbee policies --all-namespaces
+./guardbee verdict -n your-namespace --last 50 your-candidate.yaml
+./guardbee ui
+</code></pre></div></div>
+
+<blockquote>
+  <p><code class="language-plaintext highlighter-rouge">examples/*.yaml</code> are real catches from the author’s own homelab cluster
+— they won’t find matching traffic on a <em>different</em> cluster. They’re
+there to show the kind of regression GuardBee catches, not to run as-is
+against your own. Point <code class="language-plaintext highlighter-rouge">verdict</code> at your own namespace and candidate
+instead.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="flag-conventions">Flag conventions</h2>
+
+<p>Flag naming follows <a href="https://github.com/cilium/cilium/tree/main/hubble">hubble CLI</a>’s
+own conventions wherever this tool overlaps with it, so anyone who already
+knows hubble doesn’t have to relearn a different style here:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Flag</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-n</code>, <code class="language-plaintext highlighter-rouge">--namespace</code></td>
+      <td>One namespace</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-A</code>, <code class="language-plaintext highlighter-rouge">--all-namespaces</code></td>
+      <td>Every namespace</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">-f</code>, <code class="language-plaintext highlighter-rouge">--follow</code></td>
+      <td>Keep tailing until Ctrl+C</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">--last</code></td>
+      <td>Ceiling on flows fetched</td>
+    </tr>
+  </tbody>
+</table>
+
+</main>
+
+<footer>
+  <div class="wrap">GuardBee — open source · built on Cilium's own policy engine</div>
+</footer>
+
+<script src="../assets/lightbox.js"></script>
+
+</body>
+</html>

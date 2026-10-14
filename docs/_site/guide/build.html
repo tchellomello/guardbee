@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build — GuardBee Docs</title>
+<meta name="description" content="Building GuardBee with mise or plain Go.">
+<link rel="icon" type="image/svg+xml" href="../branding/guardbee-logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="brand" style="text-decoration:none"><img src="../branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</a>
+    <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">View on GitHub</a>
+  </div>
+</nav>
+
+<main class="wrap docs-page">
+  <nav class="doc-nav">
+    <a href="commands.html">Commands</a>
+    <a href="how-it-works.html">How it works</a>
+    <a href="build.html" class="active">Build</a>
+    <a href="run.html">Run</a>
+  </nav>
+
+  <h1 id="build">Build</h1>
+
+<h2 id="quickstart-mise">Quickstart (mise)</h2>
+
+<p><a href="https://mise.jdx.dev">mise</a> pins the exact Go and Node toolchains and
+installs them if missing:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mise run build     # npm run build in ui/, then go build -o guardbee .
+mise run check     # build + go vet + go test
+mise run clean     # rm -f guardbee
+mise run ui-dev    # frontend dev server, hot reload (proxies /api to
+                    # a separately-running "guardbee ui" on :4747)
+</code></pre></div></div>
+
+<blockquote>
+  <p><code class="language-plaintext highlighter-rouge">mise run build</code> always rebuilds the frontend first — the Go binary
+embeds whatever is currently in <code class="language-plaintext highlighter-rouge">ui/dist</code> via <code class="language-plaintext highlighter-rouge">go:embed</code> (see
+<code class="language-plaintext highlighter-rouge">embed.go</code>), so a stale <code class="language-plaintext highlighter-rouge">ui/dist</code> would silently ship an outdated UI
+otherwise.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="plain-go">Plain Go</h2>
+
+<p>Build the frontend yourself once — <code class="language-plaintext highlighter-rouge">go:embed</code> requires <code class="language-plaintext highlighter-rouge">ui/dist</code> to
+exist — then a plain <code class="language-plaintext highlighter-rouge">go build</code> works:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>cd ui &amp;&amp; npm install &amp;&amp; npm run build
+cd .. &amp;&amp; go build -o guardbee .
+</code></pre></div></div>
+
+<blockquote>
+  <p>Built against <code class="language-plaintext highlighter-rouge">github.com/cilium/cilium@v1.20.2</code> as a plain Go
+dependency — including the internal <code class="language-plaintext highlighter-rouge">pkg/policy</code> engine, not just the
+generated clientset and Hubble’s <code class="language-plaintext highlighter-rouge">observer</code> gRPC stubs. No eBPF/CGO/
+privileged build step required.</p>
+</blockquote>
+
+<hr />
+
+<h2 id="shell-completions">Shell completions</h2>
+
+<p>Generated from <code class="language-plaintext highlighter-rouge">globals.go</code>’s <code class="language-plaintext highlighter-rouge">binName</code> by <code class="language-plaintext highlighter-rouge">scripts/gen-completions.sh</code>
+(<code class="language-plaintext highlighter-rouge">mise run completions</code> to regenerate after a rename or a flag/subcommand
+change):</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># bash, in ~/.bashrc
+source completions/guardbee.bash
+
+# fish: or copy to ~/.config/fish/completions/
+source completions/guardbee.fish
+
+# zsh: anywhere on your $fpath, then `compinit`
+cp completions/_guardbee ~/.zsh/completions/
+</code></pre></div></div>
+
+</main>
+
+<footer>
+  <div class="wrap">GuardBee — open source · built on Cilium's own policy engine</div>
+</footer>
+
+<script src="../assets/lightbox.js"></script>
+
+</body>
+</html>

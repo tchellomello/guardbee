@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page.title }} — GuardBee Docs</title>
+<meta name="description" content="{{ page.description | default: 'GuardBee documentation' }}">
+<link rel="icon" type="image/svg+xml" href="../branding/guardbee-logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="brand" style="text-decoration:none"><img src="../branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</a>
+    <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">View on GitHub</a>
+  </div>
+</nav>
+
+<main class="wrap docs-page">
+  <nav class="doc-nav">
+    <a href="commands.html"{% if page.url contains 'commands' %} class="active"{% endif %}>Commands</a>
+    <a href="how-it-works.html"{% if page.url contains 'how-it-works' %} class="active"{% endif %}>How it works</a>
+    <a href="build.html"{% if page.url contains 'build' %} class="active"{% endif %}>Build</a>
+    <a href="run.html"{% if page.url contains 'run' %} class="active"{% endif %}>Run</a>
+  </nav>
+
+  {{ content }}
+</main>
+
+<footer>
+  <div class="wrap">GuardBee — open source · built on Cilium's own policy engine</div>
+</footer>
+
+<script src="../assets/lightbox.js"></script>
+
+</body>
+</html>
