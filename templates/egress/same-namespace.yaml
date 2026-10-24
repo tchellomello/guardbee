@@ -1,0 +1,21 @@
+# Egress rule preset: only spec.egress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+#
+# Mirrors ingress/same-namespace.yaml — the egress side was missing even
+# though it's one of the most common lockdown patterns ("this workload only
+# ever needs to talk to its own namespace"), which is exactly why a user
+# couldn't find it in the preset list despite it clearly belonging here.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-rule-preset-same-namespace
+  annotations:
+    policy-simulator.cilium.io/display-name: "Same-namespace only"
+spec:
+  description: "Allow egress only to other pods in the same namespace as the target (any port) — narrower than Cluster-internal only"
+  endpointSelector:
+    matchLabels: {}
+  egress:
+    - toEndpoints:
+        - matchLabels: {}

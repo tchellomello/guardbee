@@ -1,0 +1,29 @@
+# Ingress rule preset: only spec.ingress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+#
+# Deliberately the riskiest preset in this directory: fromEntities: world on
+# an ingress rule is a genuine, intentional exception (a webhook receiver —
+# a git forge's incoming webhook endpoint, a push-notification publish
+# endpoint — has to accept connections that never pass through the cluster's
+# own ingress controller or mTLS). It's included as a named preset instead
+# of left for someone to hand-roll precisely so it reads as a deliberate,
+# reviewable choice in a candidate diff, not a typo that happens to work.
+# Narrow the port to exactly what the receiver needs before shipping this.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-rule-preset-external-webhook
+  annotations:
+    policy-simulator.cilium.io/display-name: "External webhook receiver (world)"
+spec:
+  description: "Allow inbound HTTPS directly from the internet (port 443) for a webhook receiver — narrow the port before shipping, this is a real world-facing exception"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

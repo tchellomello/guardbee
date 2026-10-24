@@ -1,0 +1,25 @@
+# Ingress rule preset: only spec.ingress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+#
+# Any app namespace can be an OIDC relying party, so this is cluster-wide
+# (fromEntities: cluster) rather than pinned to one namespace — unlike
+# prometheus-scrape.yaml's single known scraper, Keycloak's callers are
+# whichever apps in the cluster have SSO wired up, which changes over time.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-rule-preset-keycloak-oidc
+  annotations:
+    policy-simulator.cilium.io/display-name: "Keycloak (OIDC relying parties)"
+spec:
+  description: "Allow inbound OIDC/SSO traffic from any app namespace in the cluster to Keycloak (port 8080)"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEntities:
+        - cluster
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

@@ -2,7 +2,9 @@
 // clicking the compact sidebar textarea — comfortable hand-editing without
 // fighting a 380px-wide, 15-row box.
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
 
 interface PolicyTextModalProps {
   isOpen: boolean
@@ -21,13 +23,46 @@ export function PolicyTextModal({
   title = 'Edit Candidate Policy',
   readOnly = false,
 }: PolicyTextModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
+
+  // Capture the pre-open focus target and move focus into the textarea in
+  // the same effect (replacing the old `autoFocus` JSX attribute), so the
+  // capture always runs before focus moves — no render-phase ref writes
+  // needed to win a race against commit-time autoFocus.
+  useEffect(() => {
+    if (!isOpen) return
+    previousFocusRef.current = document.activeElement as HTMLElement | null
+    textareaRef.current?.focus()
+  }, [isOpen])
+
   useEffect(() => {
     if (!isOpen) return
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key === 'Tab' && panelRef.current) {
+        const focusable = panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      previousFocusRef.current?.focus()
+    }
   }, [isOpen, onClose])
 
   if (!isOpen) return null
@@ -39,7 +74,12 @@ export function PolicyTextModal({
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative z-10 flex h-[85vh] w-full max-w-4xl flex-col border border-line-bright bg-panel shadow-2xl rise-in">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        className="relative z-10 flex h-[85vh] w-full max-w-4xl flex-col border border-line-bright bg-panel shadow-2xl rise-in"
+      >
         <div className="flex items-center justify-between border-b border-line bg-panel-raised px-5 py-3.5">
           <div className="flex items-center gap-2.5">
             <span className="h-2 w-2 rounded-full bg-signal shadow-[0_0_8px_var(--color-signal-glow)]" />
@@ -56,7 +96,7 @@ export function PolicyTextModal({
         </div>
 
         <textarea
-          autoFocus
+          ref={textareaRef}
           value={value}
           onChange={readOnly ? undefined : (e) => onChange?.(e.target.value)}
           readOnly={readOnly}

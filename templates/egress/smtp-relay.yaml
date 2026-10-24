@@ -1,0 +1,24 @@
+# Egress rule preset: only spec.egress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+# No namespace is baked in here — add one via the rule editor's peer picker
+# once you've loaded this preset, to match where your mail relay actually
+# runs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-rule-preset-smtp-relay
+  annotations:
+    policy-simulator.cilium.io/display-name: "SMTP relay (Postfix)"
+spec:
+  description: "Allow outbound mail submission to a self-hosted SMTP relay (port 587) — set the peer's namespace to match your deployment"
+  endpointSelector:
+    matchLabels: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: "postfix"
+      toPorts:
+        - ports:
+            - port: "587"
+              protocol: TCP

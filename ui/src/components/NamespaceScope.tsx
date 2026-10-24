@@ -85,14 +85,24 @@ export function CheckRow({
 }) {
   return (
     <label className="flex cursor-pointer items-center gap-2.5 text-sm text-ink-dim select-none hover:text-ink">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="peer sr-only"
+      />
+      {/* peer-focus-visible (not :focus) so the ring only shows for keyboard
+          navigation, matching every other focusable control in this app
+          (e.g. PolicyEditorPanel's text inputs use focus:border-signal the
+          same way) — requires the input to precede this span in the DOM for
+          Tailwind's peer-* sibling selector to apply, hence the reorder. */}
       <span
-        className={`flex h-4 w-4 shrink-0 items-center justify-center border transition-colors ${
+        className={`flex h-4 w-4 shrink-0 items-center justify-center border transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-signal peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-void ${
           checked ? 'border-signal bg-signal/20' : 'border-line'
         }`}
       >
         {checked && <span className="h-1.5 w-1.5 bg-signal" />}
       </span>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="sr-only" />
       {label}
     </label>
   )

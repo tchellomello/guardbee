@@ -1,0 +1,29 @@
+# Ingress rule preset: only spec.ingress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+#
+# The single most common default-deny surprise: externally-routed HTTP(S)
+# traffic doesn't arrive from "world" at the backend pod's identity — it
+# arrives from the ingress controller's own pod, already proxied. A CNP that
+# only allows fromEntities: world (see web.yaml) still silently drops every
+# request that actually came in through an Ingress resource, because the
+# real source identity is ingress-nginx, not the original client.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-rule-preset-ingress-nginx
+  annotations:
+    policy-simulator.cilium.io/display-name: "Ingress controller (ingress-nginx)"
+spec:
+  description: "Allow HTTP ingress from the ingress-nginx controller (port 8080) — the real source identity for anything routed through a k8s Ingress resource"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: "ingress-nginx"
+            io.kubernetes.pod.namespace: "ingress-nginx"
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

@@ -60,7 +60,7 @@ function AppContent() {
                 GuardBee
               </h1>
             </div>
-            <p className="mt-1 pl-16.5 text-xs text-ink-dim">
+            <p className="mt-1 sm:pl-16.5 text-xs text-ink-dim">
               which real flows on this cluster would a candidate policy break or newly allow?
             </p>
           </div>

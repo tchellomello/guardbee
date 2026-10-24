@@ -22,4 +22,5 @@ docs/.jekyll-metadata
 .mcp.json
 .swarm/
 ruvector.db
-
+agentdb.rvf
+agentdb.rvf.idmap.json

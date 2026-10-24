@@ -73,6 +73,31 @@ export interface EgressRulePreset {
   rule: Omit<EgressRule, 'id'>
 }
 
+// A peer endpoint whose matchLabels have no non-empty key (e.g. the user
+// cleared a label's key in the editor) isn't "no peer specified" — the
+// generator below still emits a `- matchLabels:` list item for it, with
+// nothing underneath, which Cilium reads as matching every endpoint. That's
+// silently equivalent to "allow from/to anything" and needs a visible
+// warning rather than looking like an ordinary scoped rule.
+function endpointIsEffectivelyEmpty(ep: EndpointSelectorRule): boolean {
+  return Object.entries(ep.matchLabels).filter(([k]) => k.trim()).length === 0
+}
+
+export function ruleHasNoEffectiveSelector(rule: IngressRule | EgressRule): boolean {
+  const endpoints = 'fromEndpoints' in rule ? rule.fromEndpoints : rule.toEndpoints
+  return endpoints.length > 0 && endpoints.some(endpointIsEffectivelyEmpty)
+}
+
+// True when a rule contributes zero lines to the generated YAML — every
+// peer/CIDR/entity and every port has been cleared, so the rule is a no-op:
+// still a node in the graph, but invisible to the actual generated policy.
+export function ruleProducesNoOutput(rule: IngressRule | EgressRule): boolean {
+  const endpoints = 'fromEndpoints' in rule ? rule.fromEndpoints : rule.toEndpoints
+  const cidrs = 'fromCIDRs' in rule ? rule.fromCIDRs : rule.toCIDRs
+  const entities = 'fromEntities' in rule ? rule.fromEntities : rule.toEntities
+  return endpoints.length === 0 && cidrs.length === 0 && entities.length === 0 && rule.toPorts.length === 0
+}
+
 export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
   const lines: string[] = []
 
@@ -101,7 +126,22 @@ export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
   }
 
   // ingress
-  if (model.ingressRules.length > 0) {
+  if (model.ingressRules.length === 0) {
+    // No allow rules yet doesn't mean "nothing to generate" — the rest of
+    // this editor already labels a rule-less target "Ingress: Default Deny"
+    // (see PolicyGraph.tsx's target node badge and its "+ Default Deny —
+    // click to add a rule" node), but omitting the ingress key entirely
+    // left that label false: Cilium leaves ingress fully open until some
+    // key (Ingress/IngressDeny/Egress/EgressDeny) is actually present, and
+    // Sanitize() rejects a spec with none of them at all. An explicit
+    // empty-match ingressDeny rule is the one Cilium-valid way to write
+    // "deny all ingress" (confirmed against the vendored policy engine —
+    // see examples/postgres-default-deny.yaml's comment for the same
+    // finding) — it's what makes this editor's own "Default Deny" promise
+    // real instead of a decorative label on a no-op policy.
+    lines.push('  ingressDeny:')
+    lines.push('    - {}')
+  } else {
     lines.push('  ingress:')
     for (const rule of model.ingressRules) {
       let emittedAny = false

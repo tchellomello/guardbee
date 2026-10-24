@@ -17,6 +17,15 @@ const CHANGE_STYLES: Record<VerdictChange, string> = {
   UNCHANGED: 'border-unchanged/40 bg-unchanged/10 text-unchanged',
 }
 
+// Filled variants, reserved for the newly-dropped/newly-allowed summary
+// chips only — those are the actual answer this tool exists to give, so
+// they get the same solid-fill treatment as the primary "Run verdict"
+// button instead of the muted border+low-opacity look every other chip uses.
+const HEADLINE_CHIP_STYLES: Record<'NEWLY_DROPPED' | 'NEWLY_ALLOWED', string> = {
+  NEWLY_DROPPED: 'border-drop bg-drop text-void font-bold',
+  NEWLY_ALLOWED: 'border-allow bg-allow text-void font-bold',
+}
+
 const CATEGORY_ORDER: VerdictChange[] = ['NEWLY_DROPPED', 'NEWLY_ALLOWED', 'UNCHANGED']
 
 const EMPTY_COUNTS = {
@@ -278,17 +287,27 @@ export function VerdictPanel({
             ⤢ Expand
           </button>
         </div>
-        <textarea
-          value={candidateYAML}
+        {/* A real <button>, not a textarea, so Tab+Enter/Space opens the
+            editor for free — a readOnly textarea never fires change and has
+            no built-in "activate" key handling. */}
+        <button
+          type="button"
           onClick={() => setExpandedEditorOpen(true)}
-          onChange={(e) => setCandidateYAML(e.target.value)}
-          readOnly
-          required
-          rows={15}
-          placeholder={'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ...\nspec:\n  ...'}
           title="Click to edit in a wider view"
-          className="w-full cursor-pointer resize-y border border-line bg-void px-3 py-2.5 font-mono text-xs leading-relaxed text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none"
-        />
+          className="w-full min-h-[18rem] cursor-pointer resize-y whitespace-pre-wrap border border-line bg-void px-3 py-2.5 text-left font-mono text-xs leading-relaxed text-ink focus:border-signal focus:outline-none"
+        >
+          {candidateYAML || (
+            <span className="text-ink-faint">
+              {'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ...\nspec:\n  ...'}
+            </span>
+          )}
+          <span className="mt-2 block font-display text-[0.6rem] normal-case tracking-normal text-ink-faint">
+            Click or press Enter to edit — opens a wider view
+          </span>
+        </button>
+        {/* Keeps the native "required" submit guard the textarea used to
+            provide, now that the visible control is a button, not a form field. */}
+        <textarea value={candidateYAML} onChange={() => {}} required aria-hidden="true" tabIndex={-1} className="sr-only" />
 
         <div className="space-y-2">
           <CheckRow
@@ -445,19 +464,23 @@ function RunCard({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Housekeeping, not the headline signal — kept as plain text/icon
+            controls (no border chrome) so they don't visually compete with
+            the newly-dropped/newly-allowed counts below, which are the
+            actual answer this run exists to give. */}
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => onDuplicate(run)}
             title="Load this run's YAML and parameters back into the form"
-            className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-signal hover:text-signal transition-colors cursor-pointer"
+            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer"
           >
             Duplicate to form
           </button>
           <button
             type="button"
             onClick={() => onToggleCollapse(run.id)}
-            className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-ink transition-colors cursor-pointer"
+            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-ink transition-colors cursor-pointer"
           >
             {run.isCollapsed ? 'Expand' : 'Collapse'}
           </button>
@@ -465,7 +488,7 @@ function RunCard({
             type="button"
             onClick={() => onRemove(run.id)}
             title="Remove this analysis run"
-            className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-drop hover:text-drop transition-colors cursor-pointer"
+            className="text-sm text-ink-faint hover:text-drop transition-colors cursor-pointer"
           >
             ✕
           </button>
@@ -498,13 +521,15 @@ function RunCard({
             <CountChip
               label="newly dropped"
               value={result.counts.newlyDropped}
-              className={CHANGE_STYLES.NEWLY_DROPPED}
+              className={HEADLINE_CHIP_STYLES.NEWLY_DROPPED}
+              filled
               onClick={() => onOpenHelp('newly dropped')}
             />
             <CountChip
               label="newly allowed"
               value={result.counts.newlyAllowed}
-              className={CHANGE_STYLES.NEWLY_ALLOWED}
+              className={HEADLINE_CHIP_STYLES.NEWLY_ALLOWED}
+              filled
               onClick={() => onOpenHelp('newly allowed')}
             />
             <CountChip
@@ -677,6 +702,18 @@ function AddToPolicyButton({
   const [added, setAdded] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Only clicking elsewhere dismissed this error before — Escape is the
+  // conventional keyboard dismiss this app's modals already use, and a
+  // keyboard-only user had no way to close it otherwise.
+  useEffect(() => {
+    if (!error) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setError(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [error])
+
   const dstNamespace = parseNamespacePod(row.destination)?.namespace
   const srcNamespace = parseNamespacePod(row.source)?.namespace
   const direction: 'ingress' | 'egress' | null =
@@ -748,7 +785,10 @@ function AddToPolicyButton({
         {added ? '✓ Added' : busy ? 'Adding…' : '+ Add to Policy'}
       </button>
       {error && (
-        <div className="absolute right-0 top-full z-10 mt-1 w-56 border border-drop/40 bg-panel p-2 text-[0.65rem] text-drop shadow-lg">
+        <div
+          role="alert"
+          className="absolute right-0 top-full z-10 mt-1 w-56 border border-drop/40 bg-panel p-2 text-[0.65rem] text-drop shadow-lg"
+        >
           {error}
         </div>
       )}
@@ -783,11 +823,17 @@ function CountChip({
   label,
   value,
   className,
+  filled,
   onClick,
 }: {
   label: string
   value: number
   className: string
+  // True for the filled (bg-drop/bg-allow) headline chips, whose base text
+  // is text-void — the glyph's own "dim" shade has to be void-based there
+  // too, or text-ink-faint (tuned for dark/void backgrounds) disappears
+  // against a bright solid fill.
+  filled?: boolean
   onClick?: () => void
 }) {
   return (
@@ -795,11 +841,23 @@ function CountChip({
       type="button"
       onClick={onClick}
       title={`Click to learn more about "${label}" flows`}
-      className={`border px-2.5 py-1 text-xs font-medium ${className} cursor-pointer hover:brightness-110 active:scale-98 transition-all flex items-center gap-1.5`}
+      className={`group border px-2.5 py-1 text-xs font-medium ${className} cursor-pointer hover:brightness-110 active:scale-98 transition-all flex items-center gap-1.5`}
     >
       <span className="font-semibold">{value}</span>
       <span>{label}</span>
-      <span className="text-[0.6rem] opacity-60">ⓘ</span>
+      {/* Deliberately not colored by the chip's own category color — this
+          is the one part of the chip that's actually clickable-for-info,
+          so it reads as a distinct affordance instead of blending into the
+          (non-interactive-looking) count + label. */}
+      <span
+        className={
+          filled
+            ? 'rounded-full text-void/50 transition-colors group-hover:text-void group-focus-visible:text-void group-focus-visible:ring-1 group-focus-visible:ring-void'
+            : 'rounded-full text-ink-faint transition-colors group-hover:text-signal group-focus-visible:text-signal group-focus-visible:ring-1 group-focus-visible:ring-signal'
+        }
+      >
+        ⓘ
+      </span>
     </button>
   )
 }

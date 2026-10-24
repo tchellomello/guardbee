@@ -1,0 +1,26 @@
+# Egress rule preset: only spec.egress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+# No namespace is baked in here — add one via the rule editor's peer picker
+# once you've loaded this preset, to match where Loki actually runs.
+#
+# Pairs with ingress/loki-ingest.yaml (Loki's side of the same connection) —
+# this one is for the log-shipping workload's own candidate policy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-rule-preset-loki-push
+  annotations:
+    policy-simulator.cilium.io/display-name: "Loki (log push)"
+spec:
+  description: "Allow outbound log pushes to Loki's HTTP ingest port (3100) — set the peer's namespace to match your deployment"
+  endpointSelector:
+    matchLabels: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: "loki"
+      toPorts:
+        - ports:
+            - port: "3100"
+              protocol: TCP
