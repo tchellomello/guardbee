@@ -41,6 +41,16 @@ go build -ldflags "-X main.version=dev-${sha}${dirty}" -o "$name" .
 
 [tasks.vet]
 description = "Run go vet"
+# Depends on ui-build, not just ui-install: embed.go's "//go:embed
+# all:ui/dist" means `go vet`/`go build` fail outright if ui/dist doesn't
+# exist yet, not just embed an empty/stale UI. check's "build", "vet" and
+# "test" tasks run in parallel by default, so without this explicit
+# dependency, vet can start (and fail with "no matching files found")
+# before build's own ui-build step has finished populating ui/dist on a
+# fresh checkout — this went unnoticed locally only because ui/dist was
+# always already present from a previous build (caught by CI on a clean
+# checkout, see https://github.com/tchellomello/guardbee/pull/1).
+depends = ["ui-build"]
 run = "go vet ./..."
 
 [tasks.ui-test]
@@ -51,7 +61,8 @@ run = "npm run test"
 
 [tasks.test]
 description = "Run the test suite (engine spike + verdict engine regression tests, plus the frontend's vitest suite)"
-depends = ["ui-test"]
+# Same ui/dist race as vet above — go test needs it to exist too.
+depends = ["ui-build", "ui-test"]
 run = "go test ./..."
 
 [tasks.check]
