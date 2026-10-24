@@ -46,6 +46,7 @@ export interface VerdictResponse {
 export interface Flow {
   time: string
   verdict: string
+  dropReason?: string
   source: string
   destination: string
   l4: string
@@ -152,5 +153,29 @@ export interface TemplatesResponse {
 
 export function fetchTemplates(): Promise<TemplatesResponse> {
   return fetch('/api/templates').then((res) => parseErrorOrJSON<TemplatesResponse>(res))
+}
+
+// Live CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy state (Policies
+// tab) — what's actually enforced on the cluster right now, as opposed to
+// the Policy Editor's in-progress candidate or a Verdict run's opaque
+// baselineRuleCount.
+export interface PolicyListItem {
+  kind: 'CiliumNetworkPolicy' | 'CiliumClusterwideNetworkPolicy'
+  name: string
+  namespace?: string
+  description?: string
+  ingressRuleCount: number
+  egressRuleCount: number
+}
+
+export interface PoliciesResponse {
+  namespace: string
+  policies: PolicyListItem[]
+}
+
+export function fetchPolicies(namespace: string): Promise<PoliciesResponse> {
+  const params = new URLSearchParams()
+  if (namespace) params.set('namespace', namespace)
+  return fetch(`/api/policies?${params}`).then((res) => parseErrorOrJSON<PoliciesResponse>(res))
 }
 

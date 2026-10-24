@@ -28,6 +28,20 @@ const HEADLINE_CHIP_STYLES: Record<'NEWLY_DROPPED' | 'NEWLY_ALLOWED', string> = 
 
 const CATEGORY_ORDER: VerdictChange[] = ['NEWLY_DROPPED', 'NEWLY_ALLOWED', 'UNCHANGED']
 
+// Mirrors the results table's own columns/order exactly, so what gets
+// pasted into a PR description or ticket matches what's on screen.
+function rowsToMarkdownTable(rows: VerdictRow[]): string {
+  const escapeCell = (v: string) => v.replace(/\|/g, '\\|')
+  const header = '| Change | Source | Destination | Port | Seen | Why |\n| --- | --- | --- | --- | --- | --- |'
+  const lines = rows.map(
+    (r) =>
+      `| ${r.change} | ${escapeCell(r.source)} | ${escapeCell(r.destination)} | ${r.protocol}:${r.port} | ${
+        r.count > 1 ? `${r.count}×` : '—'
+      } | ${escapeCell(r.explanation)} |`
+  )
+  return [header, ...lines].join('\n')
+}
+
 const EMPTY_COUNTS = {
   unchanged: 0,
   newlyDropped: 0,
@@ -436,6 +450,7 @@ function RunCard({
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
+  const [exportCopied, setExportCopied] = useState(false)
 
   const result = run.result
   const rowsByCategory = result
@@ -444,6 +459,13 @@ function RunCard({
         rows: result.rows.filter((r) => r.change === cat),
       })).filter((g) => g.rows.length > 0)
     : []
+
+  function handleExportMarkdown() {
+    const rows = rowsByCategory.flatMap((g) => g.rows)
+    navigator.clipboard.writeText(rowsToMarkdownTable(rows))
+    setExportCopied(true)
+    setTimeout(() => setExportCopied(false), 2000)
+  }
 
   return (
     <div className="rise-in border border-line bg-panel space-y-4 p-5 shadow-sm">
@@ -476,6 +498,14 @@ function RunCard({
             className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer"
           >
             Duplicate to form
+          </button>
+          <button
+            type="button"
+            onClick={handleExportMarkdown}
+            title="Copy the results table as Markdown, for pasting into a PR description or ticket"
+            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer"
+          >
+            {exportCopied ? '✓ Copied!' : 'Export'}
           </button>
           <button
             type="button"

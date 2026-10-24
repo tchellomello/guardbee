@@ -43,8 +43,15 @@ go build -ldflags "-X main.version=dev-${sha}${dirty}" -o "$name" .
 description = "Run go vet"
 run = "go vet ./..."
 
+[tasks.ui-test]
+description = "Run the frontend's unit tests (vitest — pure-function coverage for ui/src/policy.ts)"
+dir = "ui"
+depends = ["ui-install"]
+run = "npm run test"
+
 [tasks.test]
-description = "Run the test suite (engine spike + verdict engine regression tests)"
+description = "Run the test suite (engine spike + verdict engine regression tests, plus the frontend's vitest suite)"
+depends = ["ui-test"]
 run = "go test ./..."
 
 [tasks.check]

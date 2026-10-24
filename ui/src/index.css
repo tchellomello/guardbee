@@ -56,8 +56,15 @@ html.light {
   --theme-allow: #b45309;
   --theme-unchanged: #15803d;
 
-  --theme-scanline: rgba(8, 145, 178, 0.02);
-  --theme-radial: rgba(8, 145, 178, 0.035);
+  /* Doubled from the original 0.02/0.035 — at that alpha the scanline+
+     radial wash was imperceptible against this theme's near-white
+     background (the same alpha reads clearly in dark mode because it's
+     sitting on near-black instead), making the "console atmosphere" this
+     app leans on dark-mode-only in practice. These values are tuned to be
+     the same faint texture light mode's own contrast actually needs, not
+     a copy of dark mode's numbers. */
+  --theme-scanline: rgba(8, 145, 178, 0.04);
+  --theme-radial: rgba(8, 145, 178, 0.07);
 
   color-scheme: light;
 }

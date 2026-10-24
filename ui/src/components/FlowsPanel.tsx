@@ -324,7 +324,7 @@ function FlowRunCard({
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="border-b border-line bg-panel-raised">
                   <tr>
-                    {['Time', 'Verdict', 'Source', 'Destination', 'L4'].map((h) => (
+                    {['Time', 'Verdict', 'Source', 'Destination', 'L4', 'Drop Reason'].map((h) => (
                       <th key={h} className="px-3 py-2 text-[0.65rem] font-semibold tracking-[0.1em] text-ink-dim uppercase">
                         {h}
                       </th>
@@ -366,6 +366,12 @@ function FlowRunCard({
                         </GraphNodeLink>
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-ink">{f.l4}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-ink-dim">
+                        {/* Hubble's own already-happened datapath verdict on
+                            why a DROPPED flow was dropped — only present on
+                            dropped flows, never guessed for a forwarded one. */}
+                        {f.dropReason ?? ''}
+                      </td>
                     </tr>
                     )
                   })}

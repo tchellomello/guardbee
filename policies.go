@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/cilium/cilium/pkg/policy/api"
@@ -74,6 +75,86 @@ Flags:
 	for _, p := range ccnps.Items {
 		fmt.Printf("  - %s\n", p.Name)
 	}
+}
+
+// policySummary is a lightweight, UI-agnostic view of one live CNP/CCNP —
+// just enough to list "what's actually running" (ui.go's GET /api/policies,
+// backing the Policy Editor's sibling read-only Policies tab) without
+// pulling in the full parsed api.Rules the verdict engine needs. Kept in
+// policies.go rather than ui.go so it stays next to the clientset calls it
+// summarizes, the same split verdict.go/ui.go already use for the verdict
+// computation itself.
+type policySummary struct {
+	Kind             string // "CiliumNetworkPolicy" | "CiliumClusterwideNetworkPolicy"
+	Name             string
+	Namespace        string // "" for a CCNP — it's cluster-scoped, not namespaced
+	Description      string
+	IngressRuleCount int
+	EgressRuleCount  int
+}
+
+// summarizeRuleSpecs reduces a CNP/CCNP's Spec (*api.Rule, singular) and
+// Specs (api.Rules, a list) — mutually-optional per the CRD schema, a
+// policy can set either or both — down to one description and rule-count
+// pair. Multiple descriptions (one per entry in Specs) are joined, since a
+// summary list has no room to show them separately; the counts simply sum.
+func summarizeRuleSpecs(spec *api.Rule, specs api.Rules) (description string, ingressCount, egressCount int) {
+	var all api.Rules
+	if spec != nil {
+		all = append(all, spec)
+	}
+	all = append(all, specs...)
+
+	var descriptions []string
+	for _, r := range all {
+		if r.Description != "" {
+			descriptions = append(descriptions, r.Description)
+		}
+		ingressCount += len(r.Ingress) + len(r.IngressDeny)
+		egressCount += len(r.Egress) + len(r.EgressDeny)
+	}
+	return strings.Join(descriptions, "; "), ingressCount, egressCount
+}
+
+// listPolicySummaries lists every live CNP in the given namespace (or every
+// namespace when namespace is "") plus every cluster-wide CCNP — the exact
+// same two List calls runPolicies/fetchBaselineRules already make, just
+// summarized for display instead of printed or parsed into engine rules.
+func listPolicySummaries(ctx context.Context, cilium ciliumclient.Interface, namespace string) ([]policySummary, error) {
+	var out []policySummary
+
+	cnps, err := cilium.CiliumV2().CiliumNetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing CiliumNetworkPolicies in %s: %w", namespaceLabel(namespace), err)
+	}
+	for _, p := range cnps.Items {
+		desc, ingressCount, egressCount := summarizeRuleSpecs(p.Spec, p.Specs)
+		out = append(out, policySummary{
+			Kind:             "CiliumNetworkPolicy",
+			Name:             p.Name,
+			Namespace:        p.Namespace,
+			Description:      desc,
+			IngressRuleCount: ingressCount,
+			EgressRuleCount:  egressCount,
+		})
+	}
+
+	ccnps, err := cilium.CiliumV2().CiliumClusterwideNetworkPolicies().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing CiliumClusterwideNetworkPolicies: %w", err)
+	}
+	for _, p := range ccnps.Items {
+		desc, ingressCount, egressCount := summarizeRuleSpecs(p.Spec, p.Specs)
+		out = append(out, policySummary{
+			Kind:             "CiliumClusterwideNetworkPolicy",
+			Name:             p.Name,
+			Description:      desc,
+			IngressRuleCount: ingressCount,
+			EgressRuleCount:  egressCount,
+		})
+	}
+
+	return out, nil
 }
 
 // fetchBaselineRules lists the live CNPs (in the given namespace, or every
