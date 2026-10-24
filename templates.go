@@ -36,6 +36,11 @@ var defaultTemplatesFS embed.FS
 const (
 	guardbeeDisplayNameAnnotation = "guardbee.io/display-name"
 	templateDisplayNameAnnotation = "policy-simulator.cilium.io/display-name"
+	// guardbeeCategoryAnnotation groups generic templates for the Policy
+	// Editor's "Presets & Starters" menu (see ui/src/components/PresetMenu.tsx)
+	// — a free-text label rather than an enum so a new category needs no Go
+	// change, just a new annotation value on the template file.
+	guardbeeCategoryAnnotation = "guardbee.io/category"
 )
 
 // templateNamespaceLabelKey is the same bare-key convention
@@ -59,6 +64,16 @@ type templateEndpointSelector struct {
 	Namespace   string            `json:"namespace,omitempty"`
 }
 
+// templateServiceRef mirrors ui/src/policy.ts's K8sServiceRef — the simple
+// Service{K8sService{serviceName, namespace}} form only. api.Service's
+// other form (K8sServiceSelector, selecting a whole set of Services by
+// label) is a deliberate v1 omission, same as every other scope decision
+// already documented in policy.ts's generator.
+type templateServiceRef struct {
+	ServiceName string `json:"serviceName"`
+	Namespace   string `json:"namespace"`
+}
+
 type templateIngressRule struct {
 	FromEndpoints []templateEndpointSelector `json:"fromEndpoints"`
 	FromCIDRs     []string                   `json:"fromCIDRs"`
@@ -70,22 +85,39 @@ type templateEgressRule struct {
 	ToEndpoints []templateEndpointSelector `json:"toEndpoints"`
 	ToCIDRs     []string                   `json:"toCIDRs"`
 	ToEntities  []string                   `json:"toEntities"`
+	ToServices  []templateServiceRef       `json:"toServices"`
 	ToPorts     []templatePortRule         `json:"toPorts"`
 }
 
 type templatePolicyModel struct {
+	// Kind mirrors the template file's own apiVersion/kind — "CiliumNetworkPolicy"
+	// or "CiliumClusterwideNetworkPolicy" — so the frontend knows which one to
+	// regenerate (see ui/src/policy.ts's generateCiliumNetworkPolicyYAML). A CNP
+	// template that omits kind: entirely defaults here, matching every existing
+	// template file, which all set it explicitly.
+	Kind         string                `json:"kind"`
 	Name         string                `json:"name"`
 	Namespace    string                `json:"namespace"`
 	Description  string                `json:"description"`
 	TargetLabels map[string]string     `json:"targetLabels"`
 	IngressRules []templateIngressRule `json:"ingressRules"`
 	EgressRules  []templateEgressRule  `json:"egressRules"`
+	// EgressDenyAll mirrors spec.egressDeny being present (always as the one
+	// empty-match catchall rule the editor itself ever emits — see policy.ts).
+	// Needed because, unlike ingress, an empty egressRules list means
+	// "default allow" in this editor's model (and in real Cilium semantics —
+	// enforcement is per-direction, keyed on whether that direction's rule
+	// key exists at all): there'd be no other way to tell "egress not
+	// configured yet" apart from "egress deliberately denied" once both
+	// round-trip through this JSON shape as an empty array.
+	EgressDenyAll bool `json:"egressDenyAll"`
 }
 
 type genericTemplateOut struct {
 	ID          string              `json:"id"`
 	Name        string              `json:"name"`
 	Description string              `json:"description"`
+	Category    string              `json:"category"`
 	Policy      templatePolicyModel `json:"policy"`
 }
 
@@ -153,6 +185,7 @@ func loadTemplates(logger *slog.Logger, dirFS fs.FS) templatesResponse {
 			ID:          f.id,
 			Name:        templateDisplayName(cnp, f.id),
 			Description: cnp.Spec.Description,
+			Category:    cnp.ObjectMeta.Annotations[guardbeeCategoryAnnotation],
 			Policy:      convertPolicy(cnp),
 		})
 	}
@@ -265,15 +298,28 @@ func templateDisplayName(cnp *ciliumv2.CiliumNetworkPolicy, fallbackID string) s
 
 func convertPolicy(cnp *ciliumv2.CiliumNetworkPolicy) templatePolicyModel {
 	m := templatePolicyModel{
-		Name:         cnp.ObjectMeta.Name,
-		Namespace:    cnp.ObjectMeta.Namespace,
-		Description:  cnp.Spec.Description,
-		TargetLabels: map[string]string{},
-		IngressRules: []templateIngressRule{},
-		EgressRules:  []templateEgressRule{},
+		Kind:          templateKind(cnp),
+		Name:          cnp.ObjectMeta.Name,
+		Namespace:     cnp.ObjectMeta.Namespace,
+		Description:   cnp.Spec.Description,
+		TargetLabels:  map[string]string{},
+		IngressRules:  []templateIngressRule{},
+		EgressRules:   []templateEgressRule{},
+		EgressDenyAll: len(cnp.Spec.EgressDeny) > 0,
 	}
 	if cnp.Spec.EndpointSelector.LabelSelector != nil {
 		for k, v := range cnp.Spec.EndpointSelector.MatchLabels {
+			if k == templateNamespaceLabelKey {
+				// A CiliumClusterwideNetworkPolicy has no metadata.namespace
+				// of its own, so a template that pins one explicit namespace
+				// (see generic/ccnp-*.yaml) has to say so via this label on
+				// the target selector instead. Folding it into the same
+				// Namespace field a CNP's metadata.namespace already
+				// produces gives the frontend one consistent "which
+				// namespace is this scoped to" field regardless of kind.
+				m.Namespace = v
+				continue
+			}
 			m.TargetLabels[k] = v
 		}
 	}
@@ -284,6 +330,54 @@ func convertPolicy(cnp *ciliumv2.CiliumNetworkPolicy) templatePolicyModel {
 		m.EgressRules = append(m.EgressRules, convertEgressRule(r))
 	}
 	return m
+}
+
+// convertRuleToPolicyModel builds the same templatePolicyModel shape
+// convertPolicy produces, but from a bare api.Rule plus the name/namespace/
+// kind a live CNP/CCNP carries outside that Rule — used by ui.go's
+// handlePolicyForEdit ("Edit in Policy Editor" from the Policies tab) via
+// policies.go's firstRuleSpec, which picks one api.Rule out of a live
+// policy's Spec/Specs pair. Reuses convertIngressRule/convertEgressRule
+// directly rather than duplicating their field-by-field conversion, the same
+// "one real conversion path" convertPolicy itself already relies on.
+func convertRuleToPolicyModel(kind, name, namespace string, rule *api.Rule) templatePolicyModel {
+	m := templatePolicyModel{
+		Kind:          kind,
+		Name:          name,
+		Namespace:     namespace,
+		Description:   rule.Description,
+		TargetLabels:  map[string]string{},
+		IngressRules:  []templateIngressRule{},
+		EgressRules:   []templateEgressRule{},
+		EgressDenyAll: len(rule.EgressDeny) > 0,
+	}
+	if rule.EndpointSelector.LabelSelector != nil {
+		for k, v := range rule.EndpointSelector.MatchLabels {
+			if k == templateNamespaceLabelKey {
+				m.Namespace = v
+				continue
+			}
+			m.TargetLabels[k] = v
+		}
+	}
+	for _, r := range rule.Ingress {
+		m.IngressRules = append(m.IngressRules, convertIngressRule(r))
+	}
+	for _, r := range rule.Egress {
+		m.EgressRules = append(m.EgressRules, convertEgressRule(r))
+	}
+	return m
+}
+
+// templateKind returns the template file's own apiVersion/kind, defaulting
+// to the namespaced CiliumNetworkPolicy — every template file in this repo
+// sets kind: explicitly, so the default only matters for a hand-added file
+// under an external --templates-dir that omits it.
+func templateKind(cnp *ciliumv2.CiliumNetworkPolicy) string {
+	if cnp.TypeMeta.Kind != "" {
+		return cnp.TypeMeta.Kind
+	}
+	return "CiliumNetworkPolicy"
 }
 
 func convertEndpointSelector(es api.EndpointSelector) templateEndpointSelector {
@@ -339,6 +433,7 @@ func convertEgressRule(r api.EgressRule) templateEgressRule {
 		ToEndpoints: []templateEndpointSelector{},
 		ToCIDRs:     []string{},
 		ToEntities:  []string{},
+		ToServices:  []templateServiceRef{},
 		ToPorts:     convertPortRules(r.ToPorts),
 	}
 	for _, es := range r.ToEndpoints {
@@ -349,6 +444,19 @@ func convertEgressRule(r api.EgressRule) templateEgressRule {
 	}
 	for _, e := range r.ToEntities {
 		out.ToEntities = append(out.ToEntities, string(e))
+	}
+	for _, svc := range r.ToServices {
+		// Only the K8sService{name, namespace} form round-trips — a
+		// K8sServiceSelector-based entry (selecting a whole set of Services
+		// by label) is silently dropped here rather than erroring, same
+		// "skip what this editor doesn't support yet" posture as an
+		// unparseable template file elsewhere in this file.
+		if svc.K8sService != nil {
+			out.ToServices = append(out.ToServices, templateServiceRef{
+				ServiceName: svc.K8sService.ServiceName,
+				Namespace:   svc.K8sService.Namespace,
+			})
+		}
 	}
 	return out
 }

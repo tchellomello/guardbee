@@ -1,6 +1,16 @@
-// Data model, presets, and YAML generator for CiliumNetworkPolicy (cilium.io/v2).
+// Data model, presets, and YAML generator for CiliumNetworkPolicy /
+// CiliumClusterwideNetworkPolicy (cilium.io/v2).
 
 export type Protocol = 'TCP' | 'UDP' | 'ICMP' | 'ANY'
+
+// A CiliumClusterwideNetworkPolicy has no metadata.namespace — PolicyModel's
+// `namespace` field means something slightly different depending on `kind`
+// (see generateCiliumNetworkPolicyYAML below): metadata.namespace for a CNP,
+// or an explicit io.kubernetes.pod.namespace match label on the target
+// selector for a CCNP. Reusing the one field keeps every namespace-aware
+// bit of the editor (the live-pod picker, peer autocomplete) working
+// unchanged for both kinds.
+export type PolicyKind = 'CiliumNetworkPolicy' | 'CiliumClusterwideNetworkPolicy'
 
 export interface PortRule {
   port: string
@@ -10,6 +20,15 @@ export interface PortRule {
 export interface EndpointSelectorRule {
   matchLabels: Record<string, string>
   namespace?: string
+}
+
+// K8sServiceRef is the simple (and by far the most common) form of Cilium's
+// `Service` union — selecting one k8s Service by name/namespace rather than
+// a whole set of Services via a label selector (api.K8sServiceSelectorNamespace,
+// deferred: a v1 simplification, see generateCiliumNetworkPolicyYAML).
+export interface K8sServiceRef {
+  serviceName: string
+  namespace: string
 }
 
 export interface IngressRule {
@@ -25,16 +44,39 @@ export interface EgressRule {
   toEndpoints: EndpointSelectorRule[]
   toCIDRs: string[]
   toEntities: string[] // "world" | "host" | "cluster"
+  // Cilium's ToServices — egress-only, no ingress equivalent exists in the
+  // real API (FromServices isn't a thing: inbound traffic doesn't originate
+  // "from" a Service). Scoped to the K8sService{name, namespace} form only;
+  // selecting a whole set of Services by label (K8sServiceSelector) is
+  // deferred — see generateCiliumNetworkPolicyYAML's toServices branch.
+  //
+  // FromRequires/ToRequires (Cilium's AND-style peer-narrowing constraint)
+  // were deliberately NOT added alongside this: the exact Cilium version
+  // this project pins (go.mod: v1.20.2) marks both Deprecated with
+  // `+kubebuilder:validation:MaxItems=0` — a real cluster's CRD schema
+  // rejects any non-empty value outright. An editor feature for it would
+  // generate YAML that parses fine in this tool but gets rejected by the
+  // real cluster on apply, which is exactly the kind of guessed-semantics
+  // bug this project's embedded-real-engine principle exists to prevent.
+  toServices: K8sServiceRef[]
   toPorts: PortRule[]
 }
 
 export interface PolicyModel {
+  kind: PolicyKind
   name: string
   namespace: string
   description: string
   targetLabels: Record<string, string>
   ingressRules: IngressRule[]
   egressRules: EgressRule[]
+  // True means "deliberately deny all egress" (spec.egressDeny), distinct
+  // from egressRules being empty because it hasn't been configured yet
+  // (spec.egress omitted entirely, which is default-allow — see the egress
+  // branch of generateCiliumNetworkPolicyYAML below). Ingress needs no
+  // equivalent flag: an empty ingressRules list already means default-deny
+  // for ingress, both in this editor and in real Cilium semantics.
+  egressDenyAll: boolean
 }
 
 // BLANK_POLICY is the editor's zero-state starting point — the one preset
@@ -45,12 +87,14 @@ export interface PolicyModel {
 // reads a directory of real CiliumNetworkPolicy YAML files rather than
 // hardcoding them here — see shared/useTemplates.ts and templates.go.
 export const BLANK_POLICY: PolicyModel = {
+  kind: 'CiliumNetworkPolicy',
   name: 'custom-policy',
   namespace: 'default',
   description: 'Custom network policy',
   targetLabels: { app: 'my-service' },
   ingressRules: [],
   egressRules: [],
+  egressDenyAll: false,
 }
 
 // Rule-level presets: common ingress/egress patterns (DNS, world HTTPS,
@@ -95,17 +139,29 @@ export function ruleProducesNoOutput(rule: IngressRule | EgressRule): boolean {
   const endpoints = 'fromEndpoints' in rule ? rule.fromEndpoints : rule.toEndpoints
   const cidrs = 'fromCIDRs' in rule ? rule.fromCIDRs : rule.toCIDRs
   const entities = 'fromEntities' in rule ? rule.fromEntities : rule.toEntities
-  return endpoints.length === 0 && cidrs.length === 0 && entities.length === 0 && rule.toPorts.length === 0
+  const toServices = 'toServices' in rule ? rule.toServices : []
+  return (
+    endpoints.length === 0 &&
+    cidrs.length === 0 &&
+    entities.length === 0 &&
+    toServices.length === 0 &&
+    rule.toPorts.length === 0
+  )
 }
+
 
 export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
   const lines: string[] = []
 
+  const isClusterwide = model.kind === 'CiliumClusterwideNetworkPolicy'
+
   lines.push('apiVersion: cilium.io/v2')
-  lines.push('kind: CiliumNetworkPolicy')
+  lines.push(`kind: ${model.kind}`)
   lines.push('metadata:')
   lines.push(`  name: ${model.name || 'unnamed-policy'}`)
-  if (model.namespace) {
+  // A CiliumClusterwideNetworkPolicy has no metadata.namespace — the
+  // Namespace field's value goes into the endpointSelector instead, below.
+  if (!isClusterwide && model.namespace) {
     lines.push(`  namespace: ${model.namespace}`)
   }
   lines.push('spec:')
@@ -121,6 +177,12 @@ export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
     for (const [k, v] of targetLabelEntries) {
       lines.push(`      ${k}: "${v}"`)
     }
+    if (isClusterwide && model.namespace) {
+      lines.push(`      io.kubernetes.pod.namespace: "${model.namespace}"`)
+    }
+  } else if (isClusterwide && model.namespace) {
+    lines.push('    matchLabels:')
+    lines.push(`      io.kubernetes.pod.namespace: "${model.namespace}"`)
   } else {
     lines.push('    matchLabels: {}')
   }
@@ -200,7 +262,15 @@ export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
   }
 
   // egress
-  if (model.egressRules.length > 0) {
+  if (model.egressDenyAll) {
+    // The one Cilium-valid way to write "deny all egress" — a bare empty
+    // `egress: []` doesn't work, Sanitize() rejects a rule with none of
+    // Ingress/IngressDeny/Egress/EgressDeny at all (same finding as
+    // ingress's own ingressDeny fallback above, confirmed against the
+    // vendored policy engine — see examples/postgres-default-deny.yaml).
+    lines.push('  egressDeny:')
+    lines.push('    - {}')
+  } else if (model.egressRules.length > 0) {
     lines.push('  egress:')
     for (const rule of model.egressRules) {
       let emittedAny = false
@@ -240,6 +310,24 @@ export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
         lines.push('    - toEntities:')
         for (const ent of rule.toEntities) {
           lines.push(`        - ${ent}`)
+        }
+        appendPortLines(lines, rule.toPorts, '      ')
+      }
+
+      // toServices rule item (separate list entry) — scoped to the simple
+      // K8sService{name, namespace} form only (Cilium's api.Service also
+      // supports K8sServiceSelector, selecting a whole set of Services by
+      // label; deferred as a v1 simplification, same spirit as this
+      // editor's existing toPorts/toCIDR scope decisions).
+      if (rule.toServices.length > 0) {
+        emittedAny = true
+        lines.push('    - toServices:')
+        for (const svc of rule.toServices) {
+          lines.push('        - k8sService:')
+          lines.push(`            serviceName: "${svc.serviceName}"`)
+          if (svc.namespace) {
+            lines.push(`            namespace: "${svc.namespace}"`)
+          }
         }
         appendPortLines(lines, rule.toPorts, '      ')
       }

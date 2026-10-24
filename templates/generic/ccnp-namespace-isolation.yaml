@@ -1,0 +1,42 @@
+# Clusterwide equivalent of generic/namespace-isolation.yaml — and the
+# reason it looks different rather than just swapping `kind:`. A
+# CiliumClusterwideNetworkPolicy has no "own namespace" for Cilium to
+# implicitly scope an empty peer selector to: for a clusterwide policy,
+# getEndpointSelector (pkg/k8s/apis/cilium.io/utils/utils.go in the vendored
+# github.com/cilium/cilium@v1.20.2) instead adds only a "has some namespace
+# label" existence check to an empty selector — i.e. it matches pods in
+# EVERY namespace, not just one. Confirmed directly against that source,
+# not assumed: reusing namespace-isolation.yaml's `matchLabels: {}` verbatim
+# as a CCNP would silently become "allow from any namespace," the opposite
+# of what this policy's name promises.
+#
+# There is no generic "same namespace as the target" pattern for a CCNP —
+# this template pins one explicit namespace instead, on the target AND both
+# peer selectors via io.kubernetes.pod.namespace. Set PLACEHOLDER-NAMESPACE
+# to the namespace you're isolating before using (the Policy Editor's
+# "Namespace" field does this for all three at once).
+#
+# Real use case for the clusterwide form instead of the plain CNP: the
+# isolation then survives even if that namespace's own CNPs are later
+# deleted or were never created, and it can be applied without needing edit
+# access inside the namespace itself.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: ccnp-namespace-isolation
+  annotations:
+    guardbee.io/display-name: "Namespace Isolation (Clusterwide)"
+    guardbee.io/category: "Cluster-wide (CCNP)"
+spec:
+  description: "Clusterwide: restrict one explicit namespace to intra-namespace ingress/egress only. Set the namespace on the target and both peer selectors."
+  endpointSelector:
+    matchLabels:
+      io.kubernetes.pod.namespace: "PLACEHOLDER-NAMESPACE"
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: "PLACEHOLDER-NAMESPACE"
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: "PLACEHOLDER-NAMESPACE"

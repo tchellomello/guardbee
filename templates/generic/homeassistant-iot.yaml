@@ -5,6 +5,7 @@ metadata:
   namespace: homeassistant
   annotations:
     policy-simulator.cilium.io/display-name: "Home Assistant & MQTT"
+    guardbee.io/category: "Common Services"
 spec:
   description: "Allow Mosquitto MQTT ingress and Prometheus metrics scraping"
   endpointSelector:

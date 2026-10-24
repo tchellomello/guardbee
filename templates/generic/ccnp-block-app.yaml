@@ -1,0 +1,32 @@
+# Clusterwide equivalent of generic/default-deny.yaml: block all ingress
+# and egress for one application in one explicit namespace, enforced as a
+# CiliumClusterwideNetworkPolicy instead of a namespace-scoped CNP.
+#
+# Real use case: killing a compromised or misbehaving workload's traffic
+# immediately, without needing edit access to (or even touching) whatever
+# CNPs already exist in its namespace — the clusterwide policy wins
+# regardless of what else selects the same pods, since Cilium merges every
+# applicable policy and denies take priority.
+#
+# Both the app label and the namespace must be explicit here — a CCNP has
+# no "current namespace" to default to (see ccnp-namespace-isolation.yaml's
+# comment for the underlying reason, confirmed against the vendored
+# github.com/cilium/cilium@v1.20.2 policy engine). Like
+# generic/default-deny.yaml, egressDeny is required explicitly: an endpoint
+# with no egress/egressDeny key at all keeps default-allow egress even
+# though ingress alone already default-denies with zero ingress rules.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: ccnp-block-app
+  annotations:
+    guardbee.io/display-name: "Block an Application (Clusterwide)"
+    guardbee.io/category: "Cluster-wide (CCNP)"
+spec:
+  description: "Clusterwide: block all ingress and egress for one application in one namespace. Set the app label and namespace to target it — nothing in or out until rules are added."
+  endpointSelector:
+    matchLabels:
+      app: "PLACEHOLDER-APP"
+      io.kubernetes.pod.namespace: "PLACEHOLDER-NAMESPACE"
+  egressDeny:
+    - {}

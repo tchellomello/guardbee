@@ -1,7 +1,21 @@
-import { useState } from 'react'
-import { fetchFlows, type FlowsResponse } from '../api'
+import { useEffect, useState } from 'react'
+import { fetchFlows, fetchPods, type Flow, type FlowsResponse } from '../api'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { FlowsGraph } from './FlowsGraph'
+import { classifyTrafficPeer } from './RuleEditorCard'
+import { parseNamespacePod } from '../shared/podLabels'
+import type { EgressRule, IngressRule, Protocol } from '../policy'
+
+// Flows' own L4 field is a pre-formatted "TCP:8080"/"UDP:53" string (see
+// ui.go's l4String, which only ever emits those two forms or "-" for
+// anything else), not separate port/protocol fields the way a Verdict row
+// already has — parsed here rather than changing that wire format just for
+// this one feature.
+function parseL4(l4: string): { port: string; protocol: Protocol } | null {
+  const m = /^(TCP|UDP):(\d+)$/.exec(l4)
+  if (!m) return null
+  return { port: m[2], protocol: m[1] as Protocol }
+}
 
 // Matches the CLI's own flowVerdictColor (colors.go): green for FORWARDED,
 // red for DROPPED, amber for AUDIT.
@@ -21,7 +35,17 @@ export interface FlowsRunItem {
   isCollapsed?: boolean
 }
 
-export function FlowsPanel() {
+export interface FlowsPanelProps {
+  // Mirrors VerdictPanelProps's own policyNamespace/onAppendRuleToPolicy —
+  // lets a real observed flow become a rule on the Policy Editor's
+  // in-progress draft directly, the same shortcut Verdict rows already
+  // have, instead of forcing a detour through Verdict first just to get a
+  // flow onto the draft.
+  policyNamespace?: string
+  onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
+}
+
+export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy }: FlowsPanelProps = {}) {
   const [namespace, setNamespace] = useState('')
   const [allNamespaces, setAllNamespaces] = useState(false)
   const [last, setLast] = useState(20)
@@ -190,6 +214,8 @@ export function FlowsPanel() {
           onDuplicate={handleDuplicateToForm}
           onRemove={handleRemoveRun}
           onToggleCollapse={handleToggleCollapse}
+          policyNamespace={policyNamespace}
+          onAppendRuleToPolicy={onAppendRuleToPolicy}
         />
       ))}
     </div>
@@ -202,12 +228,16 @@ function FlowRunCard({
   onDuplicate,
   onRemove,
   onToggleCollapse,
+  policyNamespace,
+  onAppendRuleToPolicy,
 }: {
   run: FlowsRunItem
   runNumber: number
   onDuplicate: (run: FlowsRunItem) => void
   onRemove: (id: string) => void
   onToggleCollapse: (id: string) => void
+  policyNamespace: string
+  onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
 
@@ -324,7 +354,7 @@ function FlowRunCard({
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="border-b border-line bg-panel-raised">
                   <tr>
-                    {['Time', 'Verdict', 'Source', 'Destination', 'L4', 'Drop Reason'].map((h) => (
+                    {['Time', 'Verdict', 'Source', 'Destination', 'L4', 'Drop Reason', ''].map((h) => (
                       <th key={h} className="px-3 py-2 text-[0.65rem] font-semibold tracking-[0.1em] text-ink-dim uppercase">
                         {h}
                       </th>
@@ -372,6 +402,15 @@ function FlowRunCard({
                             dropped flows, never guessed for a forwarded one. */}
                         {f.dropReason ?? ''}
                       </td>
+                      <td className="px-3 py-2">
+                        {onAppendRuleToPolicy && (
+                          <AddFlowToPolicyButton
+                            flow={f}
+                            policyNamespace={policyNamespace}
+                            onAppend={onAppendRuleToPolicy}
+                          />
+                        )}
+                      </td>
                     </tr>
                     )
                   })}
@@ -379,6 +418,128 @@ function FlowRunCard({
               </table>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Turns an observed Hubble flow directly into a rule on the Policy
+// Editor's in-progress draft — the Flows tab's own version of
+// VerdictPanel.tsx's AddToPolicyButton, same direction-inference logic
+// (destination matching the draft's namespace means ingress, source
+// matching means egress), just sourced from a raw Flow instead of a judged
+// VerdictRow (so no change/protocol/port fields already split out — l4 is
+// parsed via parseL4 above, and there's no "change !== UNCHANGED" gate
+// since every row here is an actually-observed flow, not a judged one).
+function AddFlowToPolicyButton({
+  flow,
+  policyNamespace,
+  onAppend,
+}: {
+  flow: Flow
+  policyNamespace: string
+  onAppend: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [added, setAdded] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!error) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setError(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [error])
+
+  const dstNamespace = parseNamespacePod(flow.destination)?.namespace
+  const srcNamespace = parseNamespacePod(flow.source)?.namespace
+  const direction: 'ingress' | 'egress' | null =
+    policyNamespace && dstNamespace === policyNamespace
+      ? 'ingress'
+      : policyNamespace && srcNamespace === policyNamespace
+      ? 'egress'
+      : null
+
+  if (!direction) return null
+
+  const peer = direction === 'ingress' ? flow.source : flow.destination
+  const peerNamespace = parseNamespacePod(peer)?.namespace
+  const l4 = parseL4(flow.l4)
+
+  async function handleClick() {
+    setBusy(true)
+    setError(null)
+    try {
+      const peerPodsByNs = peerNamespace ? { [peerNamespace]: (await fetchPods(peerNamespace)).pods } : {}
+      const classified = classifyTrafficPeer(peer, peerPodsByNs)
+      let endpoints: { matchLabels: Record<string, string>; namespace?: string }[] = []
+      let cidrs: string[] = []
+      let entities: string[] = []
+      if (classified.kind === 'pod' && classified.label) {
+        const [key, value] = classified.label
+        endpoints = [{ matchLabels: { [key]: value }, namespace: peerNamespace }]
+      } else if (classified.kind === 'entity' && classified.entity) {
+        entities = [classified.entity]
+      } else if (classified.kind === 'cidr' && classified.cidr) {
+        cidrs = [classified.cidr]
+      } else {
+        setError(`Can't represent "${peer}" as a rule peer yet`)
+        setBusy(false)
+        return
+      }
+
+      const toPorts = l4 ? [{ port: l4.port, protocol: l4.protocol }] : []
+
+      if (direction === 'ingress') {
+        onAppend('ingress', {
+          id: `ingress-${Date.now()}`,
+          fromEndpoints: endpoints,
+          fromCIDRs: cidrs,
+          fromEntities: entities,
+          toPorts,
+        })
+      } else {
+        onAppend('egress', {
+          id: `egress-${Date.now()}`,
+          toEndpoints: endpoints,
+          toCIDRs: cidrs,
+          toEntities: entities,
+          toServices: [],
+          toPorts,
+        })
+      }
+      setBusy(false)
+      setAdded(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy || added}
+        title={
+          added
+            ? 'Already added to the in-progress policy'
+            : `Add this ${direction === 'ingress' ? 'source' : 'destination'} as a rule on the in-progress policy (${policyNamespace})`
+        }
+        className="whitespace-nowrap border border-signal/40 bg-signal/5 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-signal hover:bg-signal/10 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {added ? '✓ Added' : busy ? 'Adding…' : '+ Add to Policy'}
+      </button>
+      {error && (
+        <div
+          role="alert"
+          className="absolute right-0 top-full z-10 mt-1 w-56 border border-drop/40 bg-panel p-2 text-[0.65rem] text-drop shadow-lg"
+        >
+          {error}
         </div>
       )}
     </div>

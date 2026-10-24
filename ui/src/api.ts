@@ -125,6 +125,10 @@ export interface GenericPolicyTemplate {
   id: string
   name: string
   description: string
+  // Free-text grouping for the Policy Editor's "Presets & Starters" menu
+  // (see templates.go's guardbeeCategoryAnnotation) — "" for a template
+  // that hasn't been categorized, grouped under PresetMenu's fallback.
+  category: string
   policy: Omit<PolicyModel, 'ingressRules' | 'egressRules'> & {
     ingressRules: Omit<IngressRule, 'id'>[]
     egressRules: Omit<EgressRule, 'id'>[]
@@ -177,5 +181,17 @@ export function fetchPolicies(namespace: string): Promise<PoliciesResponse> {
   const params = new URLSearchParams()
   if (namespace) params.set('namespace', namespace)
   return fetch(`/api/policies?${params}`).then((res) => parseErrorOrJSON<PoliciesResponse>(res))
+}
+
+// EditablePolicyModel is the same shape GenericPolicyTemplate.policy already
+// uses — "Edit in Policy Editor" (GET /api/policies/edit) reuses that one
+// JSON shape rather than inventing a second one, so the frontend's existing
+// "load a preset" code path handles a live policy with no new parsing logic.
+export type EditablePolicyModel = GenericPolicyTemplate['policy']
+
+export function fetchPolicyForEdit(kind: string, namespace: string, name: string): Promise<EditablePolicyModel> {
+  const params = new URLSearchParams({ kind, name })
+  if (namespace) params.set('namespace', namespace)
+  return fetch(`/api/policies/edit?${params}`).then((res) => parseErrorOrJSON<EditablePolicyModel>(res))
 }
 

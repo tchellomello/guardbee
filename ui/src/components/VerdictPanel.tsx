@@ -788,6 +788,7 @@ function AddToPolicyButton({
           toEndpoints: fields.endpoints,
           toCIDRs: fields.cidrs,
           toEntities: fields.entities,
+          toServices: [],
           toPorts,
         })
       }

@@ -26,6 +26,7 @@ function emptyEgressRule(overrides: Partial<EgressRule> = {}): EgressRule {
     toEndpoints: [],
     toCIDRs: [],
     toEntities: [],
+    toServices: [],
     toPorts: [],
     ...overrides,
   }
@@ -128,6 +129,70 @@ describe('generateCiliumNetworkPolicyYAML', () => {
     const yaml = generateCiliumNetworkPolicyYAML(model)
     expect(yaml).toContain('    matchLabels: {}')
   })
+
+  it('emits an explicit egressDeny when egressDenyAll is set, instead of omitting egress', () => {
+    const model: PolicyModel = { ...BLANK_POLICY, egressDenyAll: true }
+    const yaml = generateCiliumNetworkPolicyYAML(model)
+    expect(yaml).toContain('  egressDeny:\n    - {}')
+    expect(yaml).not.toContain('  egress:')
+  })
+
+  it('omits egress entirely (default-allow) when egressDenyAll is false and there are no egress rules', () => {
+    const yaml = generateCiliumNetworkPolicyYAML(BLANK_POLICY)
+    expect(yaml).not.toContain('egress')
+  })
+
+  it('emits a CiliumClusterwideNetworkPolicy with no metadata.namespace', () => {
+    const model: PolicyModel = {
+      ...BLANK_POLICY,
+      kind: 'CiliumClusterwideNetworkPolicy',
+      namespace: 'homeassistant',
+    }
+    const yaml = generateCiliumNetworkPolicyYAML(model)
+    expect(yaml).toContain('kind: CiliumClusterwideNetworkPolicy')
+    expect(yaml).not.toContain('namespace: homeassistant')
+  })
+
+  it('folds the clusterwide target namespace into an explicit io.kubernetes.pod.namespace match label', () => {
+    const model: PolicyModel = {
+      ...BLANK_POLICY,
+      kind: 'CiliumClusterwideNetworkPolicy',
+      namespace: 'homeassistant',
+      targetLabels: { app: 'backend' },
+    }
+    const yaml = generateCiliumNetworkPolicyYAML(model)
+    expect(yaml).toContain('      app: "backend"')
+    expect(yaml).toContain('      io.kubernetes.pod.namespace: "homeassistant"')
+  })
+
+  it('a clusterwide policy with no target namespace set matches that app across every namespace', () => {
+    const model: PolicyModel = {
+      ...BLANK_POLICY,
+      kind: 'CiliumClusterwideNetworkPolicy',
+      namespace: '',
+      targetLabels: { app: 'backend' },
+    }
+    const yaml = generateCiliumNetworkPolicyYAML(model)
+    expect(yaml).not.toContain('io.kubernetes.pod.namespace')
+  })
+
+  it('renders a toServices egress rule as its own rule item', () => {
+    const model: PolicyModel = {
+      ...BLANK_POLICY,
+      egressRules: [
+        emptyEgressRule({
+          toServices: [{ serviceName: 'postgres', namespace: 'data' }],
+          toPorts: [{ port: '5432', protocol: 'TCP' }],
+        }),
+      ],
+    }
+    const yaml = generateCiliumNetworkPolicyYAML(model)
+    expect(yaml).toContain('    - toServices:')
+    expect(yaml).toContain('        - k8sService:')
+    expect(yaml).toContain('            serviceName: "postgres"')
+    expect(yaml).toContain('            namespace: "data"')
+    expect(yaml).toContain('      toPorts:')
+  })
 })
 
 describe('ruleHasNoEffectiveSelector', () => {
@@ -168,6 +233,12 @@ describe('ruleProducesNoOutput', () => {
   it('is false once ports are set', () => {
     expect(
       ruleProducesNoOutput(emptyIngressRule({ toPorts: [{ port: '80', protocol: 'TCP' }] })),
+    ).toBe(false)
+  })
+
+  it('is false once toServices is set', () => {
+    expect(
+      ruleProducesNoOutput(emptyEgressRule({ toServices: [{ serviceName: 'postgres', namespace: 'data' }] })),
     ).toBe(false)
   })
 })

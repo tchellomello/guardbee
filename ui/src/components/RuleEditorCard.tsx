@@ -15,7 +15,7 @@ import {
   workloadSignature,
 } from '../shared/podLabels'
 import { useAnchoredPosition } from '../shared/useAnchoredPosition'
-import type { EgressRule, EndpointSelectorRule, IngressRule, Protocol } from '../policy'
+import type { EgressRule, EndpointSelectorRule, IngressRule, K8sServiceRef, Protocol } from '../policy'
 
 export function RuleEditorCard({
   ruleNumber,
@@ -119,6 +119,25 @@ export function RuleEditorCard({
     onUpdate(isIngress ? { ...rule, fromCIDRs: next } : { ...rule, toCIDRs: next })
   }
 
+  // Services (toServices) — egress-only, no fromServices equivalent exists
+  // in the real Cilium API.
+  const services = isIngress ? [] : (rule as EgressRule).toServices
+
+  function handleAddService() {
+    const next = [...services, { serviceName: '', namespace: targetNamespace }]
+    onUpdate({ ...rule, toServices: next } as EgressRule)
+  }
+
+  function handleUpdateService(idx: number, updated: K8sServiceRef) {
+    const next = services.map((s, i) => (i === idx ? updated : s))
+    onUpdate({ ...rule, toServices: next } as EgressRule)
+  }
+
+  function handleRemoveService(idx: number) {
+    const next = services.filter((_, i) => i !== idx)
+    onUpdate({ ...rule, toServices: next } as EgressRule)
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between border-b border-line pb-2">
@@ -206,6 +225,56 @@ export function RuleEditorCard({
       </div>
 
       <MatchingPodsPreview endpoints={endpoints} fallbackNamespace={targetNamespace} />
+
+      {/* Services (toServices) — egress-only */}
+      {!isIngress && (
+        <div className="space-y-2 pt-2 border-t border-line/60">
+          <div className="flex items-center justify-between">
+            <label className="text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
+              ⇄ K8s Services (toServices)
+            </label>
+            <button
+              type="button"
+              onClick={handleAddService}
+              className="text-[0.65rem] text-signal hover:underline cursor-pointer"
+            >
+              + Add Service
+            </button>
+          </div>
+          {services.map((svc, idx) => (
+            <div key={idx} className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={svc.serviceName}
+                placeholder="service name (postgres)"
+                onChange={(e) => handleUpdateService(idx, { ...svc, serviceName: e.target.value })}
+                className="w-40 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
+              />
+              <input
+                type="text"
+                list="rule-editor-peer-namespaces"
+                value={svc.namespace}
+                placeholder="namespace"
+                onChange={(e) => handleUpdateService(idx, { ...svc, namespace: e.target.value })}
+                className="w-36 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => handleRemoveService(idx)}
+                className="text-xs text-ink-dim hover:text-drop cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          {services.length === 0 && (
+            <p className="text-xs text-ink-faint italic">
+              Scoped to selecting one Service by name — a label-based selector over a whole set of Services
+              isn't supported in this editor yet.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Entities & CIDRs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-line/60">

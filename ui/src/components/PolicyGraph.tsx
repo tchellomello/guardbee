@@ -177,6 +177,7 @@ interface PolicyGraphProps {
   onAddEgressRule: (rule?: EgressRule) => string
   onUpdateEgressRule: (id: string, updated: EgressRule) => void
   onRemoveEgressRule: (id: string) => void
+  onToggleEgressDenyAll: () => void
 }
 
 export function PolicyGraph({
@@ -193,6 +194,7 @@ export function PolicyGraph({
   onAddEgressRule,
   onUpdateEgressRule,
   onRemoveEgressRule,
+  onToggleEgressDenyAll,
 }: PolicyGraphProps) {
   const { theme } = useTheme()
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -412,6 +414,7 @@ export function PolicyGraph({
           onAddEgress={handleAddEgress}
           onUpdateEgressRule={onUpdateEgressRule}
           onRemoveEgress={handleRemoveEgress}
+          onToggleEgressDenyAll={onToggleEgressDenyAll}
         />
       )}
     </div>
@@ -432,6 +435,7 @@ function SelectedNodeEditorPanel({
   onAddEgress,
   onUpdateEgressRule,
   onRemoveEgress,
+  onToggleEgressDenyAll,
 }: {
   detail: NodeDetail
   policy: PolicyModel
@@ -439,6 +443,7 @@ function SelectedNodeEditorPanel({
   ingressPresets: IngressRulePreset[]
   egressPresets: EgressRulePreset[]
   onClose: () => void
+  onToggleEgressDenyAll: () => void
   onUpdateTargetLabels: (labels: Record<string, string>) => void
   onAddIngress: (rule?: IngressRule) => void
   onUpdateIngressRule: (id: string, updated: IngressRule) => void
@@ -549,18 +554,38 @@ function SelectedNodeEditorPanel({
       )}
 
       {detail.kind === 'egress-add' && (
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-ink-dim">
-            {policy.egressRules.length === 0
-              ? 'All egress is allowed by default until a rule is added to restrict it.'
-              : 'Add another egress destination — blank or from a preset.'}
-          </p>
-          <AddRuleMenu
-            label="Add Egress Rule"
-            presets={egressPresets}
-            onAddBlank={() => onAddEgress()}
-            onAddPreset={(preset) => onAddEgress({ ...preset.rule, id: `egress-${Date.now()}` })}
-          />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-ink-dim">
+              {policy.egressDenyAll
+                ? 'Egress is explicitly denied (egressDeny) — turn it off to add rules again.'
+                : policy.egressRules.length === 0
+                ? 'All egress is allowed by default until a rule is added to restrict it.'
+                : 'Add another egress destination — blank or from a preset.'}
+            </p>
+            {!policy.egressDenyAll && (
+              <AddRuleMenu
+                label="Add Egress Rule"
+                presets={egressPresets}
+                onAddBlank={() => onAddEgress()}
+                onAddPreset={(preset) => onAddEgress({ ...preset.rule, id: `egress-${Date.now()}` })}
+              />
+            )}
+          </div>
+          {policy.egressRules.length === 0 && (
+            <button
+              type="button"
+              onClick={onToggleEgressDenyAll}
+              className={
+                'w-full border border-dashed px-2.5 py-1.5 text-[0.65rem] font-bold uppercase tracking-wider transition-colors cursor-pointer ' +
+                (policy.egressDenyAll
+                  ? 'border-signal text-signal hover:bg-signal/10'
+                  : 'border-drop/40 text-drop hover:bg-drop/10')
+              }
+            >
+              {policy.egressDenyAll ? '↺ Allow editing egress rules again' : '⛔ Deny all egress (egressDeny)'}
+            </button>
+          )}
         </div>
       )}
 
@@ -788,7 +813,7 @@ function buildGraph(
           Ingress: {policy.ingressRules.length > 0 ? 'Managed' : 'Default Deny'}
         </span>
         <span className="border border-line bg-panel px-1 text-ink-dim">
-          Egress: {policy.egressRules.length > 0 ? 'Managed' : 'Default Allow'}
+          Egress: {policy.egressDenyAll ? 'Default Deny' : policy.egressRules.length > 0 ? 'Managed' : 'Default Allow'}
         </span>
       </div>
     </div>
@@ -931,7 +956,13 @@ function buildGraph(
       .join('; ')
     const cidrs = rule.toCIDRs.join(', ')
     const entities = rule.toEntities.join(', ')
-    const desc = [endpoints, cidrs ? `CIDR: ${cidrs}` : '', entities ? `Entities: ${entities}` : '']
+    const services = rule.toServices.map((s) => `${s.serviceName}${s.namespace ? `.${s.namespace}` : ''}`).join(', ')
+    const desc = [
+      endpoints,
+      cidrs ? `CIDR: ${cidrs}` : '',
+      entities ? `Entities: ${entities}` : '',
+      services ? `Services: ${services}` : '',
+    ]
       .filter(Boolean)
       .join(' | ') || 'To any peer'
     const icons = peerIcons(rule.toEndpoints.length > 0, rule.toEntities, rule.toCIDRs.length > 0)
@@ -994,14 +1025,23 @@ function buildGraph(
     })
   })
 
-  const egressAddClass = policy.egressRules.length === 0 ? emptyAllowClass : addNodeClass
+  const egressAddClass = policy.egressDenyAll
+    ? emptyDenyClass
+    : policy.egressRules.length === 0
+    ? emptyAllowClass
+    : addNodeClass
   initialNodes.push({
     id: 'egress-add',
     position: { x: COLUMN_X_EGRESS, y: policy.egressRules.length * ROW_HEIGHT },
     data: {
       label: (
         <div className="text-center">
-          {policy.egressRules.length === 0 ? (
+          {policy.egressDenyAll ? (
+            <>
+              <div className="text-[0.65rem] font-semibold uppercase tracking-wider mb-0.5">Egress Traffic</div>
+              <div className="text-xs">🔒 Default Deny — click to re-enable rules</div>
+            </>
+          ) : policy.egressRules.length === 0 ? (
             <>
               <div className="text-[0.65rem] font-semibold uppercase tracking-wider mb-0.5">Egress Traffic</div>
               <div className="text-xs">+ Default Allow — click to restrict</div>
