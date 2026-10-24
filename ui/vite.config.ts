@@ -1,10 +1,16 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  test: {
+    // Pure-function unit tests only (policy.ts's YAML generator and rule
+    // detectors) — no DOM/React rendering, so the default Node environment
+    // is enough and jsdom/happy-dom aren't needed as dependencies.
+    include: ['src/**/*.test.ts'],
+  },
   build: {
     rollupOptions: {
       output: {

@@ -27,7 +27,15 @@ import '@xyflow/react/dist/style.css'
 import { AddRuleMenu, RuleEditorCard } from './RuleEditorCard'
 import { groupPodsBySignature, useNamespacePods } from '../shared/podLabels'
 import { useAnchoredPosition } from '../shared/useAnchoredPosition'
-import type { EgressRule, EgressRulePreset, IngressRule, IngressRulePreset, PolicyModel } from '../policy'
+import {
+  ruleHasNoEffectiveSelector,
+  ruleProducesNoOutput,
+  type EgressRule,
+  type EgressRulePreset,
+  type IngressRule,
+  type IngressRulePreset,
+  type PolicyModel,
+} from '../policy'
 import { useTheme } from '../theme'
 
 // Raw (non-JSX) description of a node, carried alongside its rendered label
@@ -54,9 +62,32 @@ const BASE_NODE_CLASS =
   '!w-[240px] !whitespace-normal !break-words !rounded-none !border !px-3 !py-2.5 !text-xs !font-mono cursor-pointer transition-all duration-200 select-none'
 
 const ROW_HEIGHT = 130
-const COLUMN_X_INGRESS = 0
-const COLUMN_X_TARGET = 540
-const COLUMN_X_EGRESS = 1080
+const NODE_WIDTH = 240
+const COLUMN_GAP = 40
+// Floor for the width used in column math, not a floor on the real
+// container — it's just enough for three 240px node boxes with a 40px gap
+// between each so they never visually overlap. A narrow real container
+// still overflows this (same as the old fixed 1320px-wide layout did), and
+// fitView's zoom-out is what makes that legible, not squeezing the columns
+// together.
+const MIN_LAYOUT_WIDTH = 3 * NODE_WIDTH + 2 * COLUMN_GAP
+
+// Column anchor X positions as a function of the actual rendered container
+// width, rather than fixed pixel constants — fixed constants left large
+// dead margins on a wide viewport (fitView fitting a ~1320px-wide layout
+// into a much wider container) and pushed the Target/Egress columns
+// off-canvas on a narrow one (minZoom couldn't zoom out far enough to fit
+// 1320px into ~390px). Scaling the anchors to the container means the
+// layout always spans close to the full width, so fitView fills the
+// available space at any viewport size.
+function computeColumnX(width: number) {
+  const w = Math.max(width, MIN_LAYOUT_WIDTH)
+  return {
+    ingress: 0,
+    target: w / 2 - NODE_WIDTH / 2,
+    egress: w - NODE_WIDTH,
+  }
+}
 
 interface PolicyEdgeData {
   label: string
@@ -219,11 +250,14 @@ export function PolicyGraph({
   // the Policy Editor tab stays mounted-but-hidden (display:none) when
   // another tab is active — so React Flow's one-time `fitView` on mount can
   // run against a collapsed 0-size container and never re-fit once the tab
-  // is actually shown. Watch the container for a real resize (hidden→shown)
-  // and re-fit then; ignore ordinary resizes so this doesn't fight the
-  // user's own pan/zoom.
+  // is actually shown. Watch the container for a real resize (hidden→shown,
+  // or an ordinary width change now that column anchors scale with it) and
+  // re-fit then.
   const graphContainerRef = useRef<HTMLDivElement>(null)
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
+  // Real container width, fed into buildGraph so the column anchors
+  // (computeColumnX) track it instead of using fixed pixel constants.
+  const [containerWidth, setContainerWidth] = useState(0)
 
   useEffect(() => {
     const el = graphContainerRef.current
@@ -233,14 +267,24 @@ export function PolicyGraph({
       const width = el.clientWidth
       if (lastWidth < 10 && width >= 10) {
         rfInstance.fitView({ padding: 0.2 })
+      } else if (Math.abs(width - lastWidth) > 40) {
+        // An ordinary resize, not just the hidden-tab 0→visible transition
+        // above — re-fit so the now width-dependent column layout keeps
+        // filling the container after a window resize instead of drifting
+        // off-center.
+        rfInstance.fitView({ padding: 0.2 })
       }
       lastWidth = width
+      setContainerWidth(width)
     })
     observer.observe(el)
     return () => observer.disconnect()
   }, [rfInstance])
 
-  const { initialNodes: laidOutNodes, initialEdges } = useMemo(() => buildGraph(policy, theme), [policy, theme])
+  const { initialNodes: laidOutNodes, initialEdges } = useMemo(
+    () => buildGraph(policy, theme, containerWidth),
+    [policy, theme, containerWidth]
+  )
 
   const initialNodes = useMemo(
     () =>
@@ -338,7 +382,7 @@ export function PolicyGraph({
           fitViewOptions={{ padding: 0.2 }}
           proOptions={{ hideAttribution: true }}
           colorMode={theme}
-          minZoom={0.3}
+          minZoom={0.2}
         >
           <Background
             variant={BackgroundVariant.Dots}
@@ -407,9 +451,47 @@ function SelectedNodeEditorPanel({
   // so it's unmistakable that this node is the thing currently being
   // edited, without the user having to notice a panel appear far down the
   // page or scroll to find it.
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  // Captured once on mount (the element that had focus right before this
+  // modal opened) so it can be restored on close instead of leaving focus
+  // on whatever the modal's own markup happened to contain.
+  const previouslyFocusedRef = useRef<Element | null>(null)
+
+  useEffect(() => {
+    previouslyFocusedRef.current = document.activeElement
+    closeButtonRef.current?.focus()
+    return () => {
+      if (previouslyFocusedRef.current instanceof HTMLElement) {
+        previouslyFocusedRef.current.focus()
+      }
+    }
+  }, [])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      // Manual focus trap: keep Tab/Shift+Tab cycling within the panel's
+      // own focusable elements instead of escaping to the page behind it.
+      const panel = panelRef.current
+      if (!panel) return
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -422,12 +504,18 @@ function SelectedNodeEditorPanel({
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative z-10 max-h-[85vh] w-full max-w-2xl overflow-y-auto border border-signal/40 bg-panel p-5 shadow-2xl rise-in space-y-3">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        className="relative z-10 max-h-[85vh] w-full max-w-2xl overflow-y-auto border border-signal/40 bg-panel p-5 shadow-2xl rise-in space-y-3"
+      >
         <div className="flex items-center justify-between border-b border-line pb-2">
           <span className="font-display text-xs font-bold uppercase tracking-wider text-signal">
             Editing: {detail.title}
           </span>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="border border-line bg-void/60 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-drop hover:text-drop cursor-pointer"
@@ -667,10 +755,13 @@ function peerIcons(hasPeers: boolean, entities: string[], hasCidrs: boolean): st
 
 function buildGraph(
   policy: PolicyModel,
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light',
+  containerWidth: number
 ): { initialNodes: Node[]; initialEdges: CustomEdge[] } {
-  const signalColor = theme === 'dark' ? '#22e9c7' : '#007a68'
+  const signalColor = theme === 'dark' ? '#22e9c7' : '#0891b2'
   const allowColor = theme === 'dark' ? '#5ee8a5' : '#15803d'
+  const { ingress: COLUMN_X_INGRESS, target: COLUMN_X_TARGET, egress: COLUMN_X_EGRESS } =
+    computeColumnX(containerWidth)
 
   const targetLabels = Object.entries(policy.targetLabels)
     .filter(([k]) => k.trim())
@@ -745,10 +836,18 @@ function buildGraph(
       .filter(Boolean)
       .join(' | ') || 'From any peer'
     const icons = peerIcons(rule.fromEndpoints.length > 0, rule.fromEntities, rule.fromCIDRs.length > 0)
+    const noOutput = ruleProducesNoOutput(rule)
+    const warning = noOutput
+      ? '⚠ no effect — rule emits nothing'
+      : ruleHasNoEffectiveSelector(rule)
+      ? '⚠ matches everything'
+      : null
 
     const baseClass =
       BASE_NODE_CLASS +
-      ' !border-[var(--color-line-bright)] !bg-[var(--color-panel-raised)] !text-[var(--color-ink)]'
+      (warning
+        ? ' !border-allow/60 !bg-allow/10 !text-[var(--color-ink)]'
+        : ' !border-[var(--color-line-bright)] !bg-[var(--color-panel-raised)] !text-[var(--color-ink)]')
 
     initialNodes.push({
       id: ruleId,
@@ -760,6 +859,9 @@ function buildGraph(
               {icons && <span className="mr-1">{icons}</span>}Ingress Source #{idx + 1}
             </div>
             <div className="text-xs font-semibold text-ink line-clamp-2">{desc}</div>
+            {warning && (
+              <div className="mt-1 text-[0.6rem] font-bold uppercase tracking-wider text-allow">{warning}</div>
+            )}
           </div>
         ),
         detail: {
@@ -833,10 +935,18 @@ function buildGraph(
       .filter(Boolean)
       .join(' | ') || 'To any peer'
     const icons = peerIcons(rule.toEndpoints.length > 0, rule.toEntities, rule.toCIDRs.length > 0)
+    const noOutput = ruleProducesNoOutput(rule)
+    const warning = noOutput
+      ? '⚠ no effect — rule emits nothing'
+      : ruleHasNoEffectiveSelector(rule)
+      ? '⚠ matches everything'
+      : null
 
     const baseClass =
       BASE_NODE_CLASS +
-      ' !border-[var(--color-line-bright)] !bg-[var(--color-panel-raised)] !text-[var(--color-ink)]'
+      (warning
+        ? ' !border-allow/60 !bg-allow/10 !text-[var(--color-ink)]'
+        : ' !border-[var(--color-line-bright)] !bg-[var(--color-panel-raised)] !text-[var(--color-ink)]')
 
     initialNodes.push({
       id: ruleId,
@@ -848,6 +958,9 @@ function buildGraph(
               {icons && <span className="mr-1">{icons}</span>}Egress Dest #{idx + 1}
             </div>
             <div className="text-xs font-semibold text-ink line-clamp-2">{desc}</div>
+            {warning && (
+              <div className="mt-1 text-[0.6rem] font-bold uppercase tracking-wider text-allow">{warning}</div>
+            )}
           </div>
         ),
         detail: {

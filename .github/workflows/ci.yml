@@ -1,0 +1,33 @@
+name: CI
+
+# Runs on every PR (any branch) and on pushes to main — not on pushes to a
+# branch that already has an open PR, which would otherwise double-run this
+# for the same commit under both events.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same toolchain setup as release.yml: the exact Go version pinned in
+      # mise.toml, so CI never drifts from what `mise run check` uses
+      # locally. Node is deliberately not pinned via mise (see mise.toml's
+      # own comment on this) — setup-node below handles it instead.
+      - uses: jdx/mise-action@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # build + vet + test, in that order — go build, go vet, go test, and
+      # (via the "test" task's "ui-test" dependency) the frontend's vitest
+      # suite. The one task that matches what a contributor runs locally
+      # before pushing, so a passing local `mise run check` means CI passes
+      # too.
+      - name: mise run check
+        run: mise run check

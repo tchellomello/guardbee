@@ -1,4 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
 
 interface VerdictHelpModalProps {
   isOpen: boolean
@@ -7,13 +9,38 @@ interface VerdictHelpModalProps {
 }
 
 export function VerdictHelpModal({ isOpen, onClose, initialCategory }: VerdictHelpModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
+
   useEffect(() => {
     if (!isOpen) return
+    previousFocusRef.current = document.activeElement as HTMLElement | null
+    closeButtonRef.current?.focus()
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key === 'Tab' && panelRef.current) {
+        const focusable = panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      previousFocusRef.current?.focus()
+    }
   }, [isOpen, onClose])
 
   if (!isOpen) return null
@@ -28,7 +55,12 @@ export function VerdictHelpModal({ isOpen, onClose, initialCategory }: VerdictHe
       />
 
       {/* Modal Dialog */}
-      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col border border-line-bright bg-panel shadow-2xl text-ink font-mono text-xs overflow-hidden rise-in z-10">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        className="relative w-full max-w-2xl max-h-[90vh] flex flex-col border border-line-bright bg-panel shadow-2xl text-ink font-mono text-xs overflow-hidden rise-in z-10"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-line px-5 py-3.5 bg-panel-raised">
           <div className="flex items-center gap-2.5">
@@ -38,6 +70,7 @@ export function VerdictHelpModal({ isOpen, onClose, initialCategory }: VerdictHe
             </h2>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="flex h-6 w-6 items-center justify-center border border-line text-ink-dim hover:border-signal hover:text-ink transition-colors cursor-pointer"

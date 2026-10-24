@@ -32,7 +32,13 @@ export function PolicyEditorPanel({
   const [availableNamespaces, setAvailableNamespaces] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
   const [validation, setValidation] = useState<PolicyValidationResult | null>(null)
-  const [isValidating, setIsValidating] = useState(false)
+  // The YAML that `validation` is actually a result for. Comparing this to
+  // the current generatedYAML (every render, not just inside the effect)
+  // is what lets us know a check is stale/in-flight on the very first
+  // render after an edit — an isValidating flag toggled only from inside
+  // the effect would lag one paint behind the model change, letting the
+  // previous (now-stale) valid/invalid banner flash before it.
+  const [validatedYAML, setValidatedYAML] = useState<string | null>(null)
   const [yamlModalOpen, setYamlModalOpen] = useState(false)
   const { templates } = useTemplates()
   const genericPresets = useMemo(() => [BLANK_PRESET, ...templates.generic], [templates.generic])
@@ -44,23 +50,23 @@ export function PolicyEditorPanel({
   }, [])
 
   const generatedYAML = useMemo(() => generateCiliumNetworkPolicyYAML(model), [model])
+  const isValidating = validatedYAML !== generatedYAML
 
   // Real-time validation against Cilium's native engine
   useEffect(() => {
     let cancelled = false
-    setIsValidating(true)
     const timer = setTimeout(() => {
       validatePolicy(model.namespace, generatedYAML)
         .then((res) => {
           if (!cancelled) {
             setValidation(res)
-            setIsValidating(false)
+            setValidatedYAML(generatedYAML)
           }
         })
         .catch((err) => {
           if (!cancelled) {
             setValidation({ valid: false, error: err instanceof Error ? err.message : String(err) })
-            setIsValidating(false)
+            setValidatedYAML(generatedYAML)
           }
         })
     }, 150)
@@ -97,12 +103,19 @@ export function PolicyEditorPanel({
   // Ingress Rules helpers — return the new/removed rule's id so the graph
   // can auto-select the node it corresponds to right after the change.
   function handleAddIngressRule(rule?: IngressRule): string {
+    // A blank rule (no preset) starts with nothing pre-selected — no
+    // placeholder peer, no guessed port — so the only way to actually
+    // allow traffic is to deliberately pick entities/labels/ports in the
+    // rule editor. A previous version pre-filled an empty-key peer and
+    // port 80/TCP "to get you started," but that meant a user who clicked
+    // + Add Rule and moved on without looking closely could ship a rule
+    // that silently matched every pod in every namespace on port 80.
     const newRule: IngressRule = rule ?? {
       id: `ingress-${Date.now()}`,
-      fromEndpoints: [{ matchLabels: { app: '' } }],
+      fromEndpoints: [],
       fromCIDRs: [],
       fromEntities: [],
-      toPorts: [{ port: '80', protocol: 'TCP' }],
+      toPorts: [],
     }
     setModel((prev) => ({
       ...prev,
@@ -127,12 +140,16 @@ export function PolicyEditorPanel({
 
   // Egress Rules helpers
   function handleAddEgressRule(rule?: EgressRule): string {
+    // Same reasoning as handleAddIngressRule: a blank rule starts fully
+    // empty rather than pre-filled with an empty-key peer and a guessed
+    // port (53/UDP), so nothing is allowed until the user deliberately
+    // selects entities/labels/ports.
     const newRule: EgressRule = rule ?? {
       id: `egress-${Date.now()}`,
-      toEndpoints: [{ matchLabels: { app: '' } }],
+      toEndpoints: [],
       toCIDRs: [],
       toEntities: [],
-      toPorts: [{ port: '53', protocol: 'UDP' }],
+      toPorts: [],
     }
     setModel((prev) => ({
       ...prev,
@@ -335,6 +352,14 @@ export function PolicyEditorPanel({
             onClick={() => setYamlModalOpen(true)}
             title="Click to open a wider view"
             className="cursor-pointer border border-line bg-void p-4 font-mono text-xs overflow-x-auto max-h-[600px] shadow-inner text-ink leading-relaxed"
+            style={{
+              // Right-edge fade so a long line (e.g. a long `description:`)
+              // visually signals there's more to scroll to instead of just
+              // vanishing past the edge. Always-on rather than conditional
+              // on overflow — harmless when a line doesn't overflow.
+              WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 24px), transparent)',
+              maskImage: 'linear-gradient(to right, black calc(100% - 24px), transparent)',
+            }}
           >
             <pre className="text-ink selection:bg-signal/30 whitespace-pre">{generatedYAML}</pre>
           </div>

@@ -1,7 +1,7 @@
 // Node/flow diagram for raw Hubble flows with interactive node-level filtering,
 // anti-collision staggered edge labels, and theme support.
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -9,12 +9,15 @@ import {
   Controls,
   EdgeLabelRenderer,
   getBezierPath,
+  Handle,
   Position,
   ReactFlow,
   type Edge,
   type EdgeProps,
   type Node,
   type NodeChange,
+  type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { Flow } from '../api'
@@ -40,7 +43,13 @@ const BASE_NODE_CLASS =
   '!w-[240px] !whitespace-normal !break-words !rounded-none !border !px-3 !py-2.5 !text-xs !font-mono cursor-pointer transition-all duration-200 select-none'
 
 const ROW_HEIGHT = 130
-const COLUMN_GAP = 780
+const NODE_WIDTH = 240
+// Fallback column gap for the one frame before ResizeObserver reports a real
+// container width (buildGraph is called with containerWidth=0 then).
+const FALLBACK_COLUMN_GAP = 780
+// Fraction of measured container width kept clear on each side so columns
+// span close to the full canvas instead of a fixed, viewport-independent gap.
+const COLUMN_MARGIN_FRACTION = 0.04
 
 interface FlowEdgeData {
   verdict: string
@@ -80,6 +89,15 @@ function getBezierPoint(
   return [x, y]
 }
 
+// Edges spanning many rows get more curvature so they sweep around the
+// dense horizontal midline instead of cutting straight through it, reducing
+// crossing density on graphs with many flows — a straight/near-straight edge
+// between adjacent rows keeps its curvature small.
+function computeCurvature(sourceY: number, targetY: number): number {
+  const rowDistance = Math.abs(targetY - sourceY) / ROW_HEIGHT
+  return Math.min(0.6, 0.15 + rowDistance * 0.08)
+}
+
 function FlowEdgeComponent({
   id,
   sourceX,
@@ -91,6 +109,8 @@ function FlowEdgeComponent({
   style = {},
   data,
 }: EdgeProps<CustomEdge>) {
+  const curvature = computeCurvature(sourceY, targetY)
+
   const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
@@ -98,10 +118,11 @@ function FlowEdgeComponent({
     targetX,
     targetY,
     targetPosition,
+    curvature,
   })
 
   const t = data?.labelT ?? 0.5
-  const [labelX, labelY] = getBezierPoint(sourceX, sourceY, targetX, targetY, t)
+  const [labelX, labelY] = getBezierPoint(sourceX, sourceY, targetX, targetY, t, curvature)
   const isDimmed = data?.isDimmed ?? false
   const color = data?.color ?? '#5ee8a5'
   const verdict = data?.verdict ?? 'FORWARDED'
@@ -153,6 +174,50 @@ const edgeTypes = {
   flow: FlowEdgeComponent,
 }
 
+// Kubernetes pod names follow <workload>-<10-char-replicaset-hash>-<5-char-pod-hash>;
+// detect that shape so only the generated suffix gets truncated, rather than
+// a fixed character count that would mis-truncate short, hand-picked names.
+const POD_HASH_SUFFIX = /^(.+)-([a-z0-9]{8,10})-([a-z0-9]{5})$/
+
+function truncateWorkloadName(name: string): string {
+  const match = name.match(POD_HASH_SUFFIX)
+  if (!match) return name
+  const [, prefix, , podHash] = match
+  return `${prefix}-…${podHash.slice(-4)}`
+}
+
+function parseNodeLabel(raw: string): { namespace: string | null; workload: string } {
+  const slashIndex = raw.indexOf('/')
+  if (slashIndex === -1) return { namespace: null, workload: raw }
+  return { namespace: raw.slice(0, slashIndex), workload: raw.slice(slashIndex + 1) }
+}
+
+// Custom node renderer so a real label like
+// "observability/prometheus-snmp-exporter-76b49d99df-rgq8m" gets visual
+// hierarchy (dim namespace, bold workload name, truncated hash) instead of
+// one undifferentiated string — the full label stays available via `title`
+// for hover. Handles are drawn manually since overriding the node type opts
+// out of xyflow's default node rendering (which draws them automatically).
+function WorkloadNode({ data, sourcePosition, targetPosition }: NodeProps) {
+  const label = (data as { label?: string }).label ?? ''
+  const { namespace, workload } = parseNodeLabel(label)
+
+  return (
+    <>
+      <Handle type="target" position={targetPosition ?? Position.Left} />
+      <div title={label} className="flex flex-col gap-0.5">
+        {namespace && <span className="block text-ink-dim text-[10px] leading-tight">{namespace}</span>}
+        <span className="block text-ink font-semibold leading-tight">{truncateWorkloadName(workload)}</span>
+      </div>
+      <Handle type="source" position={sourcePosition ?? Position.Right} />
+    </>
+  )
+}
+
+const nodeTypes = {
+  workload: WorkloadNode,
+}
+
 interface FlowsGraphProps {
   flows: Flow[]
   // Selection is controlled by the parent (FlowRunCard) so clicking a table
@@ -164,6 +229,25 @@ interface FlowsGraphProps {
 
 export function FlowsGraph({ flows, selectedNodeId, onSelectNode }: FlowsGraphProps) {
   const { theme } = useTheme()
+
+  // Container ref so column X-positions can be derived from the actual
+  // rendered width instead of a fixed pixel gap — otherwise fitView ends up
+  // fitting a narrow fixed-width layout into a much wider viewport, leaving
+  // large dead margins on either side at wide viewports.
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+  const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (width) setContainerWidth(width)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   // User-dragged node positions, keyed by node id, layered on top of the
   // auto-layout buildGraph computes — so repositioning a box survives
@@ -185,9 +269,25 @@ export function FlowsGraph({ flows, selectedNodeId, onSelectNode }: FlowsGraphPr
   }, [])
 
   const { initialNodes: laidOutNodes, initialEdges } = useMemo(
-    () => buildGraph(flows, theme),
-    [flows, theme]
+    () => buildGraph(flows, theme, containerWidth),
+    [flows, theme, containerWidth]
   )
+
+  // <ReactFlow fitView /> only auto-fits the camera once, on first mount —
+  // it never re-fits when the nodes prop later changes. This graph's first
+  // mount typically happens with containerWidth still 0 (the ResizeObserver
+  // above hasn't reported yet), so buildGraph lays nodes out using the
+  // narrow fallback gap and the initial auto-fit zooms to that. The moment
+  // a real width comes in (and in --follow mode, every time new flows
+  // stream in and shift the layout), buildGraph recomputes correct,
+  // wider-spread node positions — but the camera never moves to match, so
+  // the actual nodes render outside the still-fitted-to-the-old-layout
+  // viewport: a graph with real data that looks completely empty. Re-running
+  // fitView whenever the computed layout changes keeps the camera honest.
+  useEffect(() => {
+    if (!rfInstance || laidOutNodes.length === 0) return
+    rfInstance.fitView({ padding: 0.25 })
+  }, [rfInstance, laidOutNodes])
 
   const initialNodes = useMemo(
     () =>
@@ -301,11 +401,13 @@ export function FlowsGraph({ flows, selectedNodeId, onSelectNode }: FlowsGraphPr
 
       {selectedNodeName && <NodeLabelsPanel nodeName={selectedNodeName} />}
 
-      <div className="border border-line bg-void relative" style={{ height }}>
+      <div className="border border-line bg-void relative" style={{ height }} ref={containerRef}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          onInit={setRfInstance}
           onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => onSelectNode(selectedNodeId === node.id ? null : node.id)}
           onPaneClick={() => onSelectNode(null)}
@@ -333,7 +435,8 @@ export function FlowsGraph({ flows, selectedNodeId, onSelectNode }: FlowsGraphPr
 
 function buildGraph(
   flows: Flow[],
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light',
+  containerWidth: number
 ): { initialNodes: Node[]; initialEdges: CustomEdge[] } {
   const colors = EDGE_COLORS[theme]
   const sources = Array.from(new Set(flows.map((f) => f.source))).sort()
@@ -343,10 +446,22 @@ function buildGraph(
     BASE_NODE_CLASS +
     ' !border-[var(--color-line-bright)] !bg-[var(--color-panel-raised)] !text-[var(--color-ink)] !shadow-[0_0_0_1px_var(--color-signal-glow)]'
 
+  // Source column near the left edge, destination column near the right
+  // edge, both as fractions of the measured container width so the graph
+  // spans close to the full canvas at any viewport size instead of a fixed
+  // pixel gap. Falls back to the old fixed gap for the one frame before
+  // ResizeObserver reports a real width.
+  const margin = containerWidth * COLUMN_MARGIN_FRACTION
+  const sourceX = containerWidth ? margin : 0
+  const destX = containerWidth
+    ? Math.max(sourceX + NODE_WIDTH + 40, containerWidth - margin - NODE_WIDTH)
+    : FALLBACK_COLUMN_GAP
+
   const initialNodes: Node[] = [
     ...sources.map((name, i) => ({
       id: `src:${name}`,
-      position: { x: 0, y: i * ROW_HEIGHT },
+      type: 'workload',
+      position: { x: sourceX, y: i * ROW_HEIGHT },
       data: { label: name },
       className: defaultNodeClass,
       sourcePosition: Position.Right,
@@ -354,7 +469,8 @@ function buildGraph(
     })),
     ...destinations.map((name, i) => ({
       id: `dst:${name}`,
-      position: { x: COLUMN_GAP, y: i * ROW_HEIGHT },
+      type: 'workload',
+      position: { x: destX, y: i * ROW_HEIGHT },
       data: { label: name },
       className: defaultNodeClass,
       sourcePosition: Position.Right,

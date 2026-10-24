@@ -44,16 +44,27 @@ html.light {
   --theme-ink-dim: #43605e;
   --theme-ink-faint: #7b9795;
 
-  --theme-signal: #007a68;
-  --theme-signal-dim: #ccfbf1;
-  --theme-signal-glow: rgba(0, 122, 104, 0.25);
+  /* Shifted from the original #007a68 (too close in hue/chroma to
+     --theme-unchanged's green at a glance) to a blue-leaning cyan so the
+     "signal" accent (primary actions, active tab) stays visually distinct
+     from the drop/allow/unchanged verdict semantics in light mode too. */
+  --theme-signal: #0891b2;
+  --theme-signal-dim: #cffafe;
+  --theme-signal-glow: rgba(8, 145, 178, 0.25);
 
   --theme-drop: #dc2626;
   --theme-allow: #b45309;
   --theme-unchanged: #15803d;
 
-  --theme-scanline: rgba(0, 122, 104, 0.02);
-  --theme-radial: rgba(0, 122, 104, 0.035);
+  /* Doubled from the original 0.02/0.035 — at that alpha the scanline+
+     radial wash was imperceptible against this theme's near-white
+     background (the same alpha reads clearly in dark mode because it's
+     sitting on near-black instead), making the "console atmosphere" this
+     app leans on dark-mode-only in practice. These values are tuned to be
+     the same faint texture light mode's own contrast actually needs, not
+     a copy of dark mode's numbers. */
+  --theme-scanline: rgba(8, 145, 178, 0.04);
+  --theme-radial: rgba(8, 145, 178, 0.07);
 
   color-scheme: light;
 }

@@ -1,0 +1,25 @@
+# Ingress rule preset: only spec.ingress[0] and spec.description are used by
+# the UI (see templates.go's loadTemplates). metadata.name/endpointSelector
+# are placeholders so this stays valid, loadable CiliumNetworkPolicy YAML.
+#
+# Log-shipping agents (Alloy, Promtail, Fluent Bit) typically run
+# cluster-wide as a DaemonSet or one per namespace, not from one fixed
+# namespace — fromEntities: cluster is the right shape here, not a
+# namespace-pinned fromEndpoints like prometheus-scrape.yaml uses.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ingress-rule-preset-loki-ingest
+  annotations:
+    policy-simulator.cilium.io/display-name: "Loki log ingest"
+spec:
+  description: "Allow log pushes from cluster-wide log-shipping agents (Alloy/Promtail/Fluent Bit) on Loki's HTTP push port (3100)"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEntities:
+        - cluster
+      toPorts:
+        - ports:
+            - port: "3100"
+              protocol: TCP

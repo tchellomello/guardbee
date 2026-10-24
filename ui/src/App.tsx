@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { FlowsPanel } from './components/FlowsPanel'
+import { PoliciesPanel } from './components/PoliciesPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
 import { VerdictPanel } from './components/VerdictPanel'
 import { ThemeToggle } from './components/ThemeToggle'
@@ -8,7 +9,7 @@ import { GitHubLink } from './components/GitHubLink'
 import { ThemeProvider } from './theme'
 import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 
-type Tab = 'verdict' | 'flows' | 'editor'
+type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
 
 export default function App() {
   return (
@@ -60,7 +61,7 @@ function AppContent() {
                 GuardBee
               </h1>
             </div>
-            <p className="mt-1 pl-16.5 text-xs text-ink-dim">
+            <p className="mt-1 sm:pl-16.5 text-xs text-ink-dim">
               which real flows on this cluster would a candidate policy break or newly allow?
             </p>
           </div>
@@ -71,6 +72,9 @@ function AppContent() {
               </TabButton>
               <TabButton active={tab === 'flows'} onClick={() => setTab('flows')}>
                 Flows
+              </TabButton>
+              <TabButton active={tab === 'policies'} onClick={() => setTab('policies')}>
+                Policies
               </TabButton>
               <TabButton active={tab === 'editor'} onClick={() => setTab('editor')}>
                 Policy Editor
@@ -98,6 +102,9 @@ function AppContent() {
         </div>
         <div className={tab === 'flows' ? '' : 'hidden'}>
           <FlowsPanel />
+        </div>
+        <div className={tab === 'policies' ? '' : 'hidden'}>
+          <PoliciesPanel />
         </div>
         <div className={tab === 'editor' ? '' : 'hidden'}>
           <PolicyEditorPanel

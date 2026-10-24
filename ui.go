@@ -98,6 +98,7 @@ Flags:
 	mux.HandleFunc("GET /api/flows", srv.handleFlows)
 	mux.HandleFunc("GET /api/namespaces", srv.handleNamespaces)
 	mux.HandleFunc("GET /api/pods", srv.handlePods)
+	mux.HandleFunc("GET /api/policies", srv.handlePolicies)
 	mux.HandleFunc("POST /api/policy/validate", srv.handlePolicyValidate)
 	mux.HandleFunc("GET /api/templates", srv.handleTemplates)
 	mux.Handle("/", http.FileServerFS(static))
@@ -334,11 +335,16 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // flowOut/flowsResponse are the JSON mirror of the "flows" subcommand's own
-// printed rows (see flows.go's runFlows print closure) — same fields,
-// shaped for a browser table instead of fmt.Printf.
+// printed rows (see flows.go's runFlows print closure) — same fields, plus
+// DropReason (the CLI's terminal line has no room for it, but a browser
+// table column does). This is Hubble's own already-happened verdict on a
+// DROPPED flow, straight off the datapath — not this tool's simulated one —
+// so it's squarely in-bounds despite "only ingress is simulated" (see
+// AGENTS.md's known v1 simplifications): nothing here is being guessed.
 type flowOut struct {
 	Time        string `json:"time"`
 	Verdict     string `json:"verdict"`
+	DropReason  string `json:"dropReason,omitempty"`
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 	L4          string `json:"l4"`
@@ -366,12 +372,65 @@ func (s *uiServer) handleFlows(w http.ResponseWriter, r *http.Request) {
 
 	resp := flowsResponse{Namespace: namespace, Flows: make([]flowOut, len(flows))}
 	for i, f := range flows {
-		resp.Flows[i] = flowOut{
+		out := flowOut{
 			Time:        f.GetTime().AsTime().Format(time.RFC3339),
 			Verdict:     f.GetVerdict().String(),
 			Source:      endpointString(f.GetSource()),
 			Destination: endpointString(f.GetDestination()),
 			L4:          l4String(f.GetL4()),
+		}
+		// Only meaningful on a dropped flow — DROP_REASON_UNKNOWN on every
+		// forwarded one would just be noise in the table.
+		if reason := f.GetDropReasonDesc(); reason != flowpb.DropReason_DROP_REASON_UNKNOWN {
+			out.DropReason = reason.String()
+		}
+		resp.Flows[i] = out
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// policyOut/policiesResponse back GET /api/policies — the live
+// CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy state for a namespace
+// (or every namespace), the same read the "policies" CLI subcommand does
+// (policies.go's runPolicies), shaped for a browser table. Before this, the
+// web UI's only signal of "what's actually running" was an opaque
+// baselineRuleCount number buried inside a Verdict run — this is the one
+// real CLI/UI parity gap, closed by reusing listPolicySummaries rather than
+// querying the clientset a second, separate way.
+type policyOut struct {
+	Kind             string `json:"kind"`
+	Name             string `json:"name"`
+	Namespace        string `json:"namespace,omitempty"`
+	Description      string `json:"description,omitempty"`
+	IngressRuleCount int    `json:"ingressRuleCount"`
+	EgressRuleCount  int    `json:"egressRuleCount"`
+}
+
+type policiesResponse struct {
+	Namespace string      `json:"namespace"`
+	Policies  []policyOut `json:"policies"`
+}
+
+func (s *uiServer) handlePolicies(w http.ResponseWriter, r *http.Request) {
+	namespace := r.URL.Query().Get("namespace")
+
+	summaries, err := listPolicySummaries(r.Context(), s.cilium, namespace)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("listing policies: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	resp := policiesResponse{Namespace: namespace, Policies: make([]policyOut, len(summaries))}
+	for i, p := range summaries {
+		resp.Policies[i] = policyOut{
+			Kind:             p.Kind,
+			Name:             p.Name,
+			Namespace:        p.Namespace,
+			Description:      p.Description,
+			IngressRuleCount: p.IngressRuleCount,
+			EgressRuleCount:  p.EgressRuleCount,
 		}
 	}
 

@@ -227,9 +227,14 @@ export function RuleEditorCard({
                   type="checkbox"
                   checked={entities.includes(ent)}
                   onChange={() => toggleEntity(ent)}
-                  className="sr-only"
+                  className="peer sr-only"
                 />
-                <span>{ent}</span>
+                {/* peer-focus-visible (not :focus) so the ring only shows for
+                    keyboard navigation — same sr-only-checkbox pattern as
+                    NamespaceScope's CheckRow. */}
+                <span className="peer-focus-visible:ring-2 peer-focus-visible:ring-signal peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-void">
+                  {ent}
+                </span>
               </label>
             ))}
           </div>
@@ -272,7 +277,7 @@ export function RuleEditorCard({
                 value={p.port}
                 placeholder="port (80)"
                 onChange={(e) => handleUpdatePort(idx, e.target.value, p.protocol)}
-                className="w-16 bg-transparent font-mono text-ink focus:outline-none"
+                className="w-16 border border-transparent bg-transparent font-mono text-ink focus:border-signal focus:outline-none"
               />
               <select
                 value={p.protocol}
@@ -414,10 +419,17 @@ export function AddRuleMenu<T extends { id: string; name: string; description: s
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div
-            className="fixed z-30 w-80 border border-line-bright bg-panel-raised shadow-lg"
-            style={{ top: pos.top, right: pos.right }}
+            // maxHeight clamped to the remaining viewport below the trigger
+            // (with a small bottom margin) + overflow-y-auto: this list grew
+            // past a handful of presets (9 ingress / 11 egress as of this
+            // writing) and a fixed-position panel with no height limit just
+            // ran off the bottom of the viewport with no way to reach the
+            // rest — confirmed by a real screenshot where the last few
+            // presets were cut off mid-description.
+            className="fixed z-30 flex w-80 flex-col overflow-y-auto border border-line-bright bg-panel-raised shadow-lg"
+            style={{ top: pos.top, right: pos.right, maxHeight: `calc(100vh - ${pos.top}px - 16px)` }}
           >
-            <div className="border-b border-line px-3 py-1.5 text-[0.6rem] font-bold uppercase tracking-wider text-ink-dim">
+            <div className="sticky top-0 z-10 border-b border-line bg-panel-raised px-3 py-1.5 text-[0.6rem] font-bold uppercase tracking-wider text-ink-dim">
               Preset Rules
             </div>
             {presets.map((preset) => (

@@ -31,8 +31,7 @@ export function FlowsPanel() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function runFetch() {
     setLoading(true)
     setError(null)
     const runId = crypto.randomUUID()
@@ -54,6 +53,11 @@ export function FlowsPanel() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    runFetch()
   }
 
   function handleResetSession() {
@@ -137,7 +141,19 @@ export function FlowsPanel() {
         </div>
       </form>
 
-      {error && <p className="rise-in border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">{error}</p>}
+      {error && (
+        <div className="rise-in flex flex-wrap items-center justify-between gap-3 border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => runFetch()}
+            disabled={loading}
+            className="shrink-0 border border-drop/40 px-3 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-drop transition-colors hover:bg-drop/10 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {runs.length > 0 && (
         <div className="flex items-center justify-between border-b border-line pb-3">
@@ -158,6 +174,7 @@ export function FlowsPanel() {
 
       {runs.length === 0 && !loading && (
         <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
+          <p className="font-mono text-2xl text-signal" aria-hidden="true">{'>_'}</p>
           <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to inspect flows</p>
           <p className="text-xs max-w-md mx-auto leading-relaxed">
             Pick a namespace scope, set how many recent flows to sample, and click <strong className="text-signal">Fetch flows</strong> to observe live Hubble traffic.
@@ -307,7 +324,7 @@ function FlowRunCard({
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="border-b border-line bg-panel-raised">
                   <tr>
-                    {['Time', 'Verdict', 'Source', 'Destination', 'L4'].map((h) => (
+                    {['Time', 'Verdict', 'Source', 'Destination', 'L4', 'Drop Reason'].map((h) => (
                       <th key={h} className="px-3 py-2 text-[0.65rem] font-semibold tracking-[0.1em] text-ink-dim uppercase">
                         {h}
                       </th>
@@ -349,6 +366,12 @@ function FlowRunCard({
                         </GraphNodeLink>
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-ink">{f.l4}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-ink-dim">
+                        {/* Hubble's own already-happened datapath verdict on
+                            why a DROPPED flow was dropped — only present on
+                            dropped flows, never guessed for a forwarded one. */}
+                        {f.dropReason ?? ''}
+                      </td>
                     </tr>
                     )
                   })}
