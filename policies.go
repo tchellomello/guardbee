@@ -157,6 +157,24 @@ func listPolicySummaries(ctx context.Context, cilium ciliumclient.Interface, nam
 	return out, nil
 }
 
+// firstRuleSpec picks the one api.Rule a live CNP/CCNP's Spec/Specs pair
+// reduces to for the Policy Editor's "Edit in Policy Editor" feature (ui.go's
+// handlePolicyForEdit): Spec if set, else the first entry of Specs, else nil.
+// A policy using Specs (plural) to carry more than one independent rule set
+// is rare in practice — this is a known v1 simplification (only the first
+// rule set loads into the editor; the rest is silently dropped), the same
+// spirit as summarizeRuleSpecs joining multiple descriptions together
+// instead of modeling them as separate editable rule sets.
+func firstRuleSpec(spec *api.Rule, specs api.Rules) *api.Rule {
+	if spec != nil {
+		return spec
+	}
+	if len(specs) > 0 {
+		return specs[0]
+	}
+	return nil
+}
+
 // fetchBaselineRules lists the live CNPs (in the given namespace, or every
 // namespace when namespace is "") and CCNPs (always cluster-wide — CCNPs
 // aren't namespace-scoped to begin with) and converts each to Cilium's

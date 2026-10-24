@@ -1,3 +1,13 @@
+# Blocks an application completely, in both directions. Ingress alone would
+# already default-deny with zero ingress rules (Cilium enforcement toggles
+# per-direction, keyed on whether that direction's rule key is present at
+# all — see ui/src/policy.ts's generateCiliumNetworkPolicyYAML comment), but
+# egress does NOT: an endpoint with no egress/egressDeny key at all keeps
+# default-allow egress. The explicit `egressDeny: - {}` below is required to
+# actually block outbound traffic too — confirmed directly against this
+# repo's vendored github.com/cilium/cilium@v1.20.2 rather than assumed (same
+# finding as examples/postgres-default-deny.yaml's comment, applied to both
+# directions here).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -5,8 +15,11 @@ metadata:
   namespace: default
   annotations:
     policy-simulator.cilium.io/display-name: "Default Deny (Isolation)"
+    guardbee.io/category: "Isolation & Lockdown"
 spec:
-  description: "Isolate workload by enabling default deny on all ingress and egress"
+  description: "Block all ingress AND egress for one application — nothing in or out until rules are added. Edit the target labels and namespace to pick the application."
   endpointSelector:
     matchLabels:
       app: "backend"
+  egressDeny:
+    - {}

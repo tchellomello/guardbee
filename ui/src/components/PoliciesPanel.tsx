@@ -5,17 +5,47 @@
 // run's opaque baselineRuleCount.
 
 import { useState } from 'react'
-import { fetchPolicies, type PolicyListItem } from '../api'
+import { fetchPolicies, fetchPolicyForEdit, type EditablePolicyModel, type PolicyListItem } from '../api'
 import { NamespaceScope } from './NamespaceScope'
 
-export function PoliciesPanel() {
+export interface PoliciesPanelProps {
+  // Loads a live policy straight into the Policy Editor tab for iteration —
+  // previously the only way to tweak a running CNP/CCNP was to hand-copy
+  // its YAML; this reuses the exact JSON shape a generic preset template
+  // already loads through (see api.ts's EditablePolicyModel).
+  onEditPolicy?: (model: EditablePolicyModel) => void
+}
+
+export function PoliciesPanel({ onEditPolicy }: PoliciesPanelProps = {}) {
   const [namespace, setNamespace] = useState('')
-  const [allNamespaces, setAllNamespaces] = useState(false)
+  // Defaults on, unlike Verdict/Flows' own all-namespaces toggles — this
+  // tab's whole point is "what's actually enforced on the cluster right
+  // now," and most clusters have only a handful of CNPs/CCNPs total, so
+  // scoping down to one namespace first (and seeing nothing, or missing
+  // the CCNPs entirely, since they're not namespaced to begin with) was
+  // the wrong first impression for a cold "List policies" click.
+  const [allNamespaces, setAllNamespaces] = useState(true)
 
   const [fetchedNamespace, setFetchedNamespace] = useState<string | null>(null)
   const [policies, setPolicies] = useState<PolicyListItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
+
+  async function handleEdit(p: PolicyListItem, key: string) {
+    if (!onEditPolicy) return
+    setEditingKey(key)
+    setEditError(null)
+    try {
+      const model = await fetchPolicyForEdit(p.kind, p.namespace ?? '', p.name)
+      onEditPolicy(model)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setEditingKey(null)
+    }
+  }
 
   async function runFetch() {
     setLoading(true)
@@ -88,6 +118,19 @@ export function PoliciesPanel() {
         </div>
       )}
 
+      {editError && (
+        <div className="rise-in flex items-center justify-between gap-3 border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">
+          <p>{editError}</p>
+          <button
+            type="button"
+            onClick={() => setEditError(null)}
+            className="shrink-0 text-xs text-drop hover:underline cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {fetchedNamespace !== null && (
         <div className="border border-line bg-panel p-5 space-y-5 rise-in">
           <p className="text-xs text-ink-dim">
@@ -106,7 +149,7 @@ export function PoliciesPanel() {
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="border-b border-line bg-panel-raised">
                   <tr>
-                    {['Kind', 'Name', 'Namespace', 'Description', 'Ingress Rules', 'Egress Rules'].map((h) => (
+                    {['Kind', 'Name', 'Namespace', 'Description', 'Ingress Rules', 'Egress Rules', ''].map((h) => (
                       <th
                         key={h}
                         className="px-3 py-2 text-[0.65rem] font-semibold tracking-[0.1em] text-ink-dim uppercase"
@@ -117,8 +160,10 @@ export function PoliciesPanel() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {policies.map((p, i) => (
-                    <tr key={`${p.kind}/${p.namespace ?? ''}/${p.name}/${i}`} className="hover:bg-panel-raised/60">
+                  {policies.map((p, i) => {
+                    const key = `${p.kind}/${p.namespace ?? ''}/${p.name}/${i}`
+                    return (
+                    <tr key={key} className="hover:bg-panel-raised/60">
                       <td className="px-3 py-2">
                         <span
                           className={`border px-2 py-0.5 text-[0.65rem] font-semibold ${
@@ -135,8 +180,22 @@ export function PoliciesPanel() {
                       <td className="px-3 py-2 text-xs text-ink-dim">{p.description || '—'}</td>
                       <td className="px-3 py-2 font-mono text-xs text-ink">{p.ingressRuleCount}</td>
                       <td className="px-3 py-2 font-mono text-xs text-ink">{p.egressRuleCount}</td>
+                      <td className="px-3 py-2">
+                        {onEditPolicy && (
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(p, key)}
+                            disabled={editingKey === key}
+                            title="Load this policy into the Policy Editor for iteration"
+                            className="whitespace-nowrap border border-signal/40 bg-signal/5 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-signal hover:bg-signal/10 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {editingKey === key ? 'Loading…' : '✎ Edit in Policy Editor'}
+                          </button>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

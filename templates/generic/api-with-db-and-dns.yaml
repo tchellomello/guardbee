@@ -5,6 +5,7 @@ metadata:
   namespace: default
   annotations:
     policy-simulator.cilium.io/display-name: "API Service (DB & DNS Egress)"
+    guardbee.io/category: "Common Services"
 spec:
   description: "API service with frontend ingress and restricted database & DNS egress"
   endpointSelector:

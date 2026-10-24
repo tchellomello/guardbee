@@ -99,6 +99,7 @@ Flags:
 	mux.HandleFunc("GET /api/namespaces", srv.handleNamespaces)
 	mux.HandleFunc("GET /api/pods", srv.handlePods)
 	mux.HandleFunc("GET /api/policies", srv.handlePolicies)
+	mux.HandleFunc("GET /api/policies/edit", srv.handlePolicyForEdit)
 	mux.HandleFunc("POST /api/policy/validate", srv.handlePolicyValidate)
 	mux.HandleFunc("GET /api/templates", srv.handleTemplates)
 	mux.Handle("/", http.FileServerFS(static))
@@ -436,6 +437,66 @@ func (s *uiServer) handlePolicies(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handlePolicyForEdit backs GET /api/policies/edit?kind=&name=&namespace= —
+// "Edit in Policy Editor" from the Policies tab: fetches one live CNP/CCNP
+// and converts it into the same templatePolicyModel JSON shape a generic
+// template already uses (see templates.go's convertRuleToPolicyModel), so
+// the frontend's existing "load a preset" code path (PolicyEditorPanel.tsx's
+// handleLoadPreset) handles it with no new parsing logic. Known v1
+// simplification: only the first entry of a multi-spec policy's Specs list
+// loads (see policies.go's firstRuleSpec); a non-trivial IngressDeny/
+// EgressDeny beyond the trivial all-deny `- {}` this editor itself ever
+// generates is also not reconstructed — same limit the editor already has
+// when authoring from scratch, not a new one introduced here.
+func (s *uiServer) handlePolicyForEdit(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	kind := q.Get("kind")
+	name := q.Get("name")
+	namespace := q.Get("namespace")
+	if name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	var model templatePolicyModel
+	switch kind {
+	case "CiliumNetworkPolicy":
+		if namespace == "" {
+			http.Error(w, "namespace is required for a CiliumNetworkPolicy", http.StatusBadRequest)
+			return
+		}
+		cnp, err := s.cilium.CiliumV2().CiliumNetworkPolicies(namespace).Get(r.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("fetching CiliumNetworkPolicy %s/%s: %v", namespace, name, err), http.StatusInternalServerError)
+			return
+		}
+		rule := firstRuleSpec(cnp.Spec, cnp.Specs)
+		if rule == nil {
+			http.Error(w, fmt.Sprintf("CiliumNetworkPolicy %s/%s has no rule spec", namespace, name), http.StatusInternalServerError)
+			return
+		}
+		model = convertRuleToPolicyModel(kind, cnp.Name, cnp.Namespace, rule)
+	case "CiliumClusterwideNetworkPolicy":
+		ccnp, err := s.cilium.CiliumV2().CiliumClusterwideNetworkPolicies().Get(r.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("fetching CiliumClusterwideNetworkPolicy %s: %v", name, err), http.StatusInternalServerError)
+			return
+		}
+		rule := firstRuleSpec(ccnp.Spec, ccnp.Specs)
+		if rule == nil {
+			http.Error(w, fmt.Sprintf("CiliumClusterwideNetworkPolicy %s has no rule spec", name), http.StatusInternalServerError)
+			return
+		}
+		model = convertRuleToPolicyModel(kind, ccnp.Name, "", rule)
+	default:
+		http.Error(w, fmt.Sprintf("unsupported kind %q", kind), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(model)
 }
 
 // namespacesResponse backs GET /api/namespaces — real namespace names for

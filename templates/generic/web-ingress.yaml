@@ -5,6 +5,7 @@ metadata:
   namespace: default
   annotations:
     policy-simulator.cilium.io/display-name: "Web Service Ingress"
+    guardbee.io/category: "Ingress & Exposure"
 spec:
   description: "Allow web traffic to frontend service"
   endpointSelector:

@@ -74,6 +74,19 @@ flag conventions) are in the
 **[Run](https://tchellomello.github.io/guardbee/guide/run.html)** guide
 pages.
 
+## Versioning
+
+GuardBee's own version tracks the Cilium version it embeds
+(`go.mod`'s `github.com/cilium/cilium`) directly — e.g. `v1.20.2` means built
+against and validated against Cilium v1.20.2's actual `pkg/policy` engine and
+CRD schema. A GuardBee-only change with no Cilium bump appends a trailing
+qualifier instead of a new Cilium version number (`v1.20.2-1`, `v1.20.2-2`, …).
+This makes compatibility legible at a glance instead of two independent
+version numbers that drift apart — see
+[#2](https://github.com/tchellomello/guardbee/issues/2) for the open problem
+of also detecting the *cluster's* real Cilium version at runtime, since the
+two can still differ from each other even with this scheme.
+
 ## Roadmap
 
 <a name="roadmap"></a>

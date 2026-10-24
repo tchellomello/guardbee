@@ -1,0 +1,33 @@
+# Combines ingress/same-namespace.yaml and egress/same-namespace.yaml into
+# one ready-to-use starting policy, instead of adding both rule presets by
+# hand every time "this workload should only ever talk within its own
+# namespace" is the whole point of the policy.
+#
+# Relies on a CiliumNetworkPolicy-only behavior: an empty peer matchLabels
+# with no explicit namespace key gets the policy's own metadata.namespace
+# injected implicitly (see getEndpointSelector/ParseToCiliumRule in the
+# vendored github.com/cilium/cilium@v1.20.2's
+# pkg/k8s/apis/cilium.io/utils/utils.go — confirmed directly against that
+# source, not assumed). A CiliumClusterwideNetworkPolicy has no "own
+# namespace" to fall back to, so this exact pattern does NOT carry over to
+# one — see generic/ccnp-namespace-isolation.yaml for the clusterwide
+# equivalent, which has to pin one explicit namespace instead of relying on
+# this implicit scoping.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: namespace-isolation
+  namespace: default
+  annotations:
+    guardbee.io/display-name: "Namespace Isolation"
+    guardbee.io/category: "Isolation & Lockdown"
+spec:
+  description: "Allow ingress and egress only between pods in the same namespace — blocks all cross-namespace and external traffic for this target"
+  endpointSelector:
+    matchLabels: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {}
+  egress:
+    - toEndpoints:
+        - matchLabels: {}

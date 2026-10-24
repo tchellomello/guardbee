@@ -26,6 +26,11 @@ rules:
       - ciliumclusterwidenetworkpolicies
       - ciliumidentities
       - ciliumendpoints
+    # "get" here also covers GET /api/policies/edit (ui.go's
+    # handlePolicyForEdit, the Policies tab's "Edit in Policy Editor") —
+    # fetching one named CNP/CCNP by name is still the "get" verb, same as
+    # the list used by the Policies tab itself; no RBAC change was needed
+    # when that feature was added, this just makes it explicit.
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["namespaces"]
