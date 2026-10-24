@@ -395,8 +395,18 @@ spec:
 	if invalidResp.Valid {
 		t.Fatalf("expected invalid policy, got %+v", invalidResp)
 	}
-	if !strings.Contains(invalidResp.Error, "combining ToEndpoints and ToEntities is not supported yet") {
-		t.Fatalf("expected error mentioning combining ToEndpoints and ToEntities, got %q", invalidResp.Error)
+	// Cilium's own IngressCommonRule/EgressCommonRule.sanitize() (vendored
+	// pkg/policy/api/rule_validation.go) builds this message from a
+	// map[string]int of field names and a nested `for range` over it — Go
+	// deliberately randomizes map iteration order per process, so which
+	// field name comes first in the sentence ("combining ToEndpoints and
+	// ToEntities..." vs "combining ToEntities and ToEndpoints...") varies
+	// run to run. Asserting on one fixed order was flaky by construction;
+	// checking both names plus the stable suffix is order-independent.
+	if !strings.Contains(invalidResp.Error, "ToEndpoints") ||
+		!strings.Contains(invalidResp.Error, "ToEntities") ||
+		!strings.Contains(invalidResp.Error, "is not supported yet") {
+		t.Fatalf("expected error mentioning combining ToEndpoints/ToEntities, got %q", invalidResp.Error)
 	}
 }
 
