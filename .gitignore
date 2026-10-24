@@ -11,3 +11,15 @@ AGENTS.local.md
 docs/_site
 docs/.jekyll-cache
 docs/.jekyll-metadata
+
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+.claude/
+.claude-flow/
+.agents/
+.mcp.json
+.swarm/
+ruvector.db
+
