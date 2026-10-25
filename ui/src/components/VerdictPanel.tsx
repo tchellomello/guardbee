@@ -255,163 +255,175 @@ export function VerdictPanel({
   }
 
   return (
-    <div className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-[380px_1fr]">
-      {/* Control panel — sidebar */}
-      <form
-        onSubmit={handleSubmit}
-        className="rise-in space-y-5 border border-line bg-panel p-5 2xl:sticky 2xl:top-6"
-      >
-        <div className="flex items-center justify-between">
-          <SectionLabel>Scope</SectionLabel>
-        </div>
+    <>
+      {/* Left column: scope controls, then results below — the primary
+          working area. Right column: the candidate YAML + run actions,
+          sticky, mirroring the Policy Editor tab's layout (editor on the
+          left, YAML output sticky on the right) instead of the previous
+          mirror image of it. */}
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-[1fr_420px]">
+        <div className="min-w-0 space-y-6">
+          <div className="rise-in space-y-5 border border-line bg-panel p-5">
+            <div className="flex items-center justify-between">
+              <SectionLabel>Scope</SectionLabel>
+            </div>
 
-        <NamespaceScope
-          namespace={namespace}
-          onNamespaceChange={setNamespace}
-          allNamespaces={allNamespaces}
-          onAllNamespacesChange={setAllNamespaces}
-        />
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Last">
-            <input
-              type="number"
-              min={1}
-              value={last}
-              onChange={(e) => setLast(Number(e.target.value) || 1)}
-              className="w-full border border-line bg-void px-3 py-2 text-sm text-ink focus:border-signal focus:outline-none"
+            <NamespaceScope
+              namespace={namespace}
+              onNamespaceChange={setNamespace}
+              allNamespaces={allNamespaces}
+              onAllNamespacesChange={setAllNamespaces}
             />
-          </Field>
-          <div className="flex flex-col justify-end gap-2 pb-2">
-            <CheckRow label="Show unchanged" checked={showUnchanged} onChange={setShowUnchanged} />
-            <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Last">
+                <input
+                  type="number"
+                  min={1}
+                  value={last}
+                  onChange={(e) => setLast(Number(e.target.value) || 1)}
+                  className="w-full border border-line bg-void px-3 py-2 text-sm text-ink focus:border-signal focus:outline-none"
+                />
+              </Field>
+              <div className="flex flex-col justify-end gap-2 pb-2">
+                <CheckRow label="Show unchanged" checked={showUnchanged} onChange={setShowUnchanged} />
+                <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
+              </div>
+            </div>
+
+            <div className="h-px bg-line" />
+
+            <CheckRow
+              label="Stack runs (keep previous analyses)"
+              checked={stackRuns}
+              onChange={setStackRuns}
+            />
           </div>
-        </div>
 
-        <div className="h-px bg-line" />
-
-        <div className="flex items-center justify-between">
-          <SectionLabel>Candidate policy</SectionLabel>
-          <button
-            type="button"
-            onClick={() => setExpandedEditorOpen(true)}
-            title="Open a wider editor to hand-edit this policy"
-            className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer"
-          >
-            ⤢ Expand
-          </button>
-        </div>
-        {/* A real <button>, not a textarea, so Tab+Enter/Space opens the
-            editor for free — a readOnly textarea never fires change and has
-            no built-in "activate" key handling. */}
-        <button
-          type="button"
-          onClick={() => setExpandedEditorOpen(true)}
-          title="Click to edit in a wider view"
-          className="w-full min-h-[18rem] cursor-pointer resize-y whitespace-pre-wrap border border-line bg-void px-3 py-2.5 text-left font-mono text-xs leading-relaxed text-ink focus:border-signal focus:outline-none"
-        >
-          {candidateYAML || (
-            <span className="text-ink-faint">
-              {'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ...\nspec:\n  ...'}
-            </span>
+          {error && (
+            <p className="rise-in border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">{error}</p>
           )}
-          <span className="mt-2 block font-display text-[0.6rem] normal-case tracking-normal text-ink-faint">
-            Click or press Enter to edit — opens a wider view
-          </span>
-        </button>
-        {/* Keeps the native "required" submit guard the textarea used to
-            provide, now that the visible control is a button, not a form field. */}
-        <textarea value={candidateYAML} onChange={() => {}} required aria-hidden="true" tabIndex={-1} className="sr-only" />
 
-        <div className="space-y-2">
-          <CheckRow
-            label="Stack runs (keep previous analyses)"
-            checked={stackRuns}
-            onChange={setStackRuns}
-          />
+          {runs.length > 0 && (
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
+                {runs.length === 1 ? 'Analysis Result' : `Stacked Analyses (${runs.length})`}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleClearResults}
+                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop transition-colors cursor-pointer"
+                >
+                  Clear all results
+                </button>
+              </div>
+            </div>
+          )}
+
+          {runs.length === 0 && !loading && (
+            <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
+              <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to simulate</p>
+              <p className="text-xs max-w-md mx-auto leading-relaxed">
+                Pick a namespace scope, paste your candidate CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy, and click <strong className="text-signal">Run verdict</strong> to evaluate against live cluster traffic.
+              </p>
+            </div>
+          )}
+
+          {runs.map((run, runIndex) => (
+            <RunCard
+              key={run.id}
+              run={run}
+              runNumber={runs.length - runIndex}
+              onOpenHelp={openHelp}
+              onDuplicate={handleDuplicateToForm}
+              onRemove={handleRemoveRun}
+              onToggleCollapse={handleToggleCollapse}
+              policyNamespace={policyNamespace}
+              onAppendRuleToPolicy={onAppendRuleToPolicy}
+            />
+          ))}
         </div>
 
-        <div className="flex gap-2">
-          <button
-            type="submit"
-            disabled={loading || streaming}
-            className="flex-1 bg-signal py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-          >
-            {loading ? 'Judging…' : streaming ? 'Streaming…' : follow ? 'Start following' : 'Run verdict'}
-          </button>
-          <button
-            type="button"
-            onClick={handleResetSession}
-            title="Clear all results and reset the form to start fresh"
-            className="border border-line bg-void/60 px-3 py-2.5 font-display text-xs font-semibold uppercase text-ink-dim hover:border-line-bright hover:text-ink transition-colors cursor-pointer"
-          >
-            Reset
-          </button>
-        </div>
-
-        {streaming && (
-          <div className="flex items-center justify-between border border-signal/30 bg-signal/5 px-3 py-2">
-            <span className="flex items-center gap-2 text-xs text-signal">
-              <span className="glow-pulse h-2 w-2 rounded-full bg-signal" />
-              live — judging as flows arrive
-            </span>
-            <button
-              type="button"
-              onClick={stopStreaming}
-              className="font-display text-[0.65rem] font-bold tracking-wide text-ink-dim uppercase hover:text-drop cursor-pointer"
-            >
-              Stop
-            </button>
-          </div>
-        )}
-      </form>
-
-      {/* Results viewport */}
-      <div className="min-w-0 space-y-6">
-        {error && (
-          <p className="rise-in border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">{error}</p>
-        )}
-
-        {runs.length > 0 && (
-          <div className="flex items-center justify-between border-b border-line pb-3">
-            <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
-              {runs.length === 1 ? 'Analysis Result' : `Stacked Analyses (${runs.length})`}
-            </span>
-            <div className="flex items-center gap-2">
+        {/* Candidate policy YAML & run actions */}
+        <div className="space-y-4 2xl:sticky 2xl:top-6">
+          <div className="rise-in space-y-3 border border-line bg-panel p-5">
+            <div className="flex items-center justify-between">
+              <SectionLabel>Candidate policy</SectionLabel>
               <button
                 type="button"
-                onClick={handleClearResults}
-                className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop transition-colors cursor-pointer"
+                onClick={() => setExpandedEditorOpen(true)}
+                title="Open a wider editor to hand-edit this policy"
+                className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer"
               >
-                Clear all results
+                ⤢ Expand
               </button>
             </div>
-          </div>
-        )}
 
-        {runs.length === 0 && !loading && (
-          <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
-            <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to simulate</p>
-            <p className="text-xs max-w-md mx-auto leading-relaxed">
-              Pick a namespace scope, paste your candidate CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy, and click <strong className="text-signal">Run verdict</strong> to evaluate against live cluster traffic.
-            </p>
-          </div>
-        )}
+            {/* Run/Reset above the YAML box, not below it — with a long
+                candidate policy the box itself can run well past the fold,
+                and the action that actually matters shouldn't be something
+                you have to scroll past a wall of YAML to find (same reason
+                the Policy Editor tab puts "Test in Verdict Simulator" above
+                its YAML output rather than after it). */}
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={loading || streaming}
+                className="flex-1 bg-signal py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+              >
+                {loading ? 'Judging…' : streaming ? 'Streaming…' : follow ? 'Start following' : 'Run verdict'}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetSession}
+                title="Clear all results and reset the form to start fresh"
+                className="border border-line bg-void/60 px-3 py-2.5 font-display text-xs font-semibold uppercase text-ink-dim hover:border-line-bright hover:text-ink transition-colors cursor-pointer"
+              >
+                Reset
+              </button>
+            </div>
 
-        {runs.map((run, runIndex) => (
-          <RunCard
-            key={run.id}
-            run={run}
-            runNumber={runs.length - runIndex}
-            onOpenHelp={openHelp}
-            onDuplicate={handleDuplicateToForm}
-            onRemove={handleRemoveRun}
-            onToggleCollapse={handleToggleCollapse}
-            policyNamespace={policyNamespace}
-            onAppendRuleToPolicy={onAppendRuleToPolicy}
-          />
-        ))}
-      </div>
+            {streaming && (
+              <div className="flex items-center justify-between border border-signal/30 bg-signal/5 px-3 py-2">
+                <span className="flex items-center gap-2 text-xs text-signal">
+                  <span className="glow-pulse h-2 w-2 rounded-full bg-signal" />
+                  live — judging as flows arrive
+                </span>
+                <button
+                  type="button"
+                  onClick={stopStreaming}
+                  className="font-display text-[0.65rem] font-bold tracking-wide text-ink-dim uppercase hover:text-drop cursor-pointer"
+                >
+                  Stop
+                </button>
+              </div>
+            )}
+
+            {/* A real <button>, not a textarea, so Tab+Enter/Space opens the
+                editor for free — a readOnly textarea never fires change and has
+                no built-in "activate" key handling. */}
+            <button
+              type="button"
+              onClick={() => setExpandedEditorOpen(true)}
+              title="Click to edit in a wider view"
+              className="w-full min-h-[18rem] cursor-pointer resize-y whitespace-pre-wrap border border-line bg-void px-3 py-2.5 text-left font-mono text-xs leading-relaxed text-ink focus:border-signal focus:outline-none"
+            >
+              {candidateYAML || (
+                <span className="text-ink-faint">
+                  {'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ...\nspec:\n  ...'}
+                </span>
+              )}
+              <span className="mt-2 block font-display text-[0.6rem] normal-case tracking-normal text-ink-faint">
+                Click or press Enter to edit — opens a wider view
+              </span>
+            </button>
+            {/* Keeps the native "required" submit guard the textarea used to
+                provide, now that the visible control is a button, not a form field. */}
+            <textarea value={candidateYAML} onChange={() => {}} required aria-hidden="true" tabIndex={-1} className="sr-only" />
+          </div>
+        </div>
+      </form>
 
       {/* Informative Verdict Help Modal */}
       <VerdictHelpModal
@@ -426,7 +438,7 @@ export function VerdictPanel({
         value={candidateYAML}
         onChange={setCandidateYAML}
       />
-    </div>
+    </>
   )
 }
 
