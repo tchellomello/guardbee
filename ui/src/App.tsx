@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { CompatButton } from './components/CompatButton'
+import { CompatModal } from './components/CompatModal'
 import { FlowsPanel } from './components/FlowsPanel'
 import { PoliciesPanel } from './components/PoliciesPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
@@ -6,21 +8,10 @@ import { VerdictPanel } from './components/VerdictPanel'
 import { ThemeToggle } from './components/ThemeToggle'
 import { HomepageLink } from './components/HomepageLink'
 import { GitHubLink } from './components/GitHubLink'
+import { VersionBanner } from './components/VersionBanner'
 import { ThemeProvider } from './theme'
 import type { EditablePolicyModel } from './api'
-import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel } from './policy'
-
-// Assigns fresh rule ids to a preset/live-policy's id-less rule list — the
-// same thing PolicyEditorPanel.tsx's handleLoadPreset already does for a
-// generic template; needed here too since a live policy loaded via "Edit in
-// Policy Editor" arrives through the exact same id-less JSON shape.
-function toPolicyModel(editable: EditablePolicyModel): PolicyModel {
-  return {
-    ...editable,
-    ingressRules: editable.ingressRules.map((r, i) => ({ ...r, id: `ingress-${Date.now()}-${i}` })),
-    egressRules: editable.egressRules.map((r, i) => ({ ...r, id: `egress-${Date.now()}-${i}` })),
-  }
-}
+import { BLANK_POLICY, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 
 type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
 
@@ -64,6 +55,7 @@ export default function App() {
 
 function AppContent() {
   const [tab, setTab] = useState<Tab>('flows')
+  const [compatModalOpen, setCompatModalOpen] = useState(false)
   const [verdictNamespace, setVerdictNamespace] = useState('')
   const [verdictCandidateYAML, setVerdictCandidateYAML] = useState('')
 
@@ -151,12 +143,17 @@ function AppContent() {
                 Policy Editor
               </TabButton>
             </nav>
+            <CompatButton onClick={() => setCompatModalOpen(true)} />
             <HomepageLink />
             <GitHubLink />
             <ThemeToggle />
           </div>
         </div>
       </header>
+
+      <CompatModal isOpen={compatModalOpen} onClose={() => setCompatModalOpen(false)} />
+
+      <VersionBanner />
 
       <main className="px-6 py-8 lg:px-10">
         {/* All three panels stay mounted and are only hidden via CSS, not

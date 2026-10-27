@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import { fetchNamespaces, validatePolicy, type PolicyValidationResult } from '../api'
-import { BLANK_POLICY, generateCiliumNetworkPolicyYAML, type EgressRule, type IngressRule, type PolicyKind, type PolicyModel } from '../policy'
+import { fetchNamespaces, parsePolicy, validatePolicy, type PolicyValidationResult } from '../api'
+import { BLANK_POLICY, generateCiliumNetworkPolicyYAML, toPolicyModel, type EgressRule, type IngressRule, type PolicyKind, type PolicyModel } from '../policy'
 import { useTemplates } from '../shared/useTemplates'
 import { PolicyGraph } from './PolicyGraph'
 import { PresetMenu, type PresetMenuItem } from './PresetMenu'
@@ -92,6 +92,16 @@ export function PolicyEditorPanel({
   // previous (now-stale) valid/invalid banner flash before it.
   const [validatedYAML, setValidatedYAML] = useState<string | null>(null)
   const [yamlModalOpen, setYamlModalOpen] = useState(false)
+  // The YAML text currently in the "⤢ Expand / Edit" modal — a separate
+  // piece of state from generatedYAML (derived from model) because while
+  // the user is mid-keystroke, the textarea must show exactly what they
+  // typed, not snap back to the model's last-known YAML on every render.
+  // Seeded from generatedYAML whenever the modal opens (see
+  // handleOpenYamlEditor), which doubles as this feature's "Import YAML"
+  // entry point — pasting a full policy over the seeded text and letting
+  // it parse is how an import happens, not a separate dialog.
+  const [editingYAML, setEditingYAML] = useState('')
+  const [yamlEditError, setYamlEditError] = useState<string | null>(null)
   const { templates } = useTemplates()
   const genericPresets = useMemo(() => [BLANK_PRESET, ...templates.generic], [templates.generic])
   const presetMenuItems: PresetMenuItem[] = useMemo(
@@ -153,6 +163,53 @@ export function PolicyEditorPanel({
       clearTimeout(timer)
     }
   }, [model.namespace, generatedYAML])
+
+  function handleOpenYamlEditor() {
+    setEditingYAML(generatedYAML)
+    setYamlEditError(null)
+    setYamlModalOpen(true)
+  }
+
+  // Hand-editing/importing the YAML text directly, in the "⤢ Expand / Edit"
+  // modal: same ~150ms debounce as the model→YAML validation effect above,
+  // parsed through the real Cilium engine (/api/policy/parse) — never a
+  // client-side YAML parser, same "call the real engine" principle as
+  // every other candidate-parsing path in this project (see AGENTS.md).
+  // On success, the draft model is replaced outright and the modal's text
+  // snaps to the new model's own canonical YAML (generateCiliumNetworkPolicyYAML),
+  // which may reformat the user's original whitespace/comments — a known
+  // v1 simplification, not a bug: past a successful parse, raw typed text
+  // is never the model's source of truth, model always is, exactly as it
+  // already is for every other way of editing this draft. On failure, the
+  // model/graph are left untouched so a mid-edit typo can't blow away the
+  // user's last-good draft — only the error banner updates.
+  useEffect(() => {
+    if (!yamlModalOpen || editingYAML === generatedYAML) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      parsePolicy(model.namespace, editingYAML)
+        .then((res) => {
+          if (cancelled) return
+          if (res.valid && res.policy) {
+            const nextModel = toPolicyModel(res.policy)
+            setYamlEditError(null)
+            setModel(nextModel)
+            setEditingYAML(generateCiliumNetworkPolicyYAML(nextModel))
+            onClearOriginalLiveModel()
+          } else {
+            setYamlEditError(res.error ?? 'invalid policy')
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) setYamlEditError(err instanceof Error ? err.message : String(err))
+        })
+    }, 150)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [editingYAML, yamlModalOpen, model.namespace])
 
   function handleLoadPreset(id: string) {
     const preset = genericPresets.find((p) => p.id === id)
@@ -413,11 +470,11 @@ export function PolicyEditorPanel({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setYamlModalOpen(true)}
-                  title="Open a wider, read-only view of this YAML"
+                  onClick={handleOpenYamlEditor}
+                  title="Open an editable view — hand-edit the YAML directly, or paste a full policy over it to import"
                   className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer"
                 >
-                  ⤢ Expand
+                  ⤢ Expand / Edit
                 </button>
                 <button
                   type="button"
@@ -540,8 +597,8 @@ export function PolicyEditorPanel({
               of surrounding whitespace around small, cramped text once the
               right column had real room to use). */}
           <div
-            onClick={() => setYamlModalOpen(true)}
-            title="Click to open a wider view"
+            onClick={handleOpenYamlEditor}
+            title="Click to open an editable view"
             className="cursor-pointer border border-line bg-void p-5 font-mono text-sm overflow-x-auto max-h-[760px] shadow-inner text-ink leading-loose"
             style={{
               // Right-edge fade so a long line (e.g. a long `description:`)
@@ -560,8 +617,9 @@ export function PolicyEditorPanel({
       <PolicyTextModal
         isOpen={yamlModalOpen}
         onClose={() => setYamlModalOpen(false)}
-        value={generatedYAML}
-        readOnly
+        value={editingYAML}
+        onChange={setEditingYAML}
+        error={yamlEditError}
         title="Candidate Policy YAML"
       />
     </div>

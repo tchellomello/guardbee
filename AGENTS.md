@@ -46,10 +46,25 @@ Consequences that follow directly from this, non-negotiably:
   implementation details, not a public API. Real bugs have already come
   from exactly this (see "Gotchas already hit" below). Any Cilium version
   bump needs the full `mise run check` pass plus live re-validation against
-  the real cluster, not just `go get`.
-- `go.mod`'s Cilium version must track the cluster's actual running version.
-  A startup check that warns on drift is an open follow-up, not yet built —
-  don't assume it exists.
+  the real cluster, not just `go get` — and before touching `go.mod`, run
+  `mise run compat-scan <old-pin> <new-pin>` (see `compat.go`) to find any
+  CRD-schema-level divergence (removed/deprecated fields) the new pin would
+  otherwise silently stop detecting or start silently dropping. It's a
+  report, not a generator — read each finding against the real source and
+  add a `featureGates` entry with a real "why" for anything genuine.
+- The engine is pinned to one Cilium version (`pinnedCiliumVersion`,
+  `globals.go`), but is meant to stay usable against clusters running
+  somewhat older versions too (currently targeting 1.18–1.20). The cluster's
+  actual running version is detected at runtime (`clusterversion.go`, over
+  the existing hubble-relay connection) and surfaced two ways: a skew
+  warning (CLI stderr / UI banner) when it differs from the pin, and
+  `compat.go`'s `featureGates` table, which hard-rejects a candidate using a
+  construct that's deprecated-or-removed as of the pin rather than silently
+  computing a verdict that misrepresents what it does. `GET /api/compat` /
+  `guardbee compat` / the UI's Compatibility modal (header icon, next to
+  GitHub/homepage/theme) list the table itself, so
+  "why was this rejected" doesn't have to be reverse-engineered from the
+  error text.
 
 ### Gotchas already hit (don't rediscover these)
 
@@ -92,6 +107,12 @@ Consequences that follow directly from this, non-negotiably:
   namespace. Getting fewer flows than requested is expected, not a bug.
   `--follow`/`-f` is the real lever for more volume over time, not raising
   `--last`.
+- A TCP/UDP flow with **destination port 0** is `NOT_SIMULATED`, not judged.
+  `isAllowed`'s `policy.Key` query must have a non-wildcard port (Cilium's
+  own `mapState.lookup()` doc comment says so explicitly) — querying with
+  port 0 doesn't error, but the ancestor-LPM walk then only matches other
+  full-wildcard-port entries, silently missing any specific-port rule. Seen
+  on real clusters for UDP flows Hubble reports with `DestinationPort` 0.
 
 ## Repo layout
 
@@ -106,6 +127,9 @@ templates.go      Policy Editor "preset" templates, loaded from templates/*.yaml
 ui.go             `ui` subcommand — local HTTP/JSON API over the same verdict/flows functions
 embed.go          go:embed of ui/dist (Argo CD's own UI packaging pattern)
 colors.go         ANSI color helpers (NO_COLOR-aware, terminal-detecting)
+clusterversion.go runtime Cilium-version detection + skew warning (CLI stderr / GET /api/version)
+compat.go         `compat` subcommand + version-gated policy construct table (GET /api/compat)
+scripts/compat-scan.sh  manual discovery aid for new compat.go gates — diffs Cilium versions, see AGENTS.md above
 kubernetes/rbac.yaml  read-only ServiceAccount/ClusterRole for the CLI's own access, validated live
 templates/        generic/ingress/egress CiliumNetworkPolicy YAML presets (real, standalone CNPs)
 examples/         ready-to-run candidate policies matching the self-paced Lab's scenario, plus generic patterns
@@ -137,6 +161,7 @@ mise run test      # engine-spike + verdict-engine regression tests only
 mise run clean
 mise run ui-dev     # frontend dev server, proxies /api to a separately-running "guardbee ui" on :4747
 mise run completions  # regenerate shell completions after a rename or flag/subcommand change
+mise run compat-scan <from-version> <to-version>  # discover new compat.go gate candidates; manual, see above
 ```
 
 `mise run build` **always rebuilds the frontend first** — the Go binary

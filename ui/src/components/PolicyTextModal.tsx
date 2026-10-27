@@ -13,6 +13,11 @@ interface PolicyTextModalProps {
   onChange?: (value: string) => void
   title?: string
   readOnly?: boolean
+  // Surfaced above the textarea when a hand-edit/import failed to parse
+  // against the real Cilium engine — same error-banner styling as the
+  // sidebar's own validation banner (PolicyEditorPanel.tsx), just inside
+  // the modal where the user is actually looking while typing.
+  error?: string | null
 }
 
 export function PolicyTextModal({
@@ -22,6 +27,7 @@ export function PolicyTextModal({
   onChange,
   title = 'Edit Candidate Policy',
   readOnly = false,
+  error = null,
 }: PolicyTextModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -94,6 +100,12 @@ export function PolicyTextModal({
             ✕
           </button>
         </div>
+
+        {error && (
+          <div className="border-b border-drop/40 bg-drop/10 px-5 py-2 text-xs text-drop">
+            <span className="font-mono break-words">{error}</span>
+          </div>
+        )}
 
         <textarea
           ref={textareaRef}

@@ -195,3 +195,63 @@ export function fetchPolicyForEdit(kind: string, namespace: string, name: string
   return fetch(`/api/policies/edit?${params}`).then((res) => parseErrorOrJSON<EditablePolicyModel>(res))
 }
 
+// PolicyParseResult backs POST /api/policy/parse — the Policy Editor's
+// YAML import/hand-edit path (PolicyEditorPanel.tsx): same {valid, error}
+// shape PolicyValidationResult already uses on failure, so the frontend
+// has one consistent error shape regardless of which endpoint reported it,
+// but carries the structured EditablePolicyModel back on success so the
+// edited/imported YAML can replace the draft's model, not just report
+// pass/fail like validatePolicy does.
+export interface PolicyParseResult {
+  valid: boolean
+  policy?: EditablePolicyModel
+  error?: string
+}
+
+export function parsePolicy(namespace: string, candidateYAML: string): Promise<PolicyParseResult> {
+  return fetch('/api/policy/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ namespace, candidateYAML }),
+  }).then((res) => parseErrorOrJSON<PolicyParseResult>(res))
+}
+
+// VersionInfo backs GET /api/version — the UI's counterpart to the CLI's
+// stderr version-skew warning (see ../../clusterversion.go's
+// warnOnVersionSkew). Unknown means detection couldn't reach hubble-relay
+// or get a real version out of it; Skewed/NodeSkew are mutually exclusive
+// with Unknown and with each other (see clusterversion.go's
+// clusterVersionState).
+export interface VersionInfo {
+  pinned: string
+  detected?: string
+  skewed: boolean
+  nodeSkew: boolean
+  nodeVersions?: string[]
+  unknown: boolean
+}
+
+export function fetchVersion(): Promise<VersionInfo> {
+  return fetch('/api/version').then((res) => parseErrorOrJSON<VersionInfo>(res))
+}
+
+// CompatGate/CompatResponse back GET /api/compat — compat.go's featureGates
+// table, read-only, surfaced verbatim so "why was my candidate rejected"
+// has a page to check (CompatModal.tsx) instead of only the rejection
+// error text from a validate/parse call.
+export interface CompatGate {
+  name: string
+  minVersion?: string
+  maxVersion?: string
+  reason: string
+}
+
+export interface CompatResponse {
+  pinned: string
+  gates: CompatGate[]
+}
+
+export function fetchCompat(): Promise<CompatResponse> {
+  return fetch('/api/compat').then((res) => parseErrorOrJSON<CompatResponse>(res))
+}
+

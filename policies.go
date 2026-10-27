@@ -44,11 +44,12 @@ Flags:
 	_ = fs.Parse(args)
 	namespace := flags.resolveNamespace()
 
-	_, cilium, _, err := newClientsets(flags.kubeconfig)
+	core, cilium, cfg, err := newClientsets(flags.kubeconfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" policies: building clients: %v\n", err)
 		os.Exit(1)
 	}
+	warnOnVersionSkew(core, cfg)
 
 	ctx := context.Background()
 

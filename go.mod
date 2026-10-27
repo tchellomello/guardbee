@@ -3,6 +3,7 @@ module github.com/tchellomello/guardbee
 go 1.26.8
 
 require (
+	github.com/blang/semver/v4 v4.0.0
 	github.com/cilium/cilium v1.20.2
 	github.com/cilium/hive v1.0.4
 	github.com/spf13/pflag v1.0.10
@@ -17,7 +18,6 @@ require (
 require (
 	cel.dev/expr v0.25.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cilium/ebpf v0.22.0 // indirect
 	github.com/cilium/lumberjack/v2 v2.4.2 // indirect

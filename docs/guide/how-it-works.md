@@ -26,6 +26,7 @@ Documented in code, not silent:
 | Reply packets | Skipped (`reply (skipped)` in the summary) — connection tracking always allows those regardless of CNP ingress rules. |
 | Real identities only | Candidate labels with no matching live pod are never exercised by any sampled flow — GuardBee never invents a fake identity. |
 | `--last` is a ceiling | Hubble's flow buffer is a small recent-flow ring, not persisted history — it may hold fewer flows than requested. Use `--follow` to accumulate more over time instead of raising `--last` further. |
+| Port-0 TCP/UDP flows | Counted as `not simulated` — Cilium's own policy engine can't be queried with a wildcard port, so a flow Hubble reports with no concrete destination port isn't guessed at. |
 
 > A `0 newly dropped` result can mean "nothing in the sample touched the port
 > you changed," not "nothing would break" — re-run, raise `--last`, or use

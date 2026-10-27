@@ -21,4 +21,10 @@ func runVersion(args []string) {
 		}
 	}
 	fmt.Printf("%s %s\n", binName, version)
+	// Cilium engine version, not the binary's own — pinnedCiliumVersion
+	// (globals.go) is a constant since go.mod's require line isn't
+	// readable at runtime, so this needs no cluster call, unlike
+	// detectClusterCiliumVersion (clusterversion.go), which reports what's
+	// actually running.
+	fmt.Printf("cilium engine %s (pinned)\n", pinnedCiliumVersion)
 }

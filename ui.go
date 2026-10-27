@@ -101,7 +101,10 @@ Flags:
 	mux.HandleFunc("GET /api/policies", srv.handlePolicies)
 	mux.HandleFunc("GET /api/policies/edit", srv.handlePolicyForEdit)
 	mux.HandleFunc("POST /api/policy/validate", srv.handlePolicyValidate)
+	mux.HandleFunc("POST /api/policy/parse", srv.handlePolicyParse)
 	mux.HandleFunc("GET /api/templates", srv.handleTemplates)
+	mux.HandleFunc("GET /api/version", srv.handleVersion)
+	mux.HandleFunc("GET /api/compat", srv.handleCompat)
 	mux.Handle("/", http.FileServerFS(static))
 
 	fmt.Printf("%s ui: listening on http://%s\n", binName, addr)
@@ -129,6 +132,73 @@ type uiServer struct {
 func (s *uiServer) handleTemplates(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.templates)
+}
+
+// versionResponse backs GET /api/version — the UI's counterpart to the CLI's
+// Phase 1 stderr skew warning (see clusterversion.go's warnOnVersionSkew),
+// shaped for the persistent banner component (VersionBanner.tsx) rather than
+// a one-line stderr print. Unknown is true whenever hubble was unreachable
+// or every node's version was unparseable — the banner renders nothing in
+// that case, same as the CLI prints nothing.
+type versionResponse struct {
+	Pinned       string   `json:"pinned"`
+	Detected     string   `json:"detected,omitempty"`
+	Skewed       bool     `json:"skewed"`
+	NodeSkew     bool     `json:"nodeSkew"`
+	NodeVersions []string `json:"nodeVersions,omitempty"`
+	Unknown      bool     `json:"unknown"`
+}
+
+func (s *uiServer) handleVersion(w http.ResponseWriter, r *http.Request) {
+	status := detectClusterCiliumVersion(r.Context(), s.core, s.cfg)
+	resp := versionResponse{
+		Pinned:       pinnedCiliumVersion,
+		Detected:     status.detected,
+		Skewed:       status.state == clusterVersionSkewed,
+		NodeSkew:     status.state == clusterVersionNodeSkew,
+		NodeVersions: status.nodeVersions,
+		Unknown:      status.state == clusterVersionUnknown,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// compatGateOut/compatResponse back GET /api/compat — the UI's and CLI's
+// shared source for "what does GuardBee refuse to parse, and why," read
+// directly off compat.go's featureGates table rather than making the user
+// reverse-engineer it from a rejection error. KindLabel is a human string
+// (not featureGateKind's own int) since this is a display-only endpoint —
+// the frontend has no reason to know how a gate is detected, only what it
+// is and why it's gated.
+type compatGateOut struct {
+	Name       string `json:"name"`
+	MinVersion string `json:"minVersion,omitempty"`
+	MaxVersion string `json:"maxVersion,omitempty"`
+	Reason     string `json:"reason"`
+}
+
+type compatResponse struct {
+	Pinned string          `json:"pinned"`
+	Gates  []compatGateOut `json:"gates"`
+}
+
+func (s *uiServer) handleCompat(w http.ResponseWriter, r *http.Request) {
+	// Initialized non-nil: a nil slice marshals to JSON "null", and the
+	// frontend always expects an array to .map over, even transiently
+	// before featureGates has its first entry.
+	resp := compatResponse{Pinned: pinnedCiliumVersion, Gates: []compatGateOut{}}
+	for _, g := range featureGates {
+		resp.Gates = append(resp.Gates, compatGateOut{
+			Name:       g.name,
+			MinVersion: g.minVersion,
+			MaxVersion: g.maxVersion,
+			Reason:     g.reason,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // verdictRequest is the "ui" subcommand's JSON request body for POST
@@ -607,5 +677,88 @@ func (s *uiServer) handlePolicyValidate(w http.ResponseWriter, r *http.Request) 
 		Valid:     true,
 		RuleCount: len(rules),
 	})
+}
+
+// policyParseResponse mirrors policyValidateResponse's {valid, error} shape
+// on failure — PolicyEditorPanel.tsx's YAML import/hand-edit path needs one
+// consistent error shape regardless of which of the two endpoints reported
+// it — but on success carries back the structured templatePolicyModel
+// (Policy on success, Error on failure; the two are mutually exclusive).
+type policyParseResponse struct {
+	Valid  bool                 `json:"valid"`
+	Policy *templatePolicyModel `json:"policy,omitempty"`
+	Error  string               `json:"error,omitempty"`
+}
+
+// handlePolicyParse backs POST /api/policy/parse — the Policy Editor's
+// "import/hand-edit the YAML directly" path (PolicyEditorPanel.tsx):
+// unlike handlePolicyValidate, which only ever reports pass/fail plus a
+// rule count, this parses the candidate all the way into the same
+// templatePolicyModel shape handlePolicyForEdit already returns for a live
+// policy, so the frontend can feed a successfully-parsed edit straight
+// back into the graph/model (via its own toPolicyModel). Picks the first
+// rule the same way handlePolicyForEdit/firstRuleSpec already do for a live
+// CNP/CCNP's Spec/Specs pair — same known v1 simplification, now also
+// applied to a pasted/hand-edited candidate's Spec/Specs pair.
+func (s *uiServer) handlePolicyParse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req policyValidateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	trimmed := strings.TrimSpace(req.CandidateYAML)
+	if trimmed == "" {
+		_ = json.NewEncoder(w).Encode(policyParseResponse{
+			Valid: false,
+			Error: "candidate policy is empty",
+		})
+		return
+	}
+
+	decoded, err := decodeCandidateYAML([]byte(req.CandidateYAML), req.Namespace)
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(policyParseResponse{
+			Valid: false,
+			Error: err.Error(),
+		})
+		return
+	}
+	if decoded.rule == nil {
+		_ = json.NewEncoder(w).Encode(policyParseResponse{
+			Valid: false,
+			Error: fmt.Sprintf("%s has no rule spec (spec/specs both empty)", decoded.kind),
+		})
+		return
+	}
+
+	// Build the model from decoded.rule before calling decoded.parse()
+	// below, not after: Parse()'s underlying Sanitize() canonicalizes
+	// EndpointSelector/peer-selector matchLabels keys in place (e.g.
+	// "io.kubernetes.pod.namespace" becomes "any:io.kubernetes.pod.namespace",
+	// a label-source prefix Cilium's own label parsing adds), mutating the
+	// exact same api.Rule decoded.rule points at. convertRuleToPolicyModel
+	// copies every field into a fresh templatePolicyModel, so taking this
+	// snapshot first keeps the matchLabels keys in the plain, un-prefixed
+	// form templateNamespaceLabelKey/the frontend both expect — the same
+	// form handlePolicyForEdit's live-policy path already relies on by
+	// never calling Parse() on what it hands to convertRuleToPolicyModel.
+	model := convertRuleToPolicyModel(decoded.kind, decoded.name, decoded.namespace, decoded.rule)
+
+	if _, err := decoded.parse(s.logger); err != nil {
+		_ = json.NewEncoder(w).Encode(policyParseResponse{
+			Valid: false,
+			Error: err.Error(),
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(policyParseResponse{Valid: true, Policy: &model})
 }
 
