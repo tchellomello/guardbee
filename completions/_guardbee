@@ -9,6 +9,7 @@ _guardbee() {
     'verdict:diff a candidate policy'"'"'s verdicts against real flows'
     'ui:start a local web UI for flows/verdict'
     'version:print the version this binary was built from'
+    'compat:list version-gated policy constructs, and why'
   )
 
   if (( CURRENT == 2 )); then

@@ -235,3 +235,23 @@ export function fetchVersion(): Promise<VersionInfo> {
   return fetch('/api/version').then((res) => parseErrorOrJSON<VersionInfo>(res))
 }
 
+// CompatGate/CompatResponse back GET /api/compat — compat.go's featureGates
+// table, read-only, surfaced verbatim so "why was my candidate rejected"
+// has a page to check (CompatPanel.tsx) instead of only the rejection
+// error text from a validate/parse call.
+export interface CompatGate {
+  name: string
+  minVersion?: string
+  maxVersion?: string
+  reason: string
+}
+
+export interface CompatResponse {
+  pinned: string
+  gates: CompatGate[]
+}
+
+export function fetchCompat(): Promise<CompatResponse> {
+  return fetch('/api/compat').then((res) => parseErrorOrJSON<CompatResponse>(res))
+}
+

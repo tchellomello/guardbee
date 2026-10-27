@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CompatPanel } from './components/CompatPanel'
 import { FlowsPanel } from './components/FlowsPanel'
 import { PoliciesPanel } from './components/PoliciesPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
@@ -11,7 +12,7 @@ import { ThemeProvider } from './theme'
 import type { EditablePolicyModel } from './api'
 import { BLANK_POLICY, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 
-type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
+type Tab = 'verdict' | 'flows' | 'policies' | 'editor' | 'compat'
 
 // Draft persistence — the in-progress Policy Editor draft used to live only
 // in React state, so switching browser tabs or an accidental reload threw
@@ -139,6 +140,9 @@ function AppContent() {
               <TabButton active={tab === 'editor'} onClick={() => setTab('editor')}>
                 Policy Editor
               </TabButton>
+              <TabButton active={tab === 'compat'} onClick={() => setTab('compat')}>
+                Compatibility
+              </TabButton>
             </nav>
             <HomepageLink />
             <GitHubLink />
@@ -178,6 +182,9 @@ function AppContent() {
             originalLiveModel={originalLiveModel}
             onClearOriginalLiveModel={() => setOriginalLiveModel(null)}
           />
+        </div>
+        <div className={tab === 'compat' ? '' : 'hidden'}>
+          <CompatPanel />
         </div>
       </main>
     </div>

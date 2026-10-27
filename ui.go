@@ -104,6 +104,7 @@ Flags:
 	mux.HandleFunc("POST /api/policy/parse", srv.handlePolicyParse)
 	mux.HandleFunc("GET /api/templates", srv.handleTemplates)
 	mux.HandleFunc("GET /api/version", srv.handleVersion)
+	mux.HandleFunc("GET /api/compat", srv.handleCompat)
 	mux.Handle("/", http.FileServerFS(static))
 
 	fmt.Printf("%s ui: listening on http://%s\n", binName, addr)
@@ -157,6 +158,43 @@ func (s *uiServer) handleVersion(w http.ResponseWriter, r *http.Request) {
 		NodeSkew:     status.state == clusterVersionNodeSkew,
 		NodeVersions: status.nodeVersions,
 		Unknown:      status.state == clusterVersionUnknown,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// compatGateOut/compatResponse back GET /api/compat — the UI's and CLI's
+// shared source for "what does GuardBee refuse to parse, and why," read
+// directly off compat.go's featureGates table rather than making the user
+// reverse-engineer it from a rejection error. KindLabel is a human string
+// (not featureGateKind's own int) since this is a display-only endpoint —
+// the frontend has no reason to know how a gate is detected, only what it
+// is and why it's gated.
+type compatGateOut struct {
+	Name       string `json:"name"`
+	MinVersion string `json:"minVersion,omitempty"`
+	MaxVersion string `json:"maxVersion,omitempty"`
+	Reason     string `json:"reason"`
+}
+
+type compatResponse struct {
+	Pinned string          `json:"pinned"`
+	Gates  []compatGateOut `json:"gates"`
+}
+
+func (s *uiServer) handleCompat(w http.ResponseWriter, r *http.Request) {
+	// Initialized non-nil: a nil slice marshals to JSON "null", and the
+	// frontend always expects an array to .map over, even transiently
+	// before featureGates has its first entry.
+	resp := compatResponse{Pinned: pinnedCiliumVersion, Gates: []compatGateOut{}}
+	for _, g := range featureGates {
+		resp.Gates = append(resp.Gates, compatGateOut{
+			Name:       g.name,
+			MinVersion: g.minVersion,
+			MaxVersion: g.maxVersion,
+			Reason:     g.reason,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -574,6 +574,15 @@ func decodeCandidateYAML(raw []byte, defaultNamespace string) (*decodedCandidate
 		return nil, fmt.Errorf("reading kind: %w", err)
 	}
 
+	// checkRawFieldGates runs once here, kind-agnostically — a CNP and a
+	// CCNP candidate share the same spec/specs shape, and this check (see
+	// compat.go) operates on that raw shape directly, not on anything
+	// CNP/CCNP-specific, so there's nothing to gain from duplicating it in
+	// both branches below the way checkFeatureGates' typed check is.
+	if err := checkRawFieldGates(raw, pinnedCiliumVersion); err != nil {
+		return nil, err
+	}
+
 	switch kindOnly.Kind {
 	case "CiliumNetworkPolicy":
 		var cnp ciliumv2.CiliumNetworkPolicy

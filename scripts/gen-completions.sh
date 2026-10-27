@@ -18,7 +18,7 @@ _${fn}_complete() {
     COMPREPLY=()
     cur="\${COMP_WORDS[COMP_CWORD]}"
     prev="\${COMP_WORDS[COMP_CWORD-1]}"
-    subcommands="policies flows verdict ui version"
+    subcommands="policies flows verdict ui version compat"
     common_flags="--kubeconfig --namespace -n --all-namespaces -A"
 
     if [[ "\$COMP_CWORD" -eq 1 ]]; then
@@ -56,6 +56,7 @@ complete -c ${name} -f -n "__fish_use_subcommand" -a "flows" -d "stream recent H
 complete -c ${name} -f -n "__fish_use_subcommand" -a "verdict" -d "diff a candidate policy's verdicts against real flows"
 complete -c ${name} -f -n "__fish_use_subcommand" -a "ui" -d "start a local web UI for flows/verdict"
 complete -c ${name} -f -n "__fish_use_subcommand" -a "version" -d "print the version this binary was built from"
+complete -c ${name} -f -n "__fish_use_subcommand" -a "compat" -d "list version-gated policy constructs, and why"
 
 complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict ui" -l kubeconfig -d "path to kubeconfig"
 complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict" -l namespace -s n -d "namespace to scope the query to"
@@ -79,6 +80,7 @@ _${fn}() {
     'verdict:diff a candidate policy'"'"'s verdicts against real flows'
     'ui:start a local web UI for flows/verdict'
     'version:print the version this binary was built from'
+    'compat:list version-gated policy constructs, and why'
   )
 
   if (( CURRENT == 2 )); then

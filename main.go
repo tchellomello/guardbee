@@ -31,6 +31,8 @@ func main() {
 		runUI(os.Args[2:])
 	case "version":
 		runVersion(os.Args[2:])
+	case "compat":
+		runCompat(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "%s: unknown command %q\n\n", binName, os.Args[1])
 		printHelp(os.Stderr)
@@ -57,6 +59,7 @@ COMMANDS
   verdict     Diff a candidate policy's verdicts against real recent flows
   ui          Start a local web UI for flows/verdict (milestone 1, read-only)
   version     Print the version this binary was built from
+  compat      List version-gated policy constructs GuardBee knows about, and why
 
 GLOBAL FLAGS (every command except ui)
   --kubeconfig string     path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)

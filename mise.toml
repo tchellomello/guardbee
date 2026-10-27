@@ -85,6 +85,10 @@ run = "bash lab/scripts/lab-down.sh"
 description = "Regenerate bash/fish/zsh completions from globals.go"
 run = "bash scripts/gen-completions.sh"
 
+[tasks.compat-scan]
+description = "Diff Cilium's pkg/policy/api between two versions to find candidate compat.go gates. Usage: mise run compat-scan <from-version> <to-version>. Not part of \"build\"/\"check\" (needs network, and only matters when bumping the pinned Cilium version) — run it manually, see AGENTS.md's Cilium-version-bump checklist."
+run = "bash scripts/compat-scan.sh \"$@\""
+
 [tasks.install-completions]
 description = "Regenerate completions, then install them into the standard per-shell user directories"
 depends = ["completions"]

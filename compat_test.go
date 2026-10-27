@@ -145,6 +145,109 @@ spec:
 	}
 }
 
+// TestCheckRawFieldGatesRejectsGenericL7AndKafka exercises
+// checkRawFieldGates directly — rawFieldGateKind entries (toPorts[].rules.l7
+// and .kafka) have no Go struct field left in api.Rule once Parse() runs
+// (both types were removed from pkg/policy/api entirely by Cilium 1.20, see
+// compat.go's featureGates entries), so unlike fromRequires/toRequires they
+// can only be caught on the raw YAML, before the typed unmarshal silently
+// drops them.
+func TestCheckRawFieldGatesRejectsGenericL7AndKafka(t *testing.T) {
+	cases := []struct {
+		name     string
+		yamlDoc  string
+		wantGate string
+	}{
+		{
+			name: "generic l7 rule",
+			yamlDoc: `
+spec:
+  egress:
+  - toPorts:
+    - ports:
+      - port: "9092"
+      rules:
+        l7:
+        - key: value
+`,
+			wantGate: "rules.l7",
+		},
+		{
+			name: "kafka rule",
+			yamlDoc: `
+spec:
+  egress:
+  - toPorts:
+    - ports:
+      - port: "9092"
+      rules:
+        kafka:
+        - role: produce
+          topic: events
+`,
+			wantGate: "rules.kafka",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkRawFieldGates([]byte(c.yamlDoc), "1.20.2")
+			if err == nil {
+				t.Fatal("expected a gate rejection error, got nil")
+			}
+			if !strings.Contains(err.Error(), c.wantGate) {
+				t.Errorf("error %q does not name the gate", err.Error())
+			}
+		})
+	}
+}
+
+func TestCheckRawFieldGatesAllowsOrdinaryCandidate(t *testing.T) {
+	yamlDoc := `
+spec:
+  egress:
+  - toPorts:
+    - ports:
+      - port: "9092"
+      rules:
+        http:
+        - method: GET
+`
+	if err := checkRawFieldGates([]byte(yamlDoc), "1.20.2"); err != nil {
+		t.Errorf("expected no rejection for an ordinary http rule, got: %v", err)
+	}
+}
+
+// TestParseCandidateYAMLRejectsGenericL7AndKafka is the end-to-end
+// counterpart of TestCheckRawFieldGatesRejectsGenericL7AndKafka, exercising
+// the real decodeCandidateYAML/parseCandidateYAML call site rather than
+// only the pure helper.
+func TestParseCandidateYAMLRejectsGenericL7AndKafka(t *testing.T) {
+	yamlDoc := []byte(`
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: probe3
+  namespace: default
+spec:
+  endpointSelector: {}
+  egress:
+  - toPorts:
+    - ports:
+      - port: "9092"
+      rules:
+        kafka:
+        - role: produce
+          topic: events
+`)
+	_, err := parseCandidateYAML(slog.Default(), yamlDoc, "")
+	if err == nil {
+		t.Fatal("expected parseCandidateYAML to reject a candidate with rules.kafka, got nil error")
+	}
+	if !strings.Contains(err.Error(), "rules.kafka") {
+		t.Errorf("error %q does not name the gate", err.Error())
+	}
+}
+
 func TestParseCandidateYAMLAllowsOrdinaryCandidate(t *testing.T) {
 	yamlDoc := []byte(`
 apiVersion: cilium.io/v2

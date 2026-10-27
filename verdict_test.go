@@ -517,3 +517,36 @@ metadata:
 	})
 }
 
+// TestCompatEndpoint covers GET /api/compat (ui.go's handleCompat) — the
+// UI's/CLI's shared view of compat.go's featureGates table, so "why was my
+// candidate rejected" has a page to check rather than only the rejection
+// error text. Asserts the response mirrors featureGates directly, not a
+// hardcoded count, so this doesn't need updating every time a new gate is
+// added.
+func TestCompatEndpoint(t *testing.T) {
+	srv := &uiServer{logger: slog.Default()}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/compat", nil)
+	w := httptest.NewRecorder()
+	srv.handleCompat(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	var resp compatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshaling response: %v", err)
+	}
+	if resp.Pinned != pinnedCiliumVersion {
+		t.Errorf("expected pinned %q, got %q", pinnedCiliumVersion, resp.Pinned)
+	}
+	if len(resp.Gates) != len(featureGates) {
+		t.Fatalf("expected %d gates (one per featureGates entry), got %d", len(featureGates), len(resp.Gates))
+	}
+	for i, g := range featureGates {
+		if resp.Gates[i].Name != g.name || resp.Gates[i].Reason != g.reason {
+			t.Errorf("gate %d: expected name/reason %q/%q, got %q/%q", i, g.name, g.reason, resp.Gates[i].Name, resp.Gates[i].Reason)
+		}
+	}
+}
+
