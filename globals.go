@@ -7,6 +7,17 @@ package main
 // elsewhere, no separate file to keep in sync.
 const binName = "guardbee"
 
+// pinnedCiliumVersion is the exact Cilium version go.mod pins
+// (github.com/cilium/cilium) — the version whose actual pkg/policy engine
+// code this tool embeds and whose semantics every verdict is a verdict
+// from (see CLAUDE.md's "Architecture principle that overrides
+// convenience"). go.mod isn't readable at runtime, so this is the one
+// place that number is duplicated; bump it by hand alongside go.mod on a
+// Cilium version upgrade — clusterversion.go's detection and compat.go's
+// feature gates both key off this constant whenever the live cluster's own
+// version can't be determined.
+const pinnedCiliumVersion = "1.20.2"
+
 // numberFlagHelp explains --last's actual semantics, shared verbatim by
 // every subcommand's -h screen that takes it (flows, verdict) so the two
 // never drift out of sync. --last is a request ceiling against Hubble's

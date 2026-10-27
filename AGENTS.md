@@ -92,6 +92,12 @@ Consequences that follow directly from this, non-negotiably:
   namespace. Getting fewer flows than requested is expected, not a bug.
   `--follow`/`-f` is the real lever for more volume over time, not raising
   `--last`.
+- A TCP/UDP flow with **destination port 0** is `NOT_SIMULATED`, not judged.
+  `isAllowed`'s `policy.Key` query must have a non-wildcard port (Cilium's
+  own `mapState.lookup()` doc comment says so explicitly) — querying with
+  port 0 doesn't error, but the ancestor-LPM walk then only matches other
+  full-wildcard-port entries, silently missing any specific-port rule. Seen
+  on real clusters for UDP flows Hubble reports with `DestinationPort` 0.
 
 ## Repo layout
 

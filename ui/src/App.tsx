@@ -6,21 +6,10 @@ import { VerdictPanel } from './components/VerdictPanel'
 import { ThemeToggle } from './components/ThemeToggle'
 import { HomepageLink } from './components/HomepageLink'
 import { GitHubLink } from './components/GitHubLink'
+import { VersionBanner } from './components/VersionBanner'
 import { ThemeProvider } from './theme'
 import type { EditablePolicyModel } from './api'
-import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel } from './policy'
-
-// Assigns fresh rule ids to a preset/live-policy's id-less rule list — the
-// same thing PolicyEditorPanel.tsx's handleLoadPreset already does for a
-// generic template; needed here too since a live policy loaded via "Edit in
-// Policy Editor" arrives through the exact same id-less JSON shape.
-function toPolicyModel(editable: EditablePolicyModel): PolicyModel {
-  return {
-    ...editable,
-    ingressRules: editable.ingressRules.map((r, i) => ({ ...r, id: `ingress-${Date.now()}-${i}` })),
-    egressRules: editable.egressRules.map((r, i) => ({ ...r, id: `egress-${Date.now()}-${i}` })),
-  }
-}
+import { BLANK_POLICY, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 
 type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
 
@@ -157,6 +146,8 @@ function AppContent() {
           </div>
         </div>
       </header>
+
+      <VersionBanner />
 
       <main className="px-6 py-8 lg:px-10">
         {/* All three panels stay mounted and are only hidden via CSS, not

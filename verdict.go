@@ -121,6 +121,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, binName+" verdict: building clients: %v\n", err)
 		os.Exit(1)
 	}
+	warnOnVersionSkew(core, cfg)
 
 	candidateRules, err := parseCandidateFile(logger, candidatePath, namespace)
 	if err != nil {
@@ -374,10 +375,28 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 	switch {
 	case l4.GetTCP() != nil:
 		proto = "TCP"
-		key = policy.IngressKey().WithIdentity(srcNID).WithTCPPort(uint16(l4.GetTCP().GetDestinationPort()))
+		port := uint16(l4.GetTCP().GetDestinationPort())
+		// A flow with no concrete destination port can't be queried via
+		// isAllowed/Lookup: mapState.lookup's own doc comment requires "a
+		// non-wildcard port" in the query key, and WithTCPPort(0) builds
+		// exactly that wildcard — querying it doesn't error, but Cilium's
+		// own ancestor-LPM walk then only matches other full-wildcard-port
+		// entries, silently missing any specific-port rule. Seen in
+		// practice on real clusters for UDP flows Hubble reports with
+		// DestinationPort 0.
+		if port == 0 {
+			counts.notSimulated++
+			return nil
+		}
+		key = policy.IngressKey().WithIdentity(srcNID).WithTCPPort(port)
 	case l4.GetUDP() != nil:
 		proto = "UDP"
-		key = policy.IngressKey().WithIdentity(srcNID).WithUDPPort(uint16(l4.GetUDP().GetDestinationPort()))
+		port := uint16(l4.GetUDP().GetDestinationPort())
+		if port == 0 {
+			counts.notSimulated++
+			return nil
+		}
+		key = policy.IngressKey().WithIdentity(srcNID).WithUDPPort(port)
 	default:
 		counts.notSimulated++
 		return nil
@@ -515,6 +534,39 @@ func parseCandidateFile(logger *slog.Logger, path, defaultNamespace string) (api
 // pasted/uploaded YAML (the "ui" subcommand's web form, see ui.go) without
 // needing a file on disk.
 func parseCandidateYAML(logger *slog.Logger, raw []byte, defaultNamespace string) (api.Rules, error) {
+	decoded, err := decodeCandidateYAML(raw, defaultNamespace)
+	if err != nil {
+		return nil, err
+	}
+	return decoded.parse(logger)
+}
+
+// decodedCandidate is the raw kind/name/namespace/rule-spec a candidate
+// CNP/CCNP's YAML carries, before Cilium's own Parse() turns it into
+// engine-ready api.Rules. Split out of parseCandidateYAML so a second
+// caller (ui.go's handlePolicyParse, backing the Policy Editor's YAML
+// import/hand-edit path) can get at kind/name/namespace/rule — which
+// convertRuleToPolicyModel needs — without duplicating the
+// CNP-vs-CCNP-vs-unknown-kind switch below a second time.
+type decodedCandidate struct {
+	kind      string
+	name      string
+	namespace string
+	// rule is firstRuleSpec(spec, specs) — the same v1 simplification
+	// handlePolicyForEdit already applies to a live policy's Spec/Specs
+	// pair (policies.go), carried over here for a pasted/hand-edited
+	// candidate's Spec/Specs pair too.
+	rule *api.Rule
+	// parse converts the full decoded CNP/CCNP (both Spec and Specs, not
+	// just the first entry rule carries) into Cilium's own api.Rules via
+	// its generated .Parse() — deferred to a closure rather than done
+	// eagerly, since the /api/policy/validate path validates while
+	// handlePolicyParse needs it, but handlePolicyForEdit's live-policy
+	// analog never does.
+	parse func(logger *slog.Logger) (api.Rules, error)
+}
+
+func decodeCandidateYAML(raw []byte, defaultNamespace string) (*decodedCandidate, error) {
 	var kindOnly struct {
 		Kind string `json:"kind"`
 	}
@@ -540,13 +592,40 @@ func parseCandidateYAML(logger *slog.Logger, raw []byte, defaultNamespace string
 			}
 			cnp.ObjectMeta.Namespace = defaultNamespace
 		}
-		return cnp.Parse(logger, "")
+		// Phase 2 adaptive gating (compat.go) runs here, on the raw
+		// Spec/Specs, before anyone calls .Parse() — Parse() itself never
+		// rejects a deprecated construct like FromRequires/ToRequires, it
+		// silently drops it while building the real api.Rule (see
+		// compat.go's doc comment), so checking Parse()'s own output
+		// would always find an already-empty field and never catch
+		// anything. Checked here (decode time) rather than only inside
+		// the parse closure below so both callers — parseCandidateYAML's
+		// wrapper and ui.go's handlePolicyParse, which calls
+		// decoded.parse() directly — are covered by one check.
+		if err := checkFeatureGates(rawRules(cnp.Spec, cnp.Specs), pinnedCiliumVersion); err != nil {
+			return nil, err
+		}
+		return &decodedCandidate{
+			kind:      kindOnly.Kind,
+			name:      cnp.ObjectMeta.Name,
+			namespace: cnp.ObjectMeta.Namespace,
+			rule:      firstRuleSpec(cnp.Spec, cnp.Specs),
+			parse:     func(logger *slog.Logger) (api.Rules, error) { return cnp.Parse(logger, "") },
+		}, nil
 	case "CiliumClusterwideNetworkPolicy":
 		var ccnp ciliumv2.CiliumClusterwideNetworkPolicy
 		if err := yaml.Unmarshal(raw, &ccnp); err != nil {
 			return nil, err
 		}
-		return ccnp.Parse(logger, "")
+		if err := checkFeatureGates(rawRules(ccnp.Spec, ccnp.Specs), pinnedCiliumVersion); err != nil {
+			return nil, err
+		}
+		return &decodedCandidate{
+			kind:  kindOnly.Kind,
+			name:  ccnp.ObjectMeta.Name,
+			rule:  firstRuleSpec(ccnp.Spec, ccnp.Specs),
+			parse: func(logger *slog.Logger) (api.Rules, error) { return ccnp.Parse(logger, "") },
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported kind %q (expected CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy)", kindOnly.Kind)
 	}

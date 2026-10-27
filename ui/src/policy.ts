@@ -97,6 +97,30 @@ export const BLANK_POLICY: PolicyModel = {
   egressDenyAll: false,
 }
 
+// IdlessPolicyModel is the shape every "whole policy" payload from the
+// backend arrives in before it's usable as a PolicyModel — a generic
+// template, a live policy loaded via "Edit in Policy Editor", or a
+// successfully parsed hand-edited/imported YAML (see api.ts's
+// EditablePolicyModel, which this is structurally identical to). None of
+// them carry rule ids: the backend never invents one, since the same
+// preset/parsed policy can be loaded more than once.
+export type IdlessPolicyModel = Omit<PolicyModel, 'ingressRules' | 'egressRules'> & {
+  ingressRules: Omit<IngressRule, 'id'>[]
+  egressRules: Omit<EgressRule, 'id'>[]
+}
+
+// Assigns fresh rule ids to an id-less rule list — shared by App.tsx
+// ("Edit in Policy Editor") and PolicyEditorPanel.tsx (loading a generic
+// preset, or a successfully parsed hand-edited/imported YAML), so there's
+// exactly one place a rule id gets minted rather than three.
+export function toPolicyModel(editable: IdlessPolicyModel): PolicyModel {
+  return {
+    ...editable,
+    ingressRules: editable.ingressRules.map((r, i) => ({ ...r, id: `ingress-${Date.now()}-${i}` })),
+    egressRules: editable.egressRules.map((r, i) => ({ ...r, id: `egress-${Date.now()}-${i}` })),
+  }
+}
+
 // Rule-level presets: common ingress/egress patterns (DNS, world HTTPS,
 // cluster-internal, …) a user can drop into a rule list with one click
 // instead of hand-assembling endpoints/entities/ports every time — distinct

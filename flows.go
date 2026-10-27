@@ -64,6 +64,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, binName+" flows: building clients: %v\n", err)
 		os.Exit(1)
 	}
+	warnOnVersionSkew(core, cfg)
 
 	print := func(f *flowpb.Flow) {
 		verdict := f.GetVerdict().String()

@@ -410,3 +410,110 @@ spec:
 	}
 }
 
+// TestPolicyParseEndpoint covers POST /api/policy/parse (the Policy
+// Editor's YAML import/hand-edit path, see ui.go's handlePolicyParse): a
+// valid CNP round-trips to a correct templatePolicyModel, a valid CCNP's
+// namespace comes back via its io.kubernetes.pod.namespace target label
+// (same convention convertRuleToPolicyModel already uses for the live-
+// policy "Edit in Policy Editor" path), and invalid YAML returns a clean
+// {valid:false, error} response rather than panicking.
+func TestPolicyParseEndpoint(t *testing.T) {
+	srv := &uiServer{logger: slog.Default()}
+
+	postParse := func(t *testing.T, namespace, candidateYAML string) policyParseResponse {
+		t.Helper()
+		reqBody, _ := json.Marshal(policyValidateRequest{Namespace: namespace, CandidateYAML: candidateYAML})
+		req := httptest.NewRequest(http.MethodPost, "/api/policy/parse", bytes.NewReader(reqBody))
+		w := httptest.NewRecorder()
+		srv.handlePolicyParse(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+		var resp policyParseResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshaling response: %v", err)
+		}
+		return resp
+	}
+
+	t.Run("valid CNP", func(t *testing.T) {
+		resp := postParse(t, "default", `
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: test-parse-cnp
+  namespace: default
+spec:
+  endpointSelector:
+    matchLabels:
+      app: test
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: client
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+`)
+		if !resp.Valid || resp.Policy == nil {
+			t.Fatalf("expected a valid parsed policy, got %+v", resp)
+		}
+		if resp.Policy.Kind != "CiliumNetworkPolicy" || resp.Policy.Name != "test-parse-cnp" || resp.Policy.Namespace != "default" {
+			t.Fatalf("expected kind/name/namespace to round-trip, got %+v", resp.Policy)
+		}
+		if len(resp.Policy.IngressRules) != 1 || len(resp.Policy.IngressRules[0].ToPorts) != 1 {
+			t.Fatalf("expected one ingress rule with one port rule, got %+v", resp.Policy.IngressRules)
+		}
+	})
+
+	t.Run("valid CCNP carries its namespace via the target label", func(t *testing.T) {
+		resp := postParse(t, "", `
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: test-parse-ccnp
+spec:
+  endpointSelector:
+    matchLabels:
+      io.kubernetes.pod.namespace: "payments"
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: "payments"
+`)
+		if !resp.Valid || resp.Policy == nil {
+			t.Fatalf("expected a valid parsed policy, got %+v", resp)
+		}
+		if resp.Policy.Kind != "CiliumClusterwideNetworkPolicy" || resp.Policy.Namespace != "payments" {
+			t.Fatalf("expected the CCNP's io.kubernetes.pod.namespace target label to surface as Namespace, got %+v", resp.Policy)
+		}
+	})
+
+	t.Run("invalid YAML returns a clean error, not a panic", func(t *testing.T) {
+		resp := postParse(t, "default", "not: [valid, cilium, policy")
+		if resp.Valid {
+			t.Fatalf("expected an invalid response, got %+v", resp)
+		}
+		if resp.Error == "" {
+			t.Fatal("expected a non-empty error message")
+		}
+	})
+
+	t.Run("unsupported kind returns a clean error, not a panic", func(t *testing.T) {
+		resp := postParse(t, "default", `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: not-a-policy
+`)
+		if resp.Valid {
+			t.Fatalf("expected an invalid response, got %+v", resp)
+		}
+		if !strings.Contains(resp.Error, "unsupported kind") {
+			t.Fatalf("expected an unsupported-kind error, got %q", resp.Error)
+		}
+	})
+}
+
