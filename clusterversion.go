@@ -118,24 +118,31 @@ func detectClusterCiliumVersion(ctx context.Context, core kubernetes.Interface, 
 	}
 }
 
-// leadingSemver extracts the real semver token off a raw Cilium version
-// string and reports "" for anything that isn't one. Cilium's own
-// pkg/version.Version formats as "1.20.2 <sha> <date> go version <gover>
-// <os>/<arch>" (confirmed in the vendored pkg/version/version.go) — the
-// semver is always the first space-separated field, but defending against
-// an empty string or a future/older format that isn't real semver at all
-// (rather than panicking or treating garbage as a version to compare
-// against) is exactly the "don't false-positive a skew warning off
-// garbage" case this project's issue called out.
+// leadingSemver extracts the real semver token out of a raw Cilium version
+// string and reports "" for anything that has none. Confirmed live against
+// a real hubble-relay v1.18.16 (this project's own pinnedCiliumVersion is
+// 1.20.2) that GetNodes' Node.version is NOT "1.20.2 <sha> ..." as
+// pkg/version.Version's own string form is — it's "cilium
+// v1.18.16+g4dd7ec81": a literal "cilium" label first, then a "v"-prefixed,
+// build-metadata-suffixed token. semver.ParseTolerant handles the "v"
+// prefix and "+build" suffix fine on its own; what it can't handle is the
+// leading "cilium" field, which an earlier version of this function
+// mistakenly assumed was always the version itself (fields[0]) — that
+// false assumption silently produced clusterVersionUnknown instead of a
+// detected version on every real cluster running anything older than the
+// format pkg/version.Version itself uses. Scanning every space-separated
+// field for the first one that parses as semver, rather than trusting
+// position, is robust to both formats without needing to special-case
+// either. Returns the parsed form (v.String()), not the raw field, so a
+// "v"-prefixed or build-metadata-suffixed token still compares and
+// displays as a clean "1.18.16+g4dd7ec81" rather than echoing "v1.18.16+...".
 func leadingSemver(raw string) string {
-	fields := strings.Fields(raw)
-	if len(fields) == 0 {
-		return ""
+	for _, field := range strings.Fields(raw) {
+		if v, err := semver.ParseTolerant(field); err == nil {
+			return v.String()
+		}
 	}
-	if _, err := semver.ParseTolerant(fields[0]); err != nil {
-		return ""
-	}
-	return fields[0]
+	return ""
 }
 
 // versionsSkewed compares two version strings at the major.minor level

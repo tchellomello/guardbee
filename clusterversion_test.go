@@ -24,7 +24,12 @@ func TestLeadingSemver(t *testing.T) {
 	}{
 		{"real cilium version string", "1.20.2 abcdef1 2026-01-01T00:00:00Z go version go1.24.0 linux/amd64", "1.20.2"},
 		{"bare semver", "1.19.1", "1.19.1"},
-		{"v-prefixed", "v1.20.2", "v1.20.2"}, // leadingSemver only strips/validates, doesn't normalize
+		{"v-prefixed", "v1.20.2", "1.20.2"}, // leadingSemver normalizes via semver.Version.String()
+		// Real GetNodes().Node.version shape confirmed live against a
+		// hubble-relay v1.18.16 — "cilium" first, then a "v"-prefixed,
+		// build-metadata-suffixed token, not the bare leading semver
+		// pkg/version.Version's own string form uses.
+		{"real GetNodes version string", "cilium v1.18.16+g4dd7ec81", "1.18.16+g4dd7ec81"},
 		{"empty", "", ""},
 		{"garbage", "not-a-version", ""},
 		{"whitespace only", "   ", ""},
