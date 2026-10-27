@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { CompatPanel } from './components/CompatPanel'
+import { CompatButton } from './components/CompatButton'
+import { CompatModal } from './components/CompatModal'
 import { FlowsPanel } from './components/FlowsPanel'
 import { PoliciesPanel } from './components/PoliciesPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
@@ -12,7 +13,7 @@ import { ThemeProvider } from './theme'
 import type { EditablePolicyModel } from './api'
 import { BLANK_POLICY, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 
-type Tab = 'verdict' | 'flows' | 'policies' | 'editor' | 'compat'
+type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
 
 // Draft persistence — the in-progress Policy Editor draft used to live only
 // in React state, so switching browser tabs or an accidental reload threw
@@ -54,6 +55,7 @@ export default function App() {
 
 function AppContent() {
   const [tab, setTab] = useState<Tab>('flows')
+  const [compatModalOpen, setCompatModalOpen] = useState(false)
   const [verdictNamespace, setVerdictNamespace] = useState('')
   const [verdictCandidateYAML, setVerdictCandidateYAML] = useState('')
 
@@ -140,16 +142,16 @@ function AppContent() {
               <TabButton active={tab === 'editor'} onClick={() => setTab('editor')}>
                 Policy Editor
               </TabButton>
-              <TabButton active={tab === 'compat'} onClick={() => setTab('compat')}>
-                Compatibility
-              </TabButton>
             </nav>
+            <CompatButton onClick={() => setCompatModalOpen(true)} />
             <HomepageLink />
             <GitHubLink />
             <ThemeToggle />
           </div>
         </div>
       </header>
+
+      <CompatModal isOpen={compatModalOpen} onClose={() => setCompatModalOpen(false)} />
 
       <VersionBanner />
 
@@ -182,9 +184,6 @@ function AppContent() {
             originalLiveModel={originalLiveModel}
             onClearOriginalLiveModel={() => setOriginalLiveModel(null)}
           />
-        </div>
-        <div className={tab === 'compat' ? '' : 'hidden'}>
-          <CompatPanel />
         </div>
       </main>
     </div>

@@ -61,7 +61,8 @@ Consequences that follow directly from this, non-negotiably:
   `compat.go`'s `featureGates` table, which hard-rejects a candidate using a
   construct that's deprecated-or-removed as of the pin rather than silently
   computing a verdict that misrepresents what it does. `GET /api/compat` /
-  `guardbee compat` / the UI's Compatibility tab list the table itself, so
+  `guardbee compat` / the UI's Compatibility modal (header icon, next to
+  GitHub/homepage/theme) list the table itself, so
   "why was this rejected" doesn't have to be reverse-engineered from the
   error text.
 

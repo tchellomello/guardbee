@@ -237,7 +237,7 @@ export function fetchVersion(): Promise<VersionInfo> {
 
 // CompatGate/CompatResponse back GET /api/compat — compat.go's featureGates
 // table, read-only, surfaced verbatim so "why was my candidate rejected"
-// has a page to check (CompatPanel.tsx) instead of only the rejection
+// has a page to check (CompatModal.tsx) instead of only the rejection
 // error text from a validate/parse call.
 export interface CompatGate {
   name: string
