@@ -103,6 +103,29 @@ export function fetchPods(namespace: string): Promise<PodsResponse> {
   )
 }
 
+export interface WorkloadMatch {
+  namespace: string
+  name: string
+  serviceAccount: string
+  selected: boolean
+  ingress: boolean
+  egress: boolean
+}
+
+export interface WorkloadsResult {
+  valid: boolean
+  error?: string
+  workloads: WorkloadMatch[]
+}
+
+export function fetchPolicyWorkloads(namespace: string, candidateYAML: string): Promise<WorkloadsResult> {
+  return fetch('/api/policy/workloads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ namespace, candidateYAML }),
+  }).then((res) => parseErrorOrJSON<WorkloadsResult>(res))
+}
+
 export interface PolicyValidationResult {
   valid: boolean
   ruleCount?: number
@@ -205,6 +228,10 @@ export function fetchPolicyForEdit(kind: string, namespace: string, name: string
 export interface PolicyParseResult {
   valid: boolean
   policy?: EditablePolicyModel
+  // True when `policy` is NOT a faithful rendering of the YAML (a scoped
+  // ingressDeny/egressDeny the editor model can't express) — callers must
+  // keep the user's text rather than regenerate it from `policy`.
+  lossy?: boolean
   error?: string
 }
 

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -79,6 +80,10 @@ type templateIngressRule struct {
 	FromCIDRs     []string                   `json:"fromCIDRs"`
 	FromEntities  []string                   `json:"fromEntities"`
 	ToPorts       []templatePortRule         `json:"toPorts"`
+	// Deny means this entry came from (and regenerates to) spec.ingressDeny,
+	// not spec.ingress — a scoped block of one peer/port rather than an
+	// allow. Mirrors ui/src/policy.ts's IngressRule.deny.
+	Deny bool `json:"deny,omitempty"`
 }
 
 type templateEgressRule struct {
@@ -87,6 +92,8 @@ type templateEgressRule struct {
 	ToEntities  []string                   `json:"toEntities"`
 	ToServices  []templateServiceRef       `json:"toServices"`
 	ToPorts     []templatePortRule         `json:"toPorts"`
+	// Deny: see templateIngressRule.Deny.
+	Deny bool `json:"deny,omitempty"`
 }
 
 type templatePolicyModel struct {
@@ -111,6 +118,11 @@ type templatePolicyModel struct {
 	// configured yet" apart from "egress deliberately denied" once both
 	// round-trip through this JSON shape as an empty array.
 	EgressDenyAll bool `json:"egressDenyAll"`
+	// IngressUnmanaged mirrors the policy having neither ingress nor
+	// ingressDeny — set only by convertRuleToPolicyModel (pasted/live
+	// policies), where regenerating without it would add a deny-all ingress
+	// the policy never had. Generic templates keep the editor's default.
+	IngressUnmanaged bool `json:"ingressUnmanaged,omitempty"`
 }
 
 type genericTemplateOut struct {
@@ -305,7 +317,7 @@ func convertPolicy(cnp *ciliumv2.CiliumNetworkPolicy) templatePolicyModel {
 		TargetLabels:  map[string]string{},
 		IngressRules:  []templateIngressRule{},
 		EgressRules:   []templateEgressRule{},
-		EgressDenyAll: len(cnp.Spec.EgressDeny) > 0,
+		EgressDenyAll: isCatchallDeny(len(cnp.Spec.Egress), egressDenyIsZero(cnp.Spec.EgressDeny)),
 	}
 	if cnp.Spec.EndpointSelector.LabelSelector != nil {
 		for k, v := range cnp.Spec.EndpointSelector.MatchLabels {
@@ -329,6 +341,7 @@ func convertPolicy(cnp *ciliumv2.CiliumNetworkPolicy) templatePolicyModel {
 	for _, r := range cnp.Spec.Egress {
 		m.EgressRules = append(m.EgressRules, convertEgressRule(r))
 	}
+	appendDenyRules(&m, cnp.Spec)
 	return m
 }
 
@@ -349,7 +362,9 @@ func convertRuleToPolicyModel(kind, name, namespace string, rule *api.Rule) temp
 		TargetLabels:  map[string]string{},
 		IngressRules:  []templateIngressRule{},
 		EgressRules:   []templateEgressRule{},
-		EgressDenyAll: len(rule.EgressDeny) > 0,
+		EgressDenyAll: isCatchallDeny(len(rule.Egress), egressDenyIsZero(rule.EgressDeny)),
+
+		IngressUnmanaged: len(rule.Ingress) == 0 && len(rule.IngressDeny) == 0,
 	}
 	if rule.EndpointSelector.LabelSelector != nil {
 		for k, v := range rule.EndpointSelector.MatchLabels {
@@ -366,6 +381,7 @@ func convertRuleToPolicyModel(kind, name, namespace string, rule *api.Rule) temp
 	for _, r := range rule.Egress {
 		m.EgressRules = append(m.EgressRules, convertEgressRule(r))
 	}
+	appendDenyRules(&m, rule)
 	return m
 }
 
@@ -459,4 +475,189 @@ func convertEgressRule(r api.EgressRule) templateEgressRule {
 		}
 	}
 	return out
+}
+
+// --- ingressDeny/egressDeny <-> editor model -------------------------------
+//
+// The editor model has two ways to express a deny: the bare catchall
+// (`- {}` -> "no ingress rules"/EgressDenyAll, i.e. default-deny) and a
+// scoped block of one peer/port, carried as a rule with Deny=true. Cilium
+// also turns a direction into default-deny the moment ANY rule for it
+// exists — including deny-only — unless spec.enableDefaultDeny opts out, so
+// the frontend's generator emits that opt-out for a deny-only direction (see
+// generateCiliumNetworkPolicyYAML). The fit check below must mirror it
+// exactly, or a pasted policy would regenerate to different semantics.
+
+func ingressDenyIsZero(rs []api.IngressDenyRule) bool {
+	return len(rs) == 1 && reflect.ValueOf(rs[0]).IsZero()
+}
+
+func egressDenyIsZero(rs []api.EgressDenyRule) bool {
+	return len(rs) == 1 && reflect.ValueOf(rs[0]).IsZero()
+}
+
+// isCatchallDeny: exactly one empty deny rule and no allow rules in that
+// direction is the editor's own "deny everything" form.
+func isCatchallDeny(allowCount int, denyIsZero bool) bool {
+	return allowCount == 0 && denyIsZero
+}
+
+func convertDenyPorts(prs api.PortDenyRules) []templatePortRule {
+	out := []templatePortRule{}
+	for _, pr := range prs {
+		for _, p := range pr.Ports {
+			proto := string(p.Protocol)
+			if proto == "" {
+				proto = "ANY"
+			}
+			out = append(out, templatePortRule{Port: p.Port, Protocol: proto})
+		}
+	}
+	return out
+}
+
+// appendDenyRules adds each scoped ingressDeny/egressDeny entry as a
+// Deny=true rule. The catchall form is skipped (already carried by
+// "no ingress rules"/EgressDenyAll).
+func appendDenyRules(m *templatePolicyModel, rule *api.Rule) {
+	if !isCatchallDeny(len(rule.Ingress), ingressDenyIsZero(rule.IngressDeny)) {
+		for _, r := range rule.IngressDeny {
+			out := templateIngressRule{
+				FromEndpoints: []templateEndpointSelector{},
+				FromCIDRs:     []string{},
+				FromEntities:  []string{},
+				ToPorts:       convertDenyPorts(r.ToPorts),
+				Deny:          true,
+			}
+			for _, es := range r.FromEndpoints {
+				out.FromEndpoints = append(out.FromEndpoints, convertEndpointSelector(es))
+			}
+			for _, c := range r.FromCIDR {
+				out.FromCIDRs = append(out.FromCIDRs, string(c))
+			}
+			for _, e := range r.FromEntities {
+				out.FromEntities = append(out.FromEntities, string(e))
+			}
+			m.IngressRules = append(m.IngressRules, out)
+		}
+	}
+	if !m.EgressDenyAll {
+		for _, r := range rule.EgressDeny {
+			out := templateEgressRule{
+				ToEndpoints: []templateEndpointSelector{},
+				ToCIDRs:     []string{},
+				ToEntities:  []string{},
+				ToServices:  []templateServiceRef{},
+				ToPorts:     convertDenyPorts(r.ToPorts),
+				Deny:        true,
+			}
+			for _, es := range r.ToEndpoints {
+				out.ToEndpoints = append(out.ToEndpoints, convertEndpointSelector(es))
+			}
+			for _, c := range r.ToCIDR {
+				out.ToCIDRs = append(out.ToCIDRs, string(c))
+			}
+			for _, e := range r.ToEntities {
+				out.ToEntities = append(out.ToEntities, string(e))
+			}
+			for _, svc := range r.ToServices {
+				if svc.K8sService != nil {
+					out.ToServices = append(out.ToServices, templateServiceRef{
+						ServiceName: svc.K8sService.ServiceName,
+						Namespace:   svc.K8sService.Namespace,
+					})
+				}
+			}
+			m.EgressRules = append(m.EgressRules, out)
+		}
+	}
+}
+
+// portDenyRepresentable: only plain ports (no ICMP, no other fields).
+func portDenyRepresentable(prs api.PortDenyRules) bool {
+	for _, pr := range prs {
+		pr.Ports = nil
+		if !reflect.ValueOf(pr).IsZero() {
+			return false
+		}
+	}
+	return true
+}
+
+func ingressDenyRepresentable(r api.IngressDenyRule) bool {
+	if reflect.ValueOf(r).IsZero() || !portDenyRepresentable(r.ToPorts) {
+		return false
+	}
+	r.FromEndpoints, r.FromCIDR, r.FromEntities, r.ToPorts = nil, nil, nil, nil
+	return reflect.ValueOf(r).IsZero()
+}
+
+func egressDenyRepresentable(r api.EgressDenyRule) bool {
+	if reflect.ValueOf(r).IsZero() || !portDenyRepresentable(r.ToPorts) {
+		return false
+	}
+	for _, svc := range r.ToServices {
+		if svc.K8sService == nil {
+			return false
+		}
+	}
+	r.ToEndpoints, r.ToCIDR, r.ToEntities, r.ToServices, r.ToPorts = nil, nil, nil, nil, nil
+	return reflect.ValueOf(r).IsZero()
+}
+
+// defaultDenyFits: what the frontend generator would emit for enableDefaultDeny
+// in one direction — an explicit false for a scoped-deny-only direction,
+// nothing otherwise. Anything else would change on regeneration.
+func defaultDenyFits(got *bool, denyOnly bool) bool {
+	if denyOnly {
+		return got != nil && !*got
+	}
+	return got == nil
+}
+
+// policyFitsEditorModel reports whether rule survives a
+// round-trip through the editor model (appendDenyRules + the frontend
+// generator). False -> the frontend must keep the user's text instead of
+// regenerating it. Checked on the pre-Parse() snapshot (Sanitize() mutates
+// in place, see handlePolicyParse).
+func policyFitsEditorModel(rule *api.Rule) bool {
+	// Ingress. Unmanaged (neither list) regenerates to no ingress section;
+	// it must not carry an enableDefaultDeny.ingress override, which the
+	// generator would drop. The catchall form requires there be no allow
+	// rules and no override either.
+	if len(rule.Ingress) == 0 && len(rule.IngressDeny) == 0 {
+		if rule.EnableDefaultDeny.Ingress != nil {
+			return false
+		}
+	} else if ingressDenyIsZero(rule.IngressDeny) {
+		if len(rule.Ingress) != 0 || rule.EnableDefaultDeny.Ingress != nil {
+			return false
+		}
+	} else {
+		for _, r := range rule.IngressDeny {
+			if !ingressDenyRepresentable(r) {
+				return false
+			}
+		}
+		denyOnly := len(rule.Ingress) == 0 && len(rule.IngressDeny) > 0
+		if !defaultDenyFits(rule.EnableDefaultDeny.Ingress, denyOnly) {
+			return false
+		}
+	}
+	if egressDenyIsZero(rule.EgressDeny) {
+		if len(rule.Egress) != 0 || rule.EnableDefaultDeny.Egress != nil {
+			return false
+		}
+	} else {
+		for _, r := range rule.EgressDeny {
+			if !egressDenyRepresentable(r) {
+				return false
+			}
+		}
+		denyOnly := len(rule.Egress) == 0 && len(rule.EgressDeny) > 0
+		if !defaultDenyFits(rule.EnableDefaultDeny.Egress, denyOnly) {
+			return false
+		}
+	}
+	return true
 }

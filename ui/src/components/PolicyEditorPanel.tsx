@@ -102,6 +102,10 @@ export function PolicyEditorPanel({
   // it parse is how an import happens, not a separate dialog.
   const [editingYAML, setEditingYAML] = useState('')
   const [yamlEditError, setYamlEditError] = useState<string | null>(null)
+  // Set when the pasted YAML is valid but uses constructs the visual model
+  // can't express (see PolicyParseResult.lossy). The text is left exactly as
+  // typed and the model untouched.
+  const [yamlEditLossy, setYamlEditLossy] = useState<{ namespace: string } | null>(null)
   const { templates } = useTemplates()
   const genericPresets = useMemo(() => [BLANK_PRESET, ...templates.generic], [templates.generic])
   const presetMenuItems: PresetMenuItem[] = useMemo(
@@ -167,6 +171,7 @@ export function PolicyEditorPanel({
   function handleOpenYamlEditor() {
     setEditingYAML(generatedYAML)
     setYamlEditError(null)
+    setYamlEditLossy(null)
     setYamlModalOpen(true)
   }
 
@@ -190,13 +195,20 @@ export function PolicyEditorPanel({
       parsePolicy(model.namespace, editingYAML)
         .then((res) => {
           if (cancelled) return
-          if (res.valid && res.policy) {
+          if (res.valid && res.lossy) {
+            // Regenerating from the model would silently rewrite e.g. a
+            // scoped egressDeny into deny-all egress — keep the user's text.
+            setYamlEditError(null)
+            setYamlEditLossy({ namespace: res.policy?.namespace || model.namespace })
+          } else if (res.valid && res.policy) {
             const nextModel = toPolicyModel(res.policy)
+            setYamlEditLossy(null)
             setYamlEditError(null)
             setModel(nextModel)
             setEditingYAML(generateCiliumNetworkPolicyYAML(nextModel))
             onClearOriginalLiveModel()
           } else {
+            setYamlEditLossy(null)
             setYamlEditError(res.error ?? 'invalid policy')
           }
         })
@@ -620,6 +632,19 @@ export function PolicyEditorPanel({
         value={editingYAML}
         onChange={setEditingYAML}
         error={yamlEditError}
+        notice={
+          yamlEditLossy
+            ? {
+                message:
+                  "Valid policy, but the visual editor can't represent it faithfully (e.g. a scoped deny without enableDefaultDeny, an ICMP deny, or an enableDefaultDeny override it would drop). The graph is unchanged and your text is kept as-is.",
+                actionLabel: 'Test as-is in Verdict',
+                onAction: () => {
+                  setYamlModalOpen(false)
+                  onSendToVerdict(yamlEditLossy.namespace, editingYAML)
+                },
+              }
+            : null
+        }
         title="Candidate Policy YAML"
       />
     </div>

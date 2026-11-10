@@ -37,6 +37,10 @@ export interface IngressRule {
   fromCIDRs: string[]
   fromEntities: string[] // "world" | "host" | "cluster"
   toPorts: PortRule[]
+  // True = this entry is a scoped block (spec.ingressDeny) rather than an
+  // allow (spec.ingress). Absent/false = allow, so every existing model and
+  // stored draft keeps its meaning.
+  deny?: boolean
 }
 
 export interface EgressRule {
@@ -60,6 +64,8 @@ export interface EgressRule {
   // bug this project's embedded-real-engine principle exists to prevent.
   toServices: K8sServiceRef[]
   toPorts: PortRule[]
+  // See IngressRule.deny — spec.egressDeny when true.
+  deny?: boolean
 }
 
 export interface PolicyModel {
@@ -77,6 +83,14 @@ export interface PolicyModel {
   // equivalent flag: an empty ingressRules list already means default-deny
   // for ingress, both in this editor and in real Cilium semantics.
   egressDenyAll: boolean
+  // True means "this policy deliberately has no ingress section" (default
+  // allow), the ingress-side mirror of egress's omit-when-empty behavior.
+  // Without it, an empty ingressRules list always means default-deny and
+  // the generator writes `ingressDeny: - {}` — which would lock down a
+  // pod's ingress as a side effect of, say, a policy that only blocks one
+  // egress destination. Only consulted while ingressRules is empty; adding
+  // any ingress rule makes it irrelevant, so nothing needs to clear it.
+  ingressUnmanaged?: boolean
 }
 
 // BLANK_POLICY is the editor's zero-state starting point — the one preset
@@ -211,8 +225,22 @@ export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
     lines.push('    matchLabels: {}')
   }
 
+  // Cilium turns a direction default-deny as soon as ANY rule for it
+  // exists, deny-only included (api.Rule.EnableDefaultDeny: "if a policy
+  // only has Ingress or IngressDeny rules, then the default for ingress is
+  // true"), so a policy that only blocks one flow would silently block
+  // everything else too. A direction with scoped denies and no allows must
+  // opt out explicitly; confirmed against the vendored engine. Mirrored
+  // exactly by templates.go's policyFitsEditorModel.
+  let ingressDefaultDenyOff = false
+  let egressDefaultDenyOff = false
+
   // ingress
-  if (model.ingressRules.length === 0) {
+  const ingressAllow = model.ingressRules.filter((r) => !r.deny)
+  const ingressDeny = linesForIngressRules(model.ingressRules.filter((r) => r.deny))
+  if (ingressAllow.length === 0 && ingressDeny.length === 0 && model.ingressUnmanaged) {
+    // Deliberately no ingress section — see PolicyModel.ingressUnmanaged.
+  } else if (ingressAllow.length === 0 && ingressDeny.length === 0) {
     // No allow rules yet doesn't mean "nothing to generate" — the rest of
     // this editor already labels a rule-less target "Ingress: Default Deny"
     // (see PolicyGraph.tsx's target node badge and its "+ Default Deny —
@@ -228,64 +256,20 @@ export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
     lines.push('  ingressDeny:')
     lines.push('    - {}')
   } else {
-    lines.push('  ingress:')
-    for (const rule of model.ingressRules) {
-      let emittedAny = false
-
-      // fromEndpoints rule item
-      if (rule.fromEndpoints.length > 0) {
-        emittedAny = true
-        lines.push('    - fromEndpoints:')
-        for (const ep of rule.fromEndpoints) {
-          lines.push('        - matchLabels:')
-          const epEntries = Object.entries(ep.matchLabels).filter(([k]) => k.trim())
-          if (epEntries.length > 0) {
-            for (const [k, v] of epEntries) {
-              lines.push(`            ${k}: "${v}"`)
-            }
-          }
-          if (ep.namespace) {
-            lines.push(`            io.kubernetes.pod.namespace: "${ep.namespace}"`)
-          }
-        }
-        appendPortLines(lines, rule.toPorts, '      ')
-      }
-
-      // fromCIDR rule item (separate list entry)
-      if (rule.fromCIDRs.length > 0) {
-        emittedAny = true
-        lines.push('    - fromCIDR:')
-        for (const cidr of rule.fromCIDRs) {
-          lines.push(`        - "${cidr}"`)
-        }
-        appendPortLines(lines, rule.toPorts, '      ')
-      }
-
-      // fromEntities rule item (separate list entry)
-      if (rule.fromEntities.length > 0) {
-        emittedAny = true
-        lines.push('    - fromEntities:')
-        for (const ent of rule.fromEntities) {
-          lines.push(`        - ${ent}`)
-        }
-        appendPortLines(lines, rule.toPorts, '      ')
-      }
-
-      // If no endpoints/CIDRs/entities were specified, but ports were
-      if (!emittedAny && rule.toPorts.length > 0) {
-        lines.push('    - toPorts:')
-        lines.push('        - ports:')
-        for (const p of rule.toPorts) {
-          lines.push(`            - port: "${p.port}"`)
-          if (p.protocol && p.protocol !== 'ANY') {
-            lines.push(`              protocol: ${p.protocol}`)
-          }
-        }
-      }
+    if (ingressAllow.length > 0) {
+      lines.push('  ingress:')
+      lines.push(...linesForIngressRules(ingressAllow))
+    }
+    if (ingressDeny.length > 0) {
+      lines.push('  ingressDeny:')
+      lines.push(...ingressDeny)
+      if (ingressAllow.length === 0) ingressDefaultDenyOff = true
     }
   }
 
   // egress
+  const egressAllow = model.egressRules.filter((r) => !r.deny)
+  const egressDeny = linesForEgressRules(model.egressRules.filter((r) => r.deny))
   if (model.egressDenyAll) {
     // The one Cilium-valid way to write "deny all egress" — a bare empty
     // `egress: []` doesn't work, Sanitize() rejects a rule with none of
@@ -294,83 +278,118 @@ export function generateCiliumNetworkPolicyYAML(model: PolicyModel): string {
     // vendored policy engine — see examples/postgres-default-deny.yaml).
     lines.push('  egressDeny:')
     lines.push('    - {}')
-  } else if (model.egressRules.length > 0) {
-    lines.push('  egress:')
-    for (const rule of model.egressRules) {
-      let emittedAny = false
-
-      // toEndpoints rule item
-      if (rule.toEndpoints.length > 0) {
-        emittedAny = true
-        lines.push('    - toEndpoints:')
-        for (const ep of rule.toEndpoints) {
-          lines.push('        - matchLabels:')
-          const epEntries = Object.entries(ep.matchLabels).filter(([k]) => k.trim())
-          if (epEntries.length > 0) {
-            for (const [k, v] of epEntries) {
-              lines.push(`            ${k}: "${v}"`)
-            }
-          }
-          if (ep.namespace) {
-            lines.push(`            io.kubernetes.pod.namespace: "${ep.namespace}"`)
-          }
-        }
-        appendPortLines(lines, rule.toPorts, '      ')
-      }
-
-      // toCIDR rule item (separate list entry)
-      if (rule.toCIDRs.length > 0) {
-        emittedAny = true
-        lines.push('    - toCIDR:')
-        for (const cidr of rule.toCIDRs) {
-          lines.push(`        - "${cidr}"`)
-        }
-        appendPortLines(lines, rule.toPorts, '      ')
-      }
-
-      // toEntities rule item (separate list entry)
-      if (rule.toEntities.length > 0) {
-        emittedAny = true
-        lines.push('    - toEntities:')
-        for (const ent of rule.toEntities) {
-          lines.push(`        - ${ent}`)
-        }
-        appendPortLines(lines, rule.toPorts, '      ')
-      }
-
-      // toServices rule item (separate list entry) — scoped to the simple
-      // K8sService{name, namespace} form only (Cilium's api.Service also
-      // supports K8sServiceSelector, selecting a whole set of Services by
-      // label; deferred as a v1 simplification, same spirit as this
-      // editor's existing toPorts/toCIDR scope decisions).
-      if (rule.toServices.length > 0) {
-        emittedAny = true
-        lines.push('    - toServices:')
-        for (const svc of rule.toServices) {
-          lines.push('        - k8sService:')
-          lines.push(`            serviceName: "${svc.serviceName}"`)
-          if (svc.namespace) {
-            lines.push(`            namespace: "${svc.namespace}"`)
-          }
-        }
-        appendPortLines(lines, rule.toPorts, '      ')
-      }
-
-      // If no endpoints/CIDRs/entities were specified, but ports were
-      if (!emittedAny && rule.toPorts.length > 0) {
-        lines.push('    - toPorts:')
-        lines.push('        - ports:')
-        for (const p of rule.toPorts) {
-          lines.push(`            - port: "${p.port}"`)
-          if (p.protocol && p.protocol !== 'ANY') {
-            lines.push(`              protocol: ${p.protocol}`)
-          }
-        }
-      }
+  } else {
+    if (egressAllow.length > 0) {
+      lines.push('  egress:')
+      lines.push(...linesForEgressRules(egressAllow))
+    }
+    if (egressDeny.length > 0) {
+      lines.push('  egressDeny:')
+      lines.push(...egressDeny)
+      if (egressAllow.length === 0) egressDefaultDenyOff = true
     }
   }
 
+  if (ingressDefaultDenyOff || egressDefaultDenyOff) {
+    lines.push('  enableDefaultDeny:')
+    if (ingressDefaultDenyOff) lines.push('    ingress: false')
+    if (egressDefaultDenyOff) lines.push('    egress: false')
+  }
+
   return lines.join('\n') + '\n'
+}
+
+// One YAML list item per peer kind (endpoints/CIDRs/entities/services), each
+// carrying the rule's ports — identical for allow (ingress/egress) and deny
+// (ingressDeny/egressDeny) lists, which share this shape in Cilium's API.
+function linesForIngressRules(rules: IngressRule[]): string[] {
+  const lines: string[] = []
+  for (const rule of rules) {
+    let emittedAny = false
+
+    if (rule.fromEndpoints.length > 0) {
+      emittedAny = true
+      lines.push('    - fromEndpoints:')
+      appendEndpointLines(lines, rule.fromEndpoints)
+      appendPortLines(lines, rule.toPorts, '      ')
+    }
+    if (rule.fromCIDRs.length > 0) {
+      emittedAny = true
+      lines.push('    - fromCIDR:')
+      for (const cidr of rule.fromCIDRs) lines.push(`        - "${cidr}"`)
+      appendPortLines(lines, rule.toPorts, '      ')
+    }
+    if (rule.fromEntities.length > 0) {
+      emittedAny = true
+      lines.push('    - fromEntities:')
+      for (const ent of rule.fromEntities) lines.push(`        - ${ent}`)
+      appendPortLines(lines, rule.toPorts, '      ')
+    }
+    // If no endpoints/CIDRs/entities were specified, but ports were
+    if (!emittedAny && rule.toPorts.length > 0) appendPortOnlyItem(lines, rule.toPorts)
+  }
+  return lines
+}
+
+function linesForEgressRules(rules: EgressRule[]): string[] {
+  const lines: string[] = []
+  for (const rule of rules) {
+    let emittedAny = false
+
+    if (rule.toEndpoints.length > 0) {
+      emittedAny = true
+      lines.push('    - toEndpoints:')
+      appendEndpointLines(lines, rule.toEndpoints)
+      appendPortLines(lines, rule.toPorts, '      ')
+    }
+    if (rule.toCIDRs.length > 0) {
+      emittedAny = true
+      lines.push('    - toCIDR:')
+      for (const cidr of rule.toCIDRs) lines.push(`        - "${cidr}"`)
+      appendPortLines(lines, rule.toPorts, '      ')
+    }
+    if (rule.toEntities.length > 0) {
+      emittedAny = true
+      lines.push('    - toEntities:')
+      for (const ent of rule.toEntities) lines.push(`        - ${ent}`)
+      appendPortLines(lines, rule.toPorts, '      ')
+    }
+    // toServices — scoped to the simple K8sService{name, namespace} form
+    // only (Cilium's api.Service also supports K8sServiceSelector, selecting
+    // a whole set of Services by label; deferred as a v1 simplification,
+    // same spirit as this editor's existing toPorts/toCIDR scope decisions).
+    if (rule.toServices.length > 0) {
+      emittedAny = true
+      lines.push('    - toServices:')
+      for (const svc of rule.toServices) {
+        lines.push('        - k8sService:')
+        lines.push(`            serviceName: "${svc.serviceName}"`)
+        if (svc.namespace) lines.push(`            namespace: "${svc.namespace}"`)
+      }
+      appendPortLines(lines, rule.toPorts, '      ')
+    }
+    if (!emittedAny && rule.toPorts.length > 0) appendPortOnlyItem(lines, rule.toPorts)
+  }
+  return lines
+}
+
+function appendEndpointLines(lines: string[], endpoints: EndpointSelectorRule[]) {
+  for (const ep of endpoints) {
+    lines.push('        - matchLabels:')
+    for (const [k, v] of Object.entries(ep.matchLabels).filter(([k]) => k.trim())) {
+      lines.push(`            ${k}: "${v}"`)
+    }
+    if (ep.namespace) lines.push(`            io.kubernetes.pod.namespace: "${ep.namespace}"`)
+  }
+}
+
+function appendPortOnlyItem(lines: string[], ports: PortRule[]) {
+  lines.push('    - toPorts:')
+  lines.push('        - ports:')
+  for (const p of ports) {
+    lines.push(`            - port: "${p.port}"`)
+    if (p.protocol && p.protocol !== 'ANY') lines.push(`              protocol: ${p.protocol}`)
+  }
 }
 
 function appendPortLines(lines: string[], ports: PortRule[], indent: string) {

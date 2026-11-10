@@ -11,11 +11,8 @@
 #
 # The egressDeny half is real and would matter if this were actually
 # applied (postgres's own outbound connections, if it had any, would be
-# blocked too) — but `guardbee verdict` won't show a difference from the
-# ingress-only version above, because GuardBee's v1 engine only evaluates
-# ingress-at-destination (see docs/guide/how-it-works.html's "Known v1
-# simplifications"). It's included here anyway as the complete, correct
-# Cilium pattern, not because `verdict` can prove the egress half.
+# blocked too) — `guardbee verdict` judges egress at the source, so any
+# observed outbound flows from postgres would show as NEWLY_DROPPED too.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

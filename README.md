@@ -93,8 +93,8 @@ two can still differ from each other even with this scheme.
 
 - [x] CLI verdict engine
 - [x] Web UI with a graph-based policy editor
-- [ ] Egress-side evaluation (today: ingress-at-destination only, an
-      explicit v1 simplification)
+- [x] Egress-side evaluation (identity/CIDR/entity/port rules; FQDN egress
+      stays `not simulated`)
 - [ ] Natural-language policy authoring — describe the intent in plain
       English, GuardBee drafts and validates the candidate (exploring)
 

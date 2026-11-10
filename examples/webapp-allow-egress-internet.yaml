@@ -7,12 +7,10 @@
 # break that connection, the exact "scoped too narrow" mistake the whole
 # Lab is built around, just on the egress side this time.
 #
-# `guardbee verdict` can't show you that, though: GuardBee's v1 engine
-# only evaluates ingress-at-destination (see docs/guide/how-it-works.html's
-# "Known v1 simplifications") — egress rules parse and would apply for
-# real, but today's verdict is blind to their effect. Included as a
-# generic, real, standalone pattern — and as an honest example of this
-# tool's current blind spot, not a demo of something it can catch yet.
+# `guardbee verdict` judges egress at the source as well, so flows this
+# narrows away show as NEWLY_DROPPED. FQDN (L7) egress would still be
+# NOT_SIMULATED (see docs/guide/how-it-works.html's "Known v1
+# simplifications").
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

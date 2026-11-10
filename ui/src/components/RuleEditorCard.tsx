@@ -144,6 +144,27 @@ export function RuleEditorCard({
         <span className="font-display text-[0.7rem] font-bold uppercase tracking-wider text-ink">
           {isIngress ? `From Ingress Source #${ruleNumber}` : `To Egress Destination #${ruleNumber}`}
         </span>
+        <div className="flex items-center gap-3">
+        <div role="group" aria-label="Rule action" className="flex border border-line text-[0.65rem] font-bold uppercase tracking-wider">
+          <button
+            type="button"
+            aria-pressed={!rule.deny}
+            onClick={() => onUpdate({ ...rule, deny: false })}
+            className={`cursor-pointer px-2 py-0.5 ${!rule.deny ? 'bg-signal/15 text-signal' : 'text-ink-dim hover:text-ink'}`}
+            title={isIngress ? 'Allow this source (spec.ingress)' : 'Allow this destination (spec.egress)'}
+          >
+            Allow
+          </button>
+          <button
+            type="button"
+            aria-pressed={!!rule.deny}
+            onClick={() => onUpdate({ ...rule, deny: true })}
+            className={`cursor-pointer px-2 py-0.5 ${rule.deny ? 'bg-drop/15 text-drop' : 'text-ink-dim hover:text-ink'}`}
+            title={isIngress ? 'Block this source (spec.ingressDeny)' : 'Block this destination (spec.egressDeny)'}
+          >
+            Block
+          </button>
+        </div>
         <button
           type="button"
           onClick={onRemove}
@@ -152,6 +173,7 @@ export function RuleEditorCard({
         >
           ✕ Remove Rule
         </button>
+        </div>
       </div>
 
       {/* Peer Endpoints */}

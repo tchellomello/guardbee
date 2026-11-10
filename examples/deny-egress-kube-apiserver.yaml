@@ -1,0 +1,41 @@
+# Block a workload from reaching the Kubernetes API server (the control-plane
+# endpoints) — the classic "a compromised pod must not be able to talk to
+# kubectl's backend" hardening, and a good fit for debug/untrusted pods.
+#
+# Uses Cilium's `kube-apiserver` entity rather than a hard-coded CIDR: Cilium
+# tracks the real apiserver endpoints (the `kubernetes` Service's backends) for
+# you, so it stays correct if the control-plane IPs change. The `kubernetes`
+# ClusterIP (e.g. 10.96.0.1) is DNAT'd to those endpoints before policy is
+# enforced, so this matches the in-cluster path too. Add a toCIDR deny of the
+# apiserver's *external* address if the pod could also reach it that way.
+#
+# egressDeny wins over any egress allow, so this stays effective even if
+# another policy on the same pod allows broad egress.
+#
+# enableDefaultDeny.egress: false is REQUIRED, not decoration: in Cilium a
+# policy with only deny rules for a direction still switches that direction
+# to default-deny (api.Rule.EnableDefaultDeny: "if a policy only has Ingress
+# or IngressDeny rules, then the default for ingress is true"), which would
+# block ALL of the pod's egress, not just the apiserver. Opting out keeps
+# everything else (DNS, the internet, other pods) working as before.
+#
+# `guardbee verdict` judges the source's egress policy too, so observed
+# flows from the selected pod to reserved:kube-apiserver show up as
+# NEWLY_DROPPED. Prove it end to end on a real cluster with:
+#   kubectl exec -n default netshoot-mmello -- curl -sk -m5 https://kubernetes.default.svc/version
+# before (HTTP 401/403 or a version) and after applying (timeout).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: deny-egress-kube-apiserver
+  namespace: default
+spec:
+  description: "Block this pod's access to the Kubernetes API server"
+  endpointSelector:
+    matchLabels:
+      run: netshoot-mmello
+  egressDeny:
+    - toEntities:
+        - kube-apiserver
+  enableDefaultDeny:
+    egress: false

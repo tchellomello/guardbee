@@ -764,6 +764,20 @@ function TargetLabelEditor({
   )
 }
 
+// Target-node badge text. A direction with only scoped Block rules is NOT
+// default-deny — the generator opts it out (see policy.ts), so everything
+// not listed stays allowed.
+function ingressBadge(policy: PolicyModel): string {
+  if (policy.ingressRules.some((r) => !r.deny)) return 'Managed'
+  if (policy.ingressRules.length > 0) return 'Blocks listed'
+  return policy.ingressUnmanaged ? 'Default Allow' : 'Default Deny'
+}
+
+function egressBadge(policy: PolicyModel): string {
+  if (policy.egressRules.some((r) => !r.deny)) return 'Managed'
+  return policy.egressRules.length > 0 ? 'Blocks listed' : 'Default Allow'
+}
+
 // Small icon badges summarizing what kinds of peers a rule has configured —
 // {} for workload/pod labels, 🌐 for world/CIDR (anything outside the
 // cluster), ⎈ for the cluster entity, 🖥 for the host entity — echoing
@@ -785,6 +799,7 @@ function buildGraph(
 ): { initialNodes: Node[]; initialEdges: CustomEdge[] } {
   const signalColor = theme === 'dark' ? '#22e9c7' : '#0891b2'
   const allowColor = theme === 'dark' ? '#5ee8a5' : '#15803d'
+  const blockColor = theme === 'dark' ? '#ff6b7a' : '#dc2626'
   const { ingress: COLUMN_X_INGRESS, target: COLUMN_X_TARGET, egress: COLUMN_X_EGRESS } =
     computeColumnX(containerWidth)
 
@@ -810,10 +825,10 @@ function buildGraph(
       )}
       <div className="mt-1.5 flex gap-1 text-[0.6rem]">
         <span className="border border-drop/30 bg-drop/10 px-1 text-drop">
-          Ingress: {policy.ingressRules.length > 0 ? 'Managed' : 'Default Deny'}
+          Ingress: {ingressBadge(policy)}
         </span>
         <span className="border border-line bg-panel px-1 text-ink-dim">
-          Egress: {policy.egressDenyAll ? 'Default Deny' : policy.egressRules.length > 0 ? 'Managed' : 'Default Allow'}
+          Egress: {policy.egressDenyAll ? 'Default Deny' : egressBadge(policy)}
         </span>
       </div>
     </div>
@@ -882,6 +897,7 @@ function buildGraph(
           <div>
             <div className="text-[0.65rem] font-semibold text-signal uppercase tracking-wider mb-0.5">
               {icons && <span className="mr-1">{icons}</span>}Ingress Source #{idx + 1}
+              {rule.deny && <span className="ml-1.5 text-drop">⛔ Block</span>}
             </div>
             <div className="text-xs font-semibold text-ink line-clamp-2">{desc}</div>
             {warning && (
@@ -913,14 +929,15 @@ function buildGraph(
       target: targetNodeId,
       data: {
         label: portsLabel,
-        color: allowColor,
+        color: rule.deny ? blockColor : allowColor,
         isDimmed: false,
         direction: 'ingress',
       },
     })
   })
 
-  const ingressAddClass = policy.ingressRules.length === 0 ? emptyDenyClass : addNodeClass
+  const ingressAddClass =
+    policy.ingressRules.length === 0 ? (policy.ingressUnmanaged ? emptyAllowClass : emptyDenyClass) : addNodeClass
   initialNodes.push({
     id: 'ingress-add',
     position: { x: COLUMN_X_INGRESS, y: policy.ingressRules.length * ROW_HEIGHT },
@@ -930,7 +947,9 @@ function buildGraph(
           {policy.ingressRules.length === 0 ? (
             <>
               <div className="text-[0.65rem] font-semibold uppercase tracking-wider mb-0.5">Ingress Traffic</div>
-              <div className="text-xs">+ Default Deny — click to add a rule</div>
+              <div className="text-xs">
+                {policy.ingressUnmanaged ? '+ Unmanaged — click to add a rule' : '+ Default Deny — click to add a rule'}
+              </div>
             </>
           ) : (
             <div className="text-xs font-semibold">+ Add Ingress Rule</div>
@@ -987,6 +1006,7 @@ function buildGraph(
           <div>
             <div className="text-[0.65rem] font-semibold text-signal uppercase tracking-wider mb-0.5">
               {icons && <span className="mr-1">{icons}</span>}Egress Dest #{idx + 1}
+              {rule.deny && <span className="ml-1.5 text-drop">⛔ Block</span>}
             </div>
             <div className="text-xs font-semibold text-ink line-clamp-2">{desc}</div>
             {warning && (
@@ -1018,7 +1038,7 @@ function buildGraph(
       target: ruleId,
       data: {
         label: portsLabel,
-        color: signalColor,
+        color: rule.deny ? blockColor : signalColor,
         isDimmed: false,
         direction: 'egress',
       },

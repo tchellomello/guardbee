@@ -107,9 +107,26 @@ function AppContent() {
     setPolicyModel((prev) =>
       direction === 'ingress'
         ? { ...prev, ingressRules: [...prev.ingressRules, rule as IngressRule] }
-        : { ...prev, egressRules: [...prev.egressRules, rule as EgressRule] }
+        : // egressDenyAll makes the generator emit only the catchall and ignore
+          // egressRules, so a rule appended while it's on would silently do
+          // nothing — appending one means the user wants egress managed again.
+          { ...prev, egressDenyAll: false, egressRules: [...prev.egressRules, rule as EgressRule] }
     )
     setAutoSelectNodeId(`${direction}-${rule.id}`)
+    setTab('editor')
+  }
+
+  // "New block policy" on a flow — replaces the whole draft with a generated
+  // policy for that flow. The draft is the user's in-progress work, so a
+  // non-pristine one needs an explicit OK before it's overwritten.
+  function handleCreatePolicyFromFlow(model: PolicyModel, ruleNodeId: string) {
+    const pristine = JSON.stringify(policyModel) === JSON.stringify(BLANK_POLICY)
+    if (!pristine && !window.confirm('Replace the current Policy Editor draft with a new block policy for this flow?')) {
+      return
+    }
+    setPolicyModel(model)
+    setOriginalLiveModel(null)
+    setAutoSelectNodeId(ruleNodeId)
     setTab('editor')
   }
 
@@ -169,7 +186,11 @@ function AppContent() {
           />
         </div>
         <div className={tab === 'flows' ? '' : 'hidden'}>
-          <FlowsPanel policyNamespace={policyModel.namespace} onAppendRuleToPolicy={handleAppendRule} />
+          <FlowsPanel
+            policyNamespace={policyModel.namespace}
+            onAppendRuleToPolicy={handleAppendRule}
+            onCreatePolicy={handleCreatePolicyFromFlow}
+          />
         </div>
         <div className={tab === 'policies' ? '' : 'hidden'}>
           <PoliciesPanel onEditPolicy={handleEditLivePolicy} />
