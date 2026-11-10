@@ -86,14 +86,23 @@ Consequences that follow directly from this, non-negotiably:
 - **Identity minimum.** Hand-picked numeric identities must be
   `>= identity.MinimalNumericIdentity` (256) — lower values are reserved for
   Cilium's own special identities.
+- **Node-scoped identities collide cluster-wide.** Local-scope (CIDR/world,
+  `1<<24`+) and remote-node-scope identity numbers are allocated per node's
+  agent, and hubble-relay merges all nodes' flows — the same number can be
+  the kube-apiserver on one node and a plain CIDR on another. Keying the
+  engine by number (first-seen labels win) made verdicts depend on which
+  nodes' flows were sampled (`--all-namespaces` showed 0 dropped while `-n`
+  showed the drop). `engineNID` in `verdict.go` gives these a synthetic
+  number per label set; global/reserved ones keep their real number.
 - **Hubble buffer semantics.** `GetFlows` samples a shared, cluster-wide
   bounded ring buffer, not a per-namespace one — counts drift run-to-run;
   this is what the `--last`-is-a-ceiling behavior above is actually about.
 
 ## Known v1 simplifications (intentional, documented in code — don't "fix" silently)
 
-- Only **ingress-at-destination** is evaluated, not full bidirectional
-  ingress+egress correctness.
+- A flow must be allowed by **both** the destination's ingress policy and the
+  source's egress policy. Egress is judged on identities/CIDRs/entities/ports
+  only; toFQDNs and other L7 egress stay `NOT_SIMULATED`.
 - L7/FQDN-decided flows are `NOT_SIMULATED`, never guessed — those verdicts
   live in Envoy/the DNS proxy, not the policy map this engine computes.
 - A flow's identities must already be real and currently allocated (resolved

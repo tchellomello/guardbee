@@ -7,12 +7,9 @@
 # real, this would break webapp's actual database connection while
 # looking completely reasonable in isolation.
 #
-# `guardbee verdict` can't show you that: GuardBee's v1 engine only
-# evaluates ingress-at-destination (see docs/guide/how-it-works.html's
-# "Known v1 simplifications"), so an egress-only candidate like this one
-# always comes back with no regressions today, regardless of what it
-# would actually do if applied. Included as a generic, real, standalone
-# pattern — and as an honest example of this tool's current blind spot.
+# `guardbee verdict` judges egress at the source, so flows this policy
+# newly blocks show as NEWLY_DROPPED; FQDN (L7) egress stays NOT_SIMULATED
+# (see docs/guide/how-it-works.html's "Known v1 simplifications").
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

@@ -20,11 +20,12 @@ package main
 // CLI's own convention for the same tradeoff.
 //
 // Known v1 simplifications (documented, not silent):
-//   - Only ingress-at-destination is evaluated. A flow allowed purely by an
-//     egress rule on the source with no ingress restriction on the
-//     destination is treated the same as fully default-allow traffic; this
-//     covers the common "does my new ingress-selecting CNP break anything"
-//     case, not full bidirectional policy correctness.
+//   - A flow must be allowed by BOTH the destination's ingress policy and
+//     the source's egress policy (each side's own distilled policy, queried
+//     for the other side as the peer). Only identity-based egress is judged
+//     (endpoints, entities, CIDRs, ports); toFQDNs/L7 egress is
+//     NOT_SIMULATED like any other L7 verdict, and a flow whose source is
+//     outside the cluster has no egress policy to consult.
 //   - L7/FQDN-decided flows are flagged NOT_SIMULATED rather than guessed,
 //     per the design doc's own stated limit — those verdicts live in Envoy
 //     and the DNS proxy, not the policy map this engine computes.
@@ -45,6 +46,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -367,9 +370,9 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 	baseline.addIdentities(logger, newIDs)
 	candidate.addIdentities(logger, newIDs)
 
-	var key policy.Key
-	srcNID := identity.NumericIdentity(src.GetIdentity())
-	dstNID := identity.NumericIdentity(dst.GetIdentity())
+	var key, egressKey policy.Key
+	srcNID := engineNID(src)
+	dstNID := engineNID(dst)
 	l4 := f.GetL4()
 	var proto string
 	switch {
@@ -389,6 +392,7 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 			return nil
 		}
 		key = policy.IngressKey().WithIdentity(srcNID).WithTCPPort(port)
+		egressKey = policy.EgressKey().WithIdentity(dstNID).WithTCPPort(port)
 	case l4.GetUDP() != nil:
 		proto = "UDP"
 		port := uint16(l4.GetUDP().GetDestinationPort())
@@ -397,6 +401,7 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 			return nil
 		}
 		key = policy.IngressKey().WithIdentity(srcNID).WithUDPPort(port)
+		egressKey = policy.EgressKey().WithIdentity(dstNID).WithUDPPort(port)
 	default:
 		counts.notSimulated++
 		return nil
@@ -415,8 +420,24 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		return nil
 	}
 
-	baseAllow := isAllowed(baseEpp, key)
-	candAllow := isAllowed(candEpp, key)
+	// A connection needs BOTH the destination's ingress policy and the
+	// source's egress policy to allow it. Egress is queried on the source
+	// identity's own distilled policy, keyed by the destination as the peer.
+	baseSrcEpp, err := baseline.distillFor(logger, srcNID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, binName+" verdict: baseline: %v\n", err)
+		counts.notSimulated++
+		return nil
+	}
+	candSrcEpp, err := candidate.distillFor(logger, srcNID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, binName+" verdict: candidate: %v\n", err)
+		counts.notSimulated++
+		return nil
+	}
+
+	baseAllow := isAllowed(baseEpp, key) && isEgressAllowed(baseSrcEpp, egressKey)
+	candAllow := isAllowed(candEpp, key) && isEgressAllowed(candSrcEpp, egressKey)
 
 	var change string
 	switch {
@@ -498,6 +519,46 @@ func printVerdictLegend(counts *verdictCounts) {
 	}
 }
 
+// localIDs maps (scope, label set) to the engine-side numeric identity used
+// for node-scoped identities — see engineNID.
+var localIDs = struct {
+	sync.Mutex
+	byKey map[string]identity.NumericIdentity
+	next  map[identity.NumericIdentity]uint32
+}{byKey: map[string]identity.NumericIdentity{}, next: map[identity.NumericIdentity]uint32{}}
+
+// engineNID returns the numeric identity this tool's engines use for a flow
+// endpoint. Global and reserved identities are cluster-wide, so their real
+// number is used unchanged. Local-scope (CIDR/world, 1<<24+) and
+// remote-node-scope identities are allocated independently by EACH node's
+// agent: the same number means different labels on different nodes, and
+// hubble-relay merges every node's flows. Keying the engine by that number
+// (first-seen labels winning) silently attached the wrong labels to later
+// flows — seen live as a CCNP's toEntities: kube-apiserver deny landing on
+// the wrong destination depending on which nodes' flows were sampled. So
+// these get a synthetic number per distinct label set, scope bits kept
+// because Cilium treats the scope itself as meaningful.
+func engineNID(ep *flowpb.Endpoint) identity.NumericIdentity {
+	nid := identity.NumericIdentity(ep.GetIdentity())
+	scope := nid.Scope()
+	if scope == identity.IdentityScopeGlobal {
+		return nid
+	}
+	lbls := append([]string(nil), ep.GetLabels()...)
+	sort.Strings(lbls)
+	key := fmt.Sprintf("%d|%s", scope, strings.Join(lbls, ","))
+
+	localIDs.Lock()
+	defer localIDs.Unlock()
+	if id, ok := localIDs.byKey[key]; ok {
+		return id
+	}
+	localIDs.next[scope]++
+	id := scope | identity.NumericIdentity(localIDs.next[scope])
+	localIDs.byKey[key] = id
+	return id
+}
+
 // identitiesFromFlows extracts every distinct (numeric identity, labels)
 // pair Hubble has already resolved on the given flows. Real flows always
 // carry real, currently-allocated identities, so this needs no separate
@@ -508,7 +569,7 @@ func identitiesFromFlows(flows []*flowpb.Flow) identity.IdentityMap {
 		if ep == nil || ep.GetIdentity() == 0 {
 			return
 		}
-		ids[identity.NumericIdentity(ep.GetIdentity())] = labels.ParseLabelArray(ep.GetLabels()...)
+		ids[engineNID(ep)] = labels.ParseLabelArray(ep.GetLabels()...)
 	}
 	for _, f := range flows {
 		add(f.GetSource())
@@ -653,6 +714,15 @@ func isAllowed(epp *policy.EndpointPolicy, key policy.Key) bool {
 		return entry.IsAllow()
 	}
 	return !epp.SelectorPolicy.IngressPolicyEnabled
+}
+
+// isEgressAllowed is isAllowed's egress twin: same Lookup, but a true miss
+// falls back to the source endpoint's own egress default mode.
+func isEgressAllowed(epp *policy.EndpointPolicy, key policy.Key) bool {
+	if entry, _, found := epp.Lookup(key); found {
+		return entry.IsAllow()
+	}
+	return !epp.SelectorPolicy.EgressPolicyEnabled
 }
 
 // noopPolicyMetrics is a minimal types.PolicyMetrics implementation — this

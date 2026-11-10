@@ -21,7 +21,7 @@ Documented in code, not silent:
 
 | Simplification | What it means |
 |---|---|
-| Ingress only | Only ingress-at-destination is evaluated — not full bidirectional ingress+egress correctness. |
+| Egress scope | A flow must pass the destination's ingress policy and the source's egress policy. Egress is judged on identities, CIDRs, entities and ports; FQDN (L7) egress is `not simulated`. |
 | L7/FQDN flows | Counted as `not simulated` rather than guessed — those verdicts live in Envoy/the DNS proxy, not the policy map this engine computes. |
 | Reply packets | Skipped (`reply (skipped)` in the summary) — connection tracking always allows those regardless of CNP ingress rules. |
 | Real identities only | Candidate labels with no matching live pod are never exercised by any sampled flow — GuardBee never invents a fake identity. |
