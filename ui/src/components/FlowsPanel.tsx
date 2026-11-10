@@ -4,7 +4,7 @@ import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { FlowsGraph } from './FlowsGraph'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { parseNamespacePod } from '../shared/podLabels'
-import type { EgressRule, IngressRule, Protocol } from '../policy'
+import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel, type Protocol } from '../policy'
 
 // Flows' own L4 field is a pre-formatted "TCP:8080"/"UDP:53" string (see
 // ui.go's l4String, which only ever emits those two forms or "-" for
@@ -43,9 +43,11 @@ export interface FlowsPanelProps {
   // flow onto the draft.
   policyNamespace?: string
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
+  // Replaces the whole Policy Editor draft with a freshly generated policy.
+  onCreatePolicy?: (model: PolicyModel, ruleNodeId: string) => void
 }
 
-export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy }: FlowsPanelProps = {}) {
+export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreatePolicy }: FlowsPanelProps = {}) {
   const [namespace, setNamespace] = useState('')
   const [allNamespaces, setAllNamespaces] = useState(false)
   const [last, setLast] = useState(20)
@@ -216,6 +218,7 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy }: Flows
           onToggleCollapse={handleToggleCollapse}
           policyNamespace={policyNamespace}
           onAppendRuleToPolicy={onAppendRuleToPolicy}
+          onCreatePolicy={onCreatePolicy}
         />
       ))}
     </div>
@@ -230,6 +233,7 @@ function FlowRunCard({
   onToggleCollapse,
   policyNamespace,
   onAppendRuleToPolicy,
+  onCreatePolicy,
 }: {
   run: FlowsRunItem
   runNumber: number
@@ -238,6 +242,7 @@ function FlowRunCard({
   onToggleCollapse: (id: string) => void
   policyNamespace: string
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
+  onCreatePolicy?: (model: PolicyModel, ruleNodeId: string) => void
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
 
@@ -403,12 +408,24 @@ function FlowRunCard({
                         {f.dropReason ?? ''}
                       </td>
                       <td className="px-3 py-2">
-                        {onAppendRuleToPolicy && (
-                          <AddFlowToPolicyButton
-                            flow={f}
-                            policyNamespace={policyNamespace}
-                            onAppend={onAppendRuleToPolicy}
-                          />
+                        {(onAppendRuleToPolicy || onCreatePolicy) && (
+                          <div className="flex items-center gap-1.5">
+                            {onCreatePolicy && <CreateBlockPolicyButton flow={f} onCreate={onCreatePolicy} />}
+                            {onAppendRuleToPolicy && (<>
+                            <AddFlowToPolicyButton
+                              flow={f}
+                              policyNamespace={policyNamespace}
+                              onAppend={onAppendRuleToPolicy}
+                              deny={false}
+                            />
+                            <AddFlowToPolicyButton
+                              flow={f}
+                              policyNamespace={policyNamespace}
+                              onAppend={onAppendRuleToPolicy}
+                              deny
+                            />
+                            </>)}
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -418,6 +435,125 @@ function FlowRunCard({
               </table>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Resolves a flow's peer (a "ns/pod", an IP, or reserved:world/host) into
+// the selector fields a rule needs — shared by every "turn this flow into
+// policy" button so they can't disagree on what's representable. Returns an
+// error string for a peer this editor can't express yet.
+async function resolvePeer(
+  peer: string
+): Promise<
+  | { endpoints: { matchLabels: Record<string, string>; namespace?: string }[]; cidrs: string[]; entities: string[] }
+  | string
+> {
+  const peerNamespace = parseNamespacePod(peer)?.namespace
+  const peerPodsByNs = peerNamespace ? { [peerNamespace]: (await fetchPods(peerNamespace)).pods } : {}
+  const classified = classifyTrafficPeer(peer, peerPodsByNs)
+  if (classified.kind === 'pod' && classified.label) {
+    const [key, value] = classified.label
+    return { endpoints: [{ matchLabels: { [key]: value }, namespace: peerNamespace }], cidrs: [], entities: [] }
+  }
+  if (classified.kind === 'entity' && classified.entity) return { endpoints: [], cidrs: [], entities: [classified.entity] }
+  if (classified.kind === 'cidr' && classified.cidr) return { endpoints: [], cidrs: [classified.cidr], entities: [] }
+  return `Can't represent "${peer}" as a rule peer yet`
+}
+
+// DNS-1123-safe policy name for a generated block policy.
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+}
+
+// "Create block policy": builds a complete, standalone policy for one
+// observed flow, rather than appending a rule to whatever draft is open.
+// Enforcement side: a flow into a pod is blocked at that pod's ingress (the
+// one side `verdict` can actually verify, see CLAUDE.md's v1
+// simplifications); otherwise (destination is external/world) it's blocked at
+// the source pod's egress. The policy targets that local pod's own workload
+// label, in its own namespace.
+function CreateBlockPolicyButton({
+  flow,
+  onCreate,
+}: {
+  flow: Flow
+  onCreate: (model: PolicyModel, ruleNodeId: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const dst = parseNamespacePod(flow.destination)
+  const src = parseNamespacePod(flow.source)
+  const side: 'ingress' | 'egress' | null = dst ? 'ingress' : src ? 'egress' : null
+  if (!side) return null
+  const target = (side === 'ingress' ? dst : src)!
+  const peer = side === 'ingress' ? flow.source : flow.destination
+  const l4 = parseL4(flow.l4)
+
+  async function handleClick() {
+    setBusy(true)
+    setError(null)
+    try {
+      const targetPods = (await fetchPods(target.namespace)).pods
+      const targetClass = classifyTrafficPeer(`${target.namespace}/${target.podName}`, { [target.namespace]: targetPods })
+      if (targetClass.kind !== 'pod' || !targetClass.label) {
+        setError(`Can't derive a workload label for ${target.namespace}/${target.podName}`)
+        return
+      }
+      const resolved = await resolvePeer(peer)
+      if (typeof resolved === 'string') {
+        setError(resolved)
+        return
+      }
+      const toPorts = l4 ? [{ port: l4.port, protocol: l4.protocol }] : []
+      const id = `${side}-${Date.now()}`
+      const [key, value] = targetClass.label
+      const name = `block-${side}-${slugify(`${side === 'ingress' ? flow.source : flow.destination}${l4 ? `-${l4.port}` : ''}`)}`
+      const description = `Block ${flow.source} -> ${flow.destination} ${flow.l4} (observed ${flow.verdict})`
+      const model: PolicyModel = {
+        ...BLANK_POLICY,
+        name,
+        namespace: target.namespace,
+        description,
+        targetLabels: { [key]: value },
+        ingressRules:
+          side === 'ingress'
+            ? [{ id, fromEndpoints: resolved.endpoints, fromCIDRs: resolved.cidrs, fromEntities: resolved.entities, toPorts, deny: true }]
+            : [],
+        egressRules:
+          side === 'egress'
+            ? [{ id, toEndpoints: resolved.endpoints, toCIDRs: resolved.cidrs, toEntities: resolved.entities, toServices: [], toPorts, deny: true }]
+            : [],
+        egressDenyAll: false,
+        // An egress block must not drag in a deny-all ingress as a side
+        // effect — see PolicyModel.ingressUnmanaged.
+        ingressUnmanaged: side === 'egress',
+      }
+      onCreate(model, `${side}-${id}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy}
+        title={`Create a new policy that blocks this flow at ${target.namespace}/${target.podName}'s ${side}${l4 ? ` (${l4.protocol}/${l4.port})` : ''}. Replaces the current Policy Editor draft.`}
+        className="whitespace-nowrap border border-drop/60 bg-drop/10 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-drop hover:bg-drop/20 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? '…' : '⛔ New block policy'}
+      </button>
+      {error && (
+        <div role="alert" className="absolute right-0 top-full z-10 mt-1 w-56 border border-drop/40 bg-panel p-2 text-[0.65rem] text-drop shadow-lg">
+          {error}
         </div>
       )}
     </div>
@@ -436,10 +572,13 @@ function AddFlowToPolicyButton({
   flow,
   policyNamespace,
   onAppend,
+  deny,
 }: {
   flow: Flow
   policyNamespace: string
   onAppend: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
+  // Block (a scoped ingressDeny/egressDeny rule) vs. Allow (ingress/egress).
+  deny: boolean
 }) {
   const [busy, setBusy] = useState(false)
   const [added, setAdded] = useState(false)
@@ -466,30 +605,19 @@ function AddFlowToPolicyButton({
   if (!direction) return null
 
   const peer = direction === 'ingress' ? flow.source : flow.destination
-  const peerNamespace = parseNamespacePod(peer)?.namespace
   const l4 = parseL4(flow.l4)
 
   async function handleClick() {
     setBusy(true)
     setError(null)
     try {
-      const peerPodsByNs = peerNamespace ? { [peerNamespace]: (await fetchPods(peerNamespace)).pods } : {}
-      const classified = classifyTrafficPeer(peer, peerPodsByNs)
-      let endpoints: { matchLabels: Record<string, string>; namespace?: string }[] = []
-      let cidrs: string[] = []
-      let entities: string[] = []
-      if (classified.kind === 'pod' && classified.label) {
-        const [key, value] = classified.label
-        endpoints = [{ matchLabels: { [key]: value }, namespace: peerNamespace }]
-      } else if (classified.kind === 'entity' && classified.entity) {
-        entities = [classified.entity]
-      } else if (classified.kind === 'cidr' && classified.cidr) {
-        cidrs = [classified.cidr]
-      } else {
-        setError(`Can't represent "${peer}" as a rule peer yet`)
+      const resolved = await resolvePeer(peer)
+      if (typeof resolved === 'string') {
+        setError(resolved)
         setBusy(false)
         return
       }
+      const { endpoints, cidrs, entities } = resolved
 
       const toPorts = l4 ? [{ port: l4.port, protocol: l4.protocol }] : []
 
@@ -500,6 +628,7 @@ function AddFlowToPolicyButton({
           fromCIDRs: cidrs,
           fromEntities: entities,
           toPorts,
+          deny,
         })
       } else {
         onAppend('egress', {
@@ -509,6 +638,7 @@ function AddFlowToPolicyButton({
           toEntities: entities,
           toServices: [],
           toPorts,
+          deny,
         })
       }
       setBusy(false)
@@ -527,12 +657,16 @@ function AddFlowToPolicyButton({
         disabled={busy || added}
         title={
           added
-            ? 'Already added to the in-progress policy'
-            : `Add this ${direction === 'ingress' ? 'source' : 'destination'} as a rule on the in-progress policy (${policyNamespace})`
+            ? `Already added to the in-progress policy`
+            : `${deny ? 'Block' : 'Allow'} this ${direction === 'ingress' ? 'source' : 'destination'}${l4 ? ` on ${l4.protocol}/${l4.port}` : ''} — adds a ${deny ? (direction === 'ingress' ? 'ingressDeny' : 'egressDeny') : direction} rule to the in-progress policy (${policyNamespace})`
         }
-        className="whitespace-nowrap border border-signal/40 bg-signal/5 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-signal hover:bg-signal/10 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+        className={`whitespace-nowrap border px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+          deny
+            ? 'border-drop/40 bg-drop/5 text-drop hover:bg-drop/10'
+            : 'border-signal/40 bg-signal/5 text-signal hover:bg-signal/10'
+        }`}
       >
-        {added ? '✓ Added' : busy ? 'Adding…' : '+ Add to Policy'}
+        {added ? `✓ ${deny ? 'Blocked' : 'Allowed'}` : busy ? '…' : deny ? '⛔ Block' : '✓ Allow'}
       </button>
       {error && (
         <div

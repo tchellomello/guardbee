@@ -242,3 +242,68 @@ describe('ruleProducesNoOutput', () => {
     ).toBe(false)
   })
 })
+
+describe('generateCiliumNetworkPolicyYAML deny rules (Block from a flow)', () => {
+  const base: PolicyModel = { ...BLANK_POLICY, targetLabels: { run: 'x' } }
+
+  it('emits a scoped egressDeny and opts egress out of default-deny when it is the only egress rule', () => {
+    const yaml = generateCiliumNetworkPolicyYAML({
+      ...base,
+      ingressRules: [],
+      egressRules: [emptyEgressRule({ deny: true, toCIDRs: ['98.67.213.35/32'], toPorts: [{ port: '443', protocol: 'TCP' }] })],
+    })
+    expect(yaml).toContain('  egressDeny:\n    - toCIDR:\n        - "98.67.213.35/32"')
+    expect(yaml).toContain('  enableDefaultDeny:\n    egress: false\n')
+    // Ingress is untouched: still the editor's own default-deny catchall.
+    expect(yaml).toContain('  ingressDeny:\n    - {}')
+    expect(yaml).not.toContain('ingress: false')
+  })
+
+  it('opts ingress out too when only a scoped ingressDeny exists, and drops the catchall', () => {
+    const yaml = generateCiliumNetworkPolicyYAML({
+      ...base,
+      ingressRules: [emptyIngressRule({ deny: true, fromEntities: ['world'], toPorts: [{ port: '22', protocol: 'TCP' }] })],
+    })
+    expect(yaml).toContain('  ingressDeny:\n    - fromEntities:\n        - world')
+    expect(yaml).not.toContain('- {}')
+    expect(yaml).toContain('    ingress: false')
+  })
+
+  it('does NOT opt out when allow rules exist alongside the deny (default-deny is already intended)', () => {
+    const yaml = generateCiliumNetworkPolicyYAML({
+      ...base,
+      ingressRules: [
+        emptyIngressRule({ fromEntities: ['cluster'] }),
+        emptyIngressRule({ deny: true, fromEntities: ['world'] }),
+      ],
+    })
+    expect(yaml).toContain('  ingress:\n    - fromEntities:\n        - cluster')
+    expect(yaml).toContain('  ingressDeny:\n    - fromEntities:\n        - world')
+    expect(yaml).not.toContain('enableDefaultDeny')
+  })
+})
+
+describe('generateCiliumNetworkPolicyYAML ingressUnmanaged', () => {
+  const base: PolicyModel = { ...BLANK_POLICY, targetLabels: { run: 'x' } }
+  const egressBlock = emptyEgressRule({ deny: true, toCIDRs: ['1.2.3.4/32'] })
+
+  it('omits the ingress section instead of writing a deny-all catchall', () => {
+    const yaml = generateCiliumNetworkPolicyYAML({ ...base, ingressUnmanaged: true, egressRules: [egressBlock] })
+    expect(yaml).not.toContain('ingressDeny')
+    expect(yaml).toContain('  egressDeny:')
+  })
+
+  it('still writes the default-deny catchall when not flagged (existing behavior)', () => {
+    const yaml = generateCiliumNetworkPolicyYAML({ ...base, egressRules: [egressBlock] })
+    expect(yaml).toContain('  ingressDeny:\n    - {}')
+  })
+
+  it('is ignored once an ingress rule exists', () => {
+    const yaml = generateCiliumNetworkPolicyYAML({
+      ...base,
+      ingressUnmanaged: true,
+      ingressRules: [emptyIngressRule({ fromEntities: ['cluster'] })],
+    })
+    expect(yaml).toContain('  ingress:\n    - fromEntities:\n        - cluster')
+  })
+})

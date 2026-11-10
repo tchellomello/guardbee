@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchPods, runVerdict, type VerdictChange, type VerdictResponse, type VerdictRow } from '../api'
+import { fetchPods, fetchPolicyWorkloads, runVerdict, type WorkloadsResult, type VerdictChange, type VerdictResponse, type VerdictRow } from '../api'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { PolicyTextModal } from './PolicyTextModal'
@@ -93,6 +93,8 @@ export function VerdictPanel({
   const [loading, setLoading] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [workloads, setWorkloads] = useState<WorkloadsResult | null>(null)
+  const [workloadsLoading, setWorkloadsLoading] = useState(false)
 
   // Help modal state
   const [helpOpen, setHelpOpen] = useState(false)
@@ -254,6 +256,22 @@ export function VerdictPanel({
     }
   }
 
+  // Selection is decided server-side by Cilium's own engine, not by
+  // matching labels in the browser, so matchExpressions and the derived
+  // namespace-label / service-account keys behave exactly as in the agent.
+  async function handleCheckWorkloads() {
+    setWorkloadsLoading(true)
+    setError(null)
+    try {
+      setWorkloads(await fetchPolicyWorkloads(allNamespaces ? '' : namespace, candidateYAML))
+    } catch (e) {
+      setWorkloads(null)
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorkloadsLoading(false)
+    }
+  }
+
   return (
     <>
       {/* Left column: scope controls, then results below — the primary
@@ -302,6 +320,48 @@ export function VerdictPanel({
 
           {error && (
             <p className="rise-in border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">{error}</p>
+          )}
+
+          {workloads && (
+            <div className="rise-in space-y-3 border border-line bg-panel p-5">
+              <div className="flex items-center justify-between">
+                <SectionLabel>Selected workloads</SectionLabel>
+                <button
+                  type="button"
+                  onClick={() => setWorkloads(null)}
+                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+              {!workloads.valid ? (
+                <p className="text-sm text-drop">{workloads.error}</p>
+              ) : (
+                <>
+                  <p className="text-xs text-ink-dim">
+                    {workloads.workloads.filter((w) => w.selected).length} of {workloads.workloads.length} running pods are selected by this policy's endpointSelector.
+                    Selection comes from Cilium's own engine. Run the verdict to see which observed flows it blocks.
+                  </p>
+                  <ul className="max-h-72 divide-y divide-line overflow-auto border border-line text-xs">
+                    {workloads.workloads.map((w) => (
+                      <li key={`${w.namespace}/${w.name}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                        <span className="min-w-0 truncate">
+                          <span className="text-ink">{w.namespace}/{w.name}</span>
+                          <span className="ml-2 text-ink-dim">sa: {w.serviceAccount}</span>
+                        </span>
+                        <span
+                          className={`shrink-0 border px-2 py-0.5 font-display text-[0.6rem] font-bold uppercase tracking-wider ${
+                            w.selected ? 'border-drop/40 bg-drop/10 text-drop' : 'border-unchanged/40 bg-unchanged/10 text-unchanged'
+                          }`}
+                        >
+                          {w.selected ? `selected · ${[w.egress && 'egress', w.ingress && 'ingress'].filter(Boolean).join('+')}` : 'not selected'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
           )}
 
           {runs.length > 0 && (
@@ -383,6 +443,15 @@ export function VerdictPanel({
                 Reset
               </button>
             </div>
+            <button
+              type="button"
+              disabled={workloadsLoading || !candidateYAML.trim()}
+              onClick={handleCheckWorkloads}
+              title="List live pods and show which ones this policy's endpointSelector selects"
+              className="w-full border border-line bg-void/60 py-2 font-display text-xs font-semibold uppercase tracking-wider text-ink hover:border-signal hover:text-signal transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            >
+              {workloadsLoading ? 'Checking…' : 'Which workloads does it select?'}
+            </button>
 
             {streaming && (
               <div className="flex items-center justify-between border border-signal/30 bg-signal/5 px-3 py-2">
@@ -400,27 +469,25 @@ export function VerdictPanel({
               </div>
             )}
 
-            {/* A real <button>, not a textarea, so Tab+Enter/Space opens the
-                editor for free — a readOnly textarea never fires change and has
-                no built-in "activate" key handling. */}
+            {/* A real, editable textarea so the user can paste a policy
+                straight in (Ctrl+V / middle-click) without first opening the
+                modal — the old read-only <button> swallowed paste entirely.
+                The expand button still opens the wider editor. */}
+            <textarea
+              value={candidateYAML}
+              onChange={(e) => setCandidateYAML(e.target.value)}
+              required
+              spellCheck={false}
+              placeholder={'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ...\nspec:\n  ...'}
+              className="w-full min-h-[18rem] resize-y border border-line bg-void px-3 py-2.5 font-mono text-xs leading-relaxed text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none"
+            />
             <button
               type="button"
               onClick={() => setExpandedEditorOpen(true)}
-              title="Click to edit in a wider view"
-              className="w-full min-h-[18rem] cursor-pointer resize-y whitespace-pre-wrap border border-line bg-void px-3 py-2.5 text-left font-mono text-xs leading-relaxed text-ink focus:border-signal focus:outline-none"
+              className="cursor-pointer self-start font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal"
             >
-              {candidateYAML || (
-                <span className="text-ink-faint">
-                  {'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ...\nspec:\n  ...'}
-                </span>
-              )}
-              <span className="mt-2 block font-display text-[0.6rem] normal-case tracking-normal text-ink-faint">
-                Click or press Enter to edit — opens a wider view
-              </span>
+              ⤢ Expand / Edit
             </button>
-            {/* Keeps the native "required" submit guard the textarea used to
-                provide, now that the visible control is a button, not a form field. */}
-            <textarea value={candidateYAML} onChange={() => {}} required aria-hidden="true" tabIndex={-1} className="sr-only" />
           </div>
         </div>
       </form>

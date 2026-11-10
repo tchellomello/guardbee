@@ -102,6 +102,7 @@ Flags:
 	mux.HandleFunc("GET /api/policies/edit", srv.handlePolicyForEdit)
 	mux.HandleFunc("POST /api/policy/validate", srv.handlePolicyValidate)
 	mux.HandleFunc("POST /api/policy/parse", srv.handlePolicyParse)
+	mux.HandleFunc("POST /api/policy/workloads", srv.handlePolicyWorkloads)
 	mux.HandleFunc("GET /api/templates", srv.handleTemplates)
 	mux.HandleFunc("GET /api/version", srv.handleVersion)
 	mux.HandleFunc("GET /api/compat", srv.handleCompat)
@@ -410,7 +411,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 // DropReason (the CLI's terminal line has no room for it, but a browser
 // table column does). This is Hubble's own already-happened verdict on a
 // DROPPED flow, straight off the datapath — not this tool's simulated one —
-// so it's squarely in-bounds despite "only ingress is simulated" (see
+// so it's squarely in-bounds despite the simulator's own limits (see
 // AGENTS.md's known v1 simplifications): nothing here is being guessed.
 type flowOut struct {
 	Time        string `json:"time"`
@@ -687,7 +688,12 @@ func (s *uiServer) handlePolicyValidate(w http.ResponseWriter, r *http.Request) 
 type policyParseResponse struct {
 	Valid  bool                 `json:"valid"`
 	Policy *templatePolicyModel `json:"policy,omitempty"`
-	Error  string               `json:"error,omitempty"`
+	// Lossy means Policy is NOT a faithful rendering of the pasted YAML (a
+	// scoped deny, or an unmanaged ingress side, the editor model can't express). The
+	// frontend must not replace the user's text with a regenerated policy
+	// when this is set — see policyFitsEditorModel.
+	Lossy bool   `json:"lossy,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // handlePolicyParse backs POST /api/policy/parse — the Policy Editor's
@@ -750,6 +756,7 @@ func (s *uiServer) handlePolicyParse(w http.ResponseWriter, r *http.Request) {
 	// form handlePolicyForEdit's live-policy path already relies on by
 	// never calling Parse() on what it hands to convertRuleToPolicyModel.
 	model := convertRuleToPolicyModel(decoded.kind, decoded.name, decoded.namespace, decoded.rule)
+	lossy := !policyFitsEditorModel(decoded.rule)
 
 	if _, err := decoded.parse(s.logger); err != nil {
 		_ = json.NewEncoder(w).Encode(policyParseResponse{
@@ -759,6 +766,6 @@ func (s *uiServer) handlePolicyParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(policyParseResponse{Valid: true, Policy: &model})
+	_ = json.NewEncoder(w).Encode(policyParseResponse{Valid: true, Policy: &model, Lossy: lossy})
 }
 

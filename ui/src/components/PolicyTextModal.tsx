@@ -18,6 +18,10 @@ interface PolicyTextModalProps {
   // sidebar's own validation banner (PolicyEditorPanel.tsx), just inside
   // the modal where the user is actually looking while typing.
   error?: string | null
+  // A non-error heads-up (e.g. "valid, but the visual editor can't show
+  // it") with an optional one-click action — amber, not the red error
+  // styling, because the pasted text is fine.
+  notice?: { message: string; actionLabel?: string; onAction?: () => void } | null
 }
 
 export function PolicyTextModal({
@@ -28,6 +32,7 @@ export function PolicyTextModal({
   title = 'Edit Candidate Policy',
   readOnly = false,
   error = null,
+  notice = null,
 }: PolicyTextModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -104,6 +109,21 @@ export function PolicyTextModal({
         {error && (
           <div className="border-b border-drop/40 bg-drop/10 px-5 py-2 text-xs text-drop">
             <span className="font-mono break-words">{error}</span>
+          </div>
+        )}
+
+        {notice && (
+          <div className="flex items-center justify-between gap-3 border-b border-allow/40 bg-allow/10 px-5 py-2 text-xs text-allow">
+            <span className="break-words">{notice.message}</span>
+            {notice.actionLabel && notice.onAction && (
+              <button
+                type="button"
+                onClick={notice.onAction}
+                className="shrink-0 cursor-pointer border border-allow/60 px-2.5 py-1 font-display text-[0.65rem] font-bold tracking-wide uppercase hover:bg-allow/20"
+              >
+                {notice.actionLabel}
+              </button>
+            )}
           </div>
         )}
 
