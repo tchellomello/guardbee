@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchPods, fetchPolicyWorkloads, runVerdict, type WorkloadsResult, type VerdictChange, type VerdictResponse, type VerdictRow } from '../api'
 import { classifyTrafficPeer } from './RuleEditorCard'
+import { groupRows } from '../shared/groupRows'
+import { downloadTextFile, verdictRowsToCSV, verdictRowsToText } from '../shared/tableExport'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { PolicyTextModal } from './PolicyTextModal'
 import { VerdictGraph } from './VerdictGraph'
@@ -203,7 +205,12 @@ export function VerdictPanel({
       eventSourceRef.current = es
 
       es.onmessage = (ev) => {
-        const payload = JSON.parse(ev.data) as { row?: VerdictRow; counts: VerdictResponse['counts'] }
+        const payload = JSON.parse(ev.data) as {
+          row?: VerdictRow
+          counts: VerdictResponse['counts']
+          skippedPolicies?: string[]
+          baselineRuleCount?: number
+        }
         setRuns((prevRuns) =>
           prevRuns.map((r) => {
             if (r.id !== runId) return r
@@ -222,13 +229,26 @@ export function VerdictPanel({
                 rows,
                 counts: { ...payload.counts, total },
                 flowsSampled: total,
+                baselineRuleCount: payload.baselineRuleCount ?? prev.baselineRuleCount,
+                skippedPolicies: payload.skippedPolicies ?? prev.skippedPolicies,
               },
             }
           })
         )
       }
       es.onerror = () => {
-        setError('Live stream disconnected — check the candidate YAML is valid, or the backend may have stopped.')
+        const generic = 'Live stream disconnected — check the candidate YAML is valid, or the backend may have stopped.'
+        // EventSource hides the HTTP error body. CLOSED means the server
+        // refused the stream outright (not a mid-stream drop it would retry),
+        // so one plain fetch returns promptly with the real reason.
+        if (es.readyState === EventSource.CLOSED) {
+          fetch(`/api/verdict/stream?${params}`)
+            .then(async (res) => (res.ok ? generic : (await res.text()).trim() || generic))
+            .catch(() => generic)
+            .then(setError)
+        } else {
+          setError(generic)
+        }
         stopStreaming()
       }
       return
@@ -530,12 +550,17 @@ function RunCard({
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
   const [exportCopied, setExportCopied] = useState(false)
+  const [tableCopied, setTableCopied] = useState(false)
+  // Per run card, not a form option: grouping is a view over rows already
+  // received, so it applies to a live stream and to finished runs alike.
+  const [grouped, setGrouped] = useState(false)
 
   const result = run.result
+  const shownRows = result ? (grouped ? groupRows(result.rows) : result.rows) : []
   const rowsByCategory = result
     ? CATEGORY_ORDER.map((cat) => ({
         cat,
-        rows: result.rows.filter((r) => r.change === cat),
+        rows: shownRows.filter((r) => r.change === cat),
       })).filter((g) => g.rows.length > 0)
     : []
 
@@ -544,6 +569,22 @@ function RunCard({
     navigator.clipboard.writeText(rowsToMarkdownTable(rows))
     setExportCopied(true)
     setTimeout(() => setExportCopied(false), 2000)
+  }
+
+  // Same row set and order as the on-screen table (grouped by change).
+  function handleCopyTable() {
+    navigator.clipboard.writeText(verdictRowsToText(rowsByCategory.flatMap((g) => g.rows)))
+    setTableCopied(true)
+    setTimeout(() => setTableCopied(false), 2000)
+  }
+
+  function handleDownloadCSV() {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    downloadTextFile(
+      `guardbee-verdict-${run.namespace || 'all-namespaces'}-${stamp}.csv`,
+      verdictRowsToCSV(rowsByCategory.flatMap((g) => g.rows)),
+      'text/csv'
+    )
   }
 
   return (
@@ -580,11 +621,40 @@ function RunCard({
           </button>
           <button
             type="button"
+            onClick={() => setGrouped((g) => !g)}
+            aria-pressed={grouped}
+            title="Collapse rows with the same change, source, destination and port into one, with a count in the Seen column"
+            className={`font-display text-[0.65rem] font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
+              grouped ? 'text-signal' : 'text-ink-faint hover:text-signal'
+            }`}
+          >
+            {grouped ? '✓ Grouped' : 'Group traffic patterns'}
+          </button>
+          <button
+            type="button"
             onClick={handleExportMarkdown}
             title="Copy the results table as Markdown, for pasting into a PR description or ticket"
             className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer"
           >
             {exportCopied ? '✓ Copied!' : 'Export'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyTable}
+            disabled={rowsByCategory.length === 0}
+            title="Copy the results table as tab-separated text (pastes into a spreadsheet)"
+            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {tableCopied ? '✓ Copied!' : 'Copy'}
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadCSV}
+            disabled={rowsByCategory.length === 0}
+            title="Download the results table as a CSV file"
+            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            CSV
           </button>
           <button
             type="button"
@@ -606,6 +676,12 @@ function RunCard({
 
       {!run.isCollapsed && (
         <div className="space-y-5">
+          {result.skippedPolicies && result.skippedPolicies.length > 0 && (
+            <div className="border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-xs text-ink-dim">
+              {result.skippedPolicies.length} live policy(ies) not simulated — they use fromNodes/toNodes, which Hubble
+              flows can't be matched against: {result.skippedPolicies.join(', ')}. Verdicts ignore their rules.
+            </div>
+          )}
           <p className="text-xs text-ink-dim">
             {run.isStreaming || result.flowsSampled > 0 ? (
               <>

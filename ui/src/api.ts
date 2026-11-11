@@ -41,6 +41,8 @@ export interface VerdictResponse {
   flowsSampled: number
   counts: VerdictCounts
   rows: VerdictRow[]
+  // Live baseline policies the engine couldn't load (fromNodes/toNodes), see fetchBaselineRules in policies.go.
+  skippedPolicies?: string[]
 }
 
 export interface Flow {
