@@ -4,6 +4,7 @@ import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { FlowsGraph } from './FlowsGraph'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { parseNamespacePod } from '../shared/podLabels'
+import { downloadTextFile, flowsToCSV, flowsToText } from '../shared/tableExport'
 import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel, type Protocol } from '../policy'
 
 // Flows' own L4 field is a pre-formatted "TCP:8080"/"UDP:53" string (see
@@ -245,9 +246,25 @@ function FlowRunCard({
   onCreatePolicy?: (model: PolicyModel, ruleNodeId: string) => void
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const { result } = run
   const flows = result.flows
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(flowsToText(flows))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard is unavailable on non-secure origins; CSV download still works.
+    }
+  }
+
+  function handleDownloadCSV() {
+    const stamp = run.timestamp.toISOString().replace(/[:.]/g, '-')
+    downloadTextFile(`guardbee-flows-${run.namespace || 'all-namespaces'}-${stamp}.csv`, flowsToCSV(flows), 'text/csv')
+  }
 
   // Compute breakdown counts
   const counts = flows.reduce<Record<string, number>>((acc, f) => {
@@ -352,6 +369,27 @@ function FlowRunCard({
             <p className="text-sm text-ink-dim">
               No flows observed for this scope in Hubble's current buffer.
             </p>
+          )}
+
+          {flows.length > 0 && (
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCopy}
+                title="Copy this table as tab-separated text (pastes into spreadsheets)"
+                className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-signal hover:text-signal transition-colors cursor-pointer"
+              >
+                {copied ? '✓ Copied!' : 'Copy'}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadCSV}
+                title="Download this table as a CSV file"
+                className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-signal hover:text-signal transition-colors cursor-pointer"
+              >
+                Download CSV
+              </button>
+            </div>
           )}
 
           {flows.length > 0 && (
