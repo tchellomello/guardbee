@@ -550,3 +550,118 @@ func TestCompatEndpoint(t *testing.T) {
 	}
 }
 
+
+// A multi-document candidate (base policy + the narrow per-workload
+// exception the UI's verdict-row Allow button appends) must be judged as one
+// rule set by Cilium's own engine, and each row must carry which side
+// flipped plus the identity labels the UI builds the exception's selector
+// from. Also pins the exception's enableDefaultDeny.egress=false: its
+// selector (app=gateway) also matches a pod the base policy never selected
+// (gateway-canary), and an ordinary allow policy would silently flip that
+// pod's egress to default-deny.
+func TestJudgeFlowMultiDocCandidateWithWorkloadException(t *testing.T) {
+	logger := slog.Default()
+
+	const base = `apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: lock-egress
+  namespace: alpha
+spec:
+  endpointSelector:
+    matchLabels:
+      tier: backend
+  egress:
+    - toEntities:
+        - cluster
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+`
+	const exception = `# a comment-only document must be ignored
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: guardbee-allow-gateway-kube-apiserver-443
+  namespace: alpha
+spec:
+  endpointSelector:
+    matchLabels:
+      app: "gateway"
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+  enableDefaultDeny:
+    egress: false
+`
+
+	ep := func(id uint32, pod string, lbls ...string) *flowpb.Endpoint {
+		e := &flowpb.Endpoint{Identity: id, Labels: lbls, PodName: pod}
+		if pod != "" {
+			e.Namespace = "alpha"
+		}
+		return e
+	}
+	gateway := ep(1100, "gateway-1", "k8s:app=gateway", "k8s:tier=backend", "k8s:io.kubernetes.pod.namespace=alpha")
+	worker := ep(1200, "worker-1", "k8s:app=worker", "k8s:tier=backend", "k8s:io.kubernetes.pod.namespace=alpha")
+	canary := ep(1300, "gateway-canary-1", "k8s:app=gateway", "k8s:io.kubernetes.pod.namespace=alpha")
+	apiserver := ep(uint32(identity.ReservedIdentityKubeAPIServer), "", "reserved:kube-apiserver")
+	tcp := func(src *flowpb.Endpoint, port uint32) *flowpb.Flow {
+		return &flowpb.Flow{Source: src, Destination: apiserver, L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: port}},
+		}}
+	}
+
+	judge := func(candidateYAML string, f *flowpb.Flow) *verdictRow {
+		t.Helper()
+		rules, err := parseCandidateYAML(logger, []byte(candidateYAML), "")
+		if err != nil {
+			t.Fatalf("parseCandidateYAML: %v", err)
+		}
+		ids := identitiesFromFlows([]*flowpb.Flow{f})
+		baseline, err := newVerdictEngine(logger, nil, ids)
+		if err != nil {
+			t.Fatalf("newVerdictEngine(baseline): %v", err)
+		}
+		defer baseline.close(logger)
+		candidate, err := newVerdictEngine(logger, rules, ids)
+		if err != nil {
+			t.Fatalf("newVerdictEngine(candidate): %v", err)
+		}
+		defer candidate.close(logger)
+		return judgeFlow(logger, baseline, candidate, f, &verdictCounts{}, true)
+	}
+
+	// Base policy alone: the gateway's kube-apiserver traffic breaks, on the
+	// egress side, and the row carries the labels to build a fix from.
+	row := judge(base, tcp(gateway, 443))
+	if row.change != "NEWLY_DROPPED" || row.side != "egress" {
+		t.Fatalf("base only: want NEWLY_DROPPED/egress, got %s/%s", row.change, row.side)
+	}
+	if strings.Join(row.srcLabels, ",") != strings.Join(gateway.Labels, ",") || row.dstLabels[0] != "reserved:kube-apiserver" {
+		t.Fatalf("base only: labels not propagated: src=%v dst=%v", row.srcLabels, row.dstLabels)
+	}
+
+	withException := base + "---\n" + exception
+	cases := []struct {
+		name string
+		flow *flowpb.Flow
+		want string
+	}{
+		{"exception fixes the selected workload", tcp(gateway, 443), "UNCHANGED"},
+		{"exception does not leak to other workloads", tcp(worker, 443), "NEWLY_DROPPED"},
+		{"exception does not leak to other ports", tcp(gateway, 6443), "NEWLY_DROPPED"},
+		{"exception does not default-deny pods only it selects", tcp(canary, 6443), "UNCHANGED"},
+	}
+	for _, c := range cases {
+		if got := judge(withException, c.flow).change; got != c.want {
+			t.Errorf("%s: want %s, got %s", c.name, c.want, got)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import { useTemplates } from '../shared/useTemplates'
 import { PolicyGraph } from './PolicyGraph'
 import { PresetMenu, type PresetMenuItem } from './PresetMenu'
 import { PolicyTextModal } from './PolicyTextModal'
+import { SaveToWorkspace } from './SaveToWorkspace'
 
 // The "Blank Policy"/"Reset form" option is always available locally (no
 // fetch needed) — every other generic template comes from useTemplates().
@@ -32,6 +33,9 @@ interface PolicyEditorPanelProps {
   autoSelectNodeId: string | null
   onConsumeAutoSelect: () => void
   onSendToVerdict: (namespace: string, yaml: string) => void
+  // Saves the draft (model + its generated YAML) into the workspace; returns
+  // whether a same-named entry was updated.
+  onSavePolicy?: (name: string) => boolean
   // Set only while the draft is editing a policy loaded via "Edit in Policy
   // Editor" (Policies tab) — the snapshot of what's actually live, so a
   // real diff can be shown instead of only ever comparing against nothing.
@@ -78,6 +82,7 @@ export function PolicyEditorPanel({
   autoSelectNodeId,
   onConsumeAutoSelect,
   onSendToVerdict,
+  onSavePolicy,
   originalLiveModel,
   onClearOriginalLiveModel,
 }: PolicyEditorPanelProps) {
@@ -480,6 +485,7 @@ export function PolicyEditorPanel({
                 Candidate Policy Output
               </span>
               <div className="flex items-center gap-2">
+                {onSavePolicy && <SaveToWorkspace defaultName={model.name} onSave={onSavePolicy} />}
                 <button
                   type="button"
                   onClick={handleOpenYamlEditor}
