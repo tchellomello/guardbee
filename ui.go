@@ -247,6 +247,7 @@ type verdictResponse struct {
 	FlowsSampled       int              `json:"flowsSampled"`
 	Counts             verdictCountsOut `json:"counts"`
 	Rows               []verdictRowOut  `json:"rows"`
+	SkippedPolicies    []string         `json:"skippedPolicies,omitempty"`
 }
 
 func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +284,7 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		FlowsSampled:       comp.flowsSampled,
 		Counts:             toCountsOut(comp.counts),
 		Rows:               make([]verdictRowOut, len(comp.rows)),
+		SkippedPolicies:    comp.skippedPolicies,
 	}
 	for i, row := range comp.rows {
 		resp.Rows[i] = toRowOut(row, comp.rowCounts[i])
@@ -329,6 +331,9 @@ func toRowOut(row *verdictRow, count int) verdictRowOut {
 type verdictStreamEvent struct {
 	Row    *verdictRowOut   `json:"row,omitempty"`
 	Counts verdictCountsOut `json:"counts"`
+	// SkippedPolicies is set only on the first event, before any flow.
+	SkippedPolicies   []string `json:"skippedPolicies,omitempty"`
+	BaselineRuleCount int      `json:"baselineRuleCount,omitempty"`
 }
 
 // handleVerdictStream is the streaming counterpart to handleVerdict — same
@@ -367,7 +372,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, baseline, candidate, err := buildVerdictEngines(s.logger, s.cilium, namespace, candidateRules)
+	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(s.logger, s.cilium, namespace, candidateRules)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -382,6 +387,12 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	counts := &verdictCounts{}
+	// First event carries what the baseline load knows (rule count, skipped
+	// policies) so the UI can show it before the first flow arrives.
+	if first, err := json.Marshal(verdictStreamEvent{Counts: toCountsOut(counts), BaselineRuleCount: baselineRuleCount, SkippedPolicies: skipped}); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", first)
+		flusher.Flush()
+	}
 	_, streamErr := streamFlows(r.Context(), s.core, s.cfg, namespace, last, func(f *flowpb.Flow) {
 		row := judgeFlow(s.logger, baseline, candidate, f, counts, showUnchanged)
 		event := verdictStreamEvent{Counts: toCountsOut(counts)}

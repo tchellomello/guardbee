@@ -176,39 +176,66 @@ func firstRuleSpec(spec *api.Rule, specs api.Rules) *api.Rule {
 	return nil
 }
 
+// needsNodeSelectorOption reports whether Parse() failed only because the
+// policy uses fromNodes/toNodes. Matched by the sentinel's message, not
+// errors.Is: Parse() re-wraps validation errors into a plain string
+// (NewErrParse(fmt.Sprintf(...))), so the sentinel never survives in the chain.
+func needsNodeSelectorOption(err error) bool {
+	return err != nil && strings.Contains(err.Error(), api.ErrFromToNodesRequiresNodeSelectorOption.Error())
+}
+
 // fetchBaselineRules lists the live CNPs (in the given namespace, or every
 // namespace when namespace is "") and CCNPs (always cluster-wide — CCNPs
 // aren't namespace-scoped to begin with) and converts each to Cilium's
 // native api.Rules via the same Parse() method the real agent uses — this is
 // what "today's policy" means for the verdict subcommand's baseline
 // repository.
-func fetchBaselineRules(logger *slog.Logger, cilium ciliumclient.Interface, namespace string) (api.Rules, error) {
+//
+// Known v1 simplification: a live policy using fromNodes/toNodes is skipped
+// (named in the returned list, never silently) instead of failing the whole
+// baseline. Cilium's Parse() rejects those unless the process-global
+// enable-node-selector-labels option is set, and flipping it here would
+// parse them but make them match nothing — Hubble flows carry no node
+// labels on remote-node identities — i.e. a quietly wrong verdict. One such
+// policy must not block every verdict in its namespace either, so we skip
+// and say so. Any other parse error stays fatal.
+func fetchBaselineRules(logger *slog.Logger, cilium ciliumclient.Interface, namespace string) (rules api.Rules, skipped []string, err error) {
 	ctx := context.Background()
-	var rules api.Rules
 
 	cnps, err := cilium.CiliumV2().CiliumNetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("listing CiliumNetworkPolicies in %s: %w", namespaceLabel(namespace), err)
+		return nil, nil, fmt.Errorf("listing CiliumNetworkPolicies in %s: %w", namespaceLabel(namespace), err)
 	}
 	for i := range cnps.Items {
 		parsed, err := cnps.Items[i].Parse(logger, "")
+		if needsNodeSelectorOption(err) {
+			name := cnps.Items[i].Namespace + "/" + cnps.Items[i].Name
+			logger.Warn("skipping baseline policy: uses fromNodes/toNodes", "cnp", name)
+			skipped = append(skipped, "CiliumNetworkPolicy "+name)
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("parsing CiliumNetworkPolicy %s: %w", cnps.Items[i].Name, err)
+			return nil, nil, fmt.Errorf("parsing CiliumNetworkPolicy %s: %w", cnps.Items[i].Name, err)
 		}
 		rules = append(rules, parsed...)
 	}
 
 	ccnps, err := cilium.CiliumV2().CiliumClusterwideNetworkPolicies().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("listing CiliumClusterwideNetworkPolicies: %w", err)
+		return nil, nil, fmt.Errorf("listing CiliumClusterwideNetworkPolicies: %w", err)
 	}
 	for i := range ccnps.Items {
 		parsed, err := ccnps.Items[i].Parse(logger, "")
+		if needsNodeSelectorOption(err) {
+			logger.Warn("skipping baseline policy: uses fromNodes/toNodes", "ccnp", ccnps.Items[i].Name)
+			skipped = append(skipped, "CiliumClusterwideNetworkPolicy "+ccnps.Items[i].Name)
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("parsing CiliumClusterwideNetworkPolicy %s: %w", ccnps.Items[i].Name, err)
+			return nil, nil, fmt.Errorf("parsing CiliumClusterwideNetworkPolicy %s: %w", ccnps.Items[i].Name, err)
 		}
 		rules = append(rules, parsed...)
 	}
 
-	return rules, nil
+	return rules, skipped, nil
 }

@@ -103,6 +103,13 @@ Consequences that follow directly from this, non-negotiably:
 - A flow must be allowed by **both** the destination's ingress policy and the
   source's egress policy. Egress is judged on identities/CIDRs/entities/ports
   only; toFQDNs and other L7 egress stay `NOT_SIMULATED`.
+- A live baseline policy using `fromNodes`/`toNodes` is **skipped**, named in
+  the UI banner / CLI stderr warning, not simulated (`fetchBaselineRules`).
+  Cilium's `Parse()` rejects it unless the process-global
+  `enable-node-selector-labels` is set; setting it would parse the policy but
+  make it match nothing, since Hubble flows carry no node labels — a quietly
+  wrong verdict. Verdicts therefore ignore those rules. `Parse()` flattens
+  that error to a string, so it is matched by message, not `errors.Is`.
 - L7/FQDN-decided flows are `NOT_SIMULATED`, never guessed — those verdicts
   live in Envoy/the DNS proxy, not the policy map this engine computes.
 - A flow's identities must already be real and currently allocated (resolved

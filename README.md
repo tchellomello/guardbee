@@ -95,6 +95,9 @@ two can still differ from each other even with this scheme.
 - [x] Web UI with a graph-based policy editor
 - [x] Egress-side evaluation (identity/CIDR/entity/port rules; FQDN egress
       stays `not simulated`)
+- [ ] `fromNodes`/`toNodes` policies — today a live policy using them is
+      skipped and named in the UI banner / CLI warning, not simulated
+      (Hubble flows carry no node labels to match them against)
 - [ ] Natural-language policy authoring — describe the intent in plain
       English, GuardBee drafts and validates the candidate (exploring)
 

@@ -132,11 +132,12 @@ Flags:
 		os.Exit(1)
 	}
 
-	baselineRuleCount, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
+	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
 	}
+	warnSkippedBaseline(skipped)
 	defer baseline.close(logger)
 	defer candidate.close(logger)
 
@@ -169,6 +170,7 @@ Flags:
 	}
 	comp.candidateRuleCount = len(candidateRules)
 	comp.baselineRuleCount = baselineRuleCount
+	comp.skippedPolicies = skipped
 	printVerdictComputation(comp, candidatePath)
 }
 
@@ -185,6 +187,7 @@ type verdictComputation struct {
 	counts                                *verdictCounts
 	rows                                  []*verdictRow
 	rowCounts                             []int // seen-Nx count, same index as rows
+	skippedPolicies                       []string // live baseline policies the engine could not load, see fetchBaselineRules
 }
 
 // computeVerdict is the full, self-contained one-shot verdict computation:
@@ -195,7 +198,7 @@ type verdictComputation struct {
 // engine lifecycle to manage themselves, namely the "ui" subcommand's HTTP
 // API (see ui.go).
 func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, candidateRules api.Rules, last uint64, showUnchanged bool) (*verdictComputation, error) {
-	baselineRuleCount, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
+	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +211,7 @@ func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliu
 	}
 	comp.candidateRuleCount = len(candidateRules)
 	comp.baselineRuleCount = baselineRuleCount
+	comp.skippedPolicies = skipped
 	return comp, nil
 }
 
@@ -222,24 +226,32 @@ func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliu
 // addIdentities), rather than pre-seeding from a bounded batch — that's
 // what lets --follow/streaming keep working correctly no matter how long it
 // runs or how many new identities show up over time.
-func buildVerdictEngines(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules) (baselineRuleCount int, baseline, candidate *verdictEngine, err error) {
-	baselineRules, err := fetchBaselineRules(logger, cilium, namespace)
+func buildVerdictEngines(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules) (baselineRuleCount int, skipped []string, baseline, candidate *verdictEngine, err error) {
+	baselineRules, skipped, err := fetchBaselineRules(logger, cilium, namespace)
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("fetching baseline policy: %w", err)
+		return 0, nil, nil, nil, fmt.Errorf("fetching baseline policy: %w", err)
 	}
 
 	baseline, err = newVerdictEngine(logger, baselineRules, identity.IdentityMap{})
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("building baseline engine: %w", err)
+		return 0, nil, nil, nil, fmt.Errorf("building baseline engine: %w", err)
 	}
 
 	candidate, err = newVerdictEngine(logger, append(append(api.Rules{}, baselineRules...), candidateRules...), identity.IdentityMap{})
 	if err != nil {
 		baseline.close(logger)
-		return 0, nil, nil, fmt.Errorf("building candidate engine: %w", err)
+		return 0, nil, nil, nil, fmt.Errorf("building candidate engine: %w", err)
 	}
 
-	return len(baselineRules), baseline, candidate, nil
+	return len(baselineRules), skipped, baseline, candidate, nil
+}
+
+// warnSkippedBaseline is the CLI's stderr counterpart to the UI's banner for
+// baseline policies fetchBaselineRules skipped.
+func warnSkippedBaseline(skipped []string) {
+	for _, s := range skipped {
+		fmt.Fprintf(os.Stderr, "warning: baseline policy skipped (uses fromNodes/toNodes, not simulated): %s\n", s)
+	}
 }
 
 // judgeFlowBatch fetches flows for namespace and judges each one against the
