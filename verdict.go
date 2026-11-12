@@ -53,6 +53,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/spf13/pflag"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -158,6 +159,10 @@ Flags:
 		os.Exit(1)
 	}
 
+	// Wall clock for the whole run as the user experiences it — client
+	// setup, baseline fetch, port-forward and flow sampling included, not
+	// just the engine's judging loop, which is rarely the slow part.
+	start := time.Now()
 	logger := slog.Default()
 
 	core, cilium, cfg, err := newClientsets(flags.kubeconfig)
@@ -205,7 +210,7 @@ Flags:
 			fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 			os.Exit(1)
 		}
-		printVerdictSummary(counts)
+		printVerdictSummary(counts, time.Since(start))
 		return
 	}
 
@@ -217,6 +222,7 @@ Flags:
 	comp.candidateRuleCount = len(candidateRules)
 	comp.baselineRuleCount = baselineRuleCount
 	comp.skippedPolicies = skipped
+	comp.elapsed = time.Since(start)
 
 	code := verdictExitCode(comp.counts, failOnDropped, minFlows)
 	switch format {
@@ -255,6 +261,10 @@ type verdictComputation struct {
 	rows                                  []*verdictRow
 	rowCounts                             []int // seen-Nx count, same index as rows
 	skippedPolicies                       []string // live baseline policies the engine could not load, see fetchBaselineRules
+	// CLI only: wall clock of the whole run, set by runVerdict (0 = not
+	// measured). The UI times its runs browser-side instead, so its clock
+	// also covers a --follow-style stream that has no server-side end.
+	elapsed time.Duration
 }
 
 // computeVerdict is the full, self-contained one-shot verdict computation:
@@ -404,7 +414,7 @@ func printVerdictComputation(comp *verdictComputation, candidatePath string) {
 	for i, row := range comp.rows {
 		fmt.Println(row.line(comp.rowCounts[i]))
 	}
-	printVerdictSummary(comp.counts)
+	printVerdictSummary(comp.counts, comp.elapsed)
 }
 
 // filterLabel is the " (only flows --to-pod x …)" suffix for the CLI's
@@ -622,7 +632,7 @@ func changeExplanation(change string) string {
 	}
 }
 
-func printVerdictSummary(counts *verdictCounts) {
+func printVerdictSummary(counts *verdictCounts, elapsed time.Duration) {
 	fmt.Printf("\n%d flows sampled: %s unchanged, %s newly dropped, %s newly allowed, %s not simulated, %s reply (skipped)\n",
 		counts.total,
 		colorize(changeColor("UNCHANGED"), fmt.Sprintf("%d", counts.unchanged)),
@@ -631,12 +641,19 @@ func printVerdictSummary(counts *verdictCounts) {
 		colorize(ansiGray, fmt.Sprintf("%d", counts.notSimulated)),
 		colorize(ansiGray, fmt.Sprintf("%d", counts.replySkipped)),
 	)
+	fmt.Println(colorize(ansiGray, "completed in "+formatElapsed(elapsed)))
 
 	if counts.newlyDropped > 0 {
 		fmt.Printf("\n%s\n", colorize(ansiBold+ansiRed,
 			fmt.Sprintf("%d real flow(s) would BREAK if this candidate merged as-is — review the NEWLY_DROPPED rows above before shipping it.", counts.newlyDropped)))
 	}
 	printVerdictLegend(counts)
+}
+
+// formatElapsed rounds a run's duration to what a human cares about
+// ("3.2s", "1m4.5s") instead of time.Duration's nanosecond default.
+func formatElapsed(d time.Duration) string {
+	return d.Round(100 * time.Millisecond).String()
 }
 
 // printVerdictLegend explains only the categories that actually showed up in

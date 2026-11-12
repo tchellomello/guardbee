@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	cilium_v2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
@@ -187,6 +188,7 @@ func sampleComputation() *verdictComputation {
 			{change: "UNCHANGED", src: "alpha/client-1", dst: "alpha/web-1", proto: "TCP", port: 80},
 		},
 		rowCounts: []int{1, 5},
+		elapsed:   3200 * time.Millisecond,
 	}
 }
 
@@ -214,6 +216,9 @@ func TestWriteVerdictJSON(t *testing.T) {
 	if r := out["replacedPolicies"].([]any); len(r) != 1 {
 		t.Errorf("replacedPolicies missing: %v", out["replacedPolicies"])
 	}
+	if out["durationMs"].(float64) != 3200 {
+		t.Errorf("durationMs wrong: %v", out["durationMs"])
+	}
 }
 
 func TestWriteVerdictMarkdown(t *testing.T) {
@@ -226,6 +231,7 @@ func TestWriteVerdictMarkdown(t *testing.T) {
 		"| NEWLY_DROPPED | alpha/client-1 | alpha/web-1 | TCP/81 | 1 |",
 		"<details><summary>1 unchanged flow(s)</summary>",
 		"Replaces live CiliumNetworkPolicy alpha/web",
+		"- Duration: 3.2s",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown missing %q:\n%s", want, md)
