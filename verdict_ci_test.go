@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	cilium_v2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
@@ -188,6 +189,7 @@ func sampleComputation() *verdictComputation {
 		},
 		rowCounts: []int{1, 5},
 		target:    kubeTarget{context: "kind-lab", apiServer: "https://127.0.0.1:6443"},
+		elapsed:   3200 * time.Millisecond,
 	}
 }
 
@@ -218,6 +220,9 @@ func TestWriteVerdictJSON(t *testing.T) {
 	if out["context"] != "kind-lab" || out["apiServer"] != "https://127.0.0.1:6443" {
 		t.Errorf("context/apiServer wrong: %v/%v", out["context"], out["apiServer"])
 	}
+	if out["durationMs"].(float64) != 3200 {
+		t.Errorf("durationMs wrong: %v", out["durationMs"])
+	}
 }
 
 func TestWriteVerdictMarkdown(t *testing.T) {
@@ -231,6 +236,7 @@ func TestWriteVerdictMarkdown(t *testing.T) {
 		"<details><summary>1 unchanged flow(s)</summary>",
 		"Replaces live CiliumNetworkPolicy alpha/web",
 		"- Context: `kind-lab` (https://127.0.0.1:6443)",
+		"- Duration: 3.2s",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown missing %q:\n%s", want, md)

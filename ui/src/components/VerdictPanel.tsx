@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchPods, fetchPolicyWorkloads, runVerdict, type WorkloadsResult, type VerdictChange, type VerdictResponse, type VerdictRow } from '../api'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { groupRows } from '../shared/groupRows'
+import { formatElapsed, useElapsedMs } from '../shared/elapsed'
 import { downloadTextFile, verdictRowsToCSV, verdictRowsToText } from '../shared/tableExport'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { PolicyTextModal } from './PolicyTextModal'
@@ -80,6 +81,9 @@ export interface VerdictRunItem {
   isStreaming: boolean
   result: VerdictResponse
   isCollapsed?: boolean
+  // How long the run took, wall clock as seen from the browser. Unset while
+  // a live stream is still running — its card ticks from timestamp instead.
+  durationMs?: number
 }
 
 // A request (from "Test in Verdict Simulator" or the workspace's "Open in
@@ -128,6 +132,8 @@ export function VerdictPanel({
 
   const [runs, setRuns] = useState<VerdictRunItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadingSince, setLoadingSince] = useState<number | null>(null)
+  const loadingElapsedMs = useElapsedMs(loadingSince)
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [workloads, setWorkloads] = useState<WorkloadsResult | null>(null)
@@ -139,6 +145,7 @@ export function VerdictPanel({
   const [expandedEditorOpen, setExpandedEditorOpen] = useState(false)
 
   const eventSourceRef = useRef<EventSource | null>(null)
+  const streamRunIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!load) return
@@ -170,6 +177,15 @@ export function VerdictPanel({
     eventSourceRef.current?.close()
     eventSourceRef.current = null
     setStreaming(false)
+    // Freeze the stopped stream's clock at the moment it ended.
+    const runId = streamRunIdRef.current
+    streamRunIdRef.current = null
+    if (runId) {
+      const endedAt = Date.now()
+      setRuns((prev) =>
+        prev.map((r) => (r.id === runId ? { ...r, durationMs: endedAt - r.timestamp.getTime() } : r))
+      )
+    }
   }
 
   function handleResetSession() {
@@ -244,6 +260,7 @@ export function VerdictPanel({
       }
 
       setRuns((prev) => (stackRuns ? [initialRun, ...prev] : [initialRun]))
+      streamRunIdRef.current = runId
 
       const params = new URLSearchParams({
         candidateYAML,
@@ -318,7 +335,9 @@ export function VerdictPanel({
     params: Pick<VerdictRunItem, 'namespace' | 'allNamespaces' | 'last' | 'showUnchanged' | 'candidateYAML' | 'filter'>,
     stack: boolean
   ) {
+    const startedAt = new Date()
     setLoading(true)
+    setLoadingSince(startedAt.getTime())
     setError(null)
     try {
       const res = await runVerdict({
@@ -331,15 +350,17 @@ export function VerdictPanel({
       const newRun: VerdictRunItem = {
         ...params,
         id: `run-${Date.now()}`,
-        timestamp: new Date(),
+        timestamp: startedAt,
         isStreaming: false,
         result: res,
+        durationMs: Date.now() - startedAt.getTime(),
       }
       setRuns((prev) => (stack ? [newRun, ...prev] : [newRun]))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
+      setLoadingSince(null)
     }
   }
 
@@ -551,7 +572,7 @@ export function VerdictPanel({
                 disabled={loading || streaming}
                 className="flex-1 bg-signal py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
               >
-                {loading ? 'Judging…' : streaming ? 'Streaming…' : follow ? 'Start following' : 'Run verdict'}
+                {loading ? `Judging… ${formatElapsed(loadingElapsedMs)}` : streaming ? 'Streaming…' : follow ? 'Start following' : 'Run verdict'}
               </button>
               <button
                 type="button"
@@ -628,6 +649,22 @@ export function VerdictPanel({
   )
 }
 
+// A live stream ticks until stopped; a finished run shows its final time.
+function RunDuration({ run }: { run: VerdictRunItem }) {
+  const live = run.durationMs === undefined && run.isStreaming
+  const elapsedMs = useElapsedMs(live ? run.timestamp.getTime() : null)
+  const ms = run.durationMs ?? (live ? elapsedMs : undefined)
+  if (ms === undefined) return null
+  return (
+    <span
+      title={live ? 'Running for' : 'Wall-clock time this run took, from request to result'}
+      className={`font-mono text-[0.7rem] tabular-nums ${live ? 'text-signal' : 'text-ink-faint'}`}
+    >
+      ⏱ {formatElapsed(ms)}
+    </span>
+  )
+}
+
 function RunCard({
   run,
   runNumber,
@@ -699,6 +736,7 @@ function RunCard({
           <span className="text-[0.7rem] font-mono text-ink-faint">
             {run.timestamp.toLocaleTimeString()}
           </span>
+          <RunDuration run={run} />
           {run.result.context && (
             <span
               title={`The cluster this run judged: kubeconfig context ${run.result.context}${
