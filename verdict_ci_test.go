@@ -188,6 +188,7 @@ func sampleComputation() *verdictComputation {
 			{change: "UNCHANGED", src: "alpha/client-1", dst: "alpha/web-1", proto: "TCP", port: 80},
 		},
 		rowCounts: []int{1, 5},
+		target:    kubeTarget{context: "kind-lab", apiServer: "https://127.0.0.1:6443"},
 		elapsed:   3200 * time.Millisecond,
 	}
 }
@@ -216,6 +217,9 @@ func TestWriteVerdictJSON(t *testing.T) {
 	if r := out["replacedPolicies"].([]any); len(r) != 1 {
 		t.Errorf("replacedPolicies missing: %v", out["replacedPolicies"])
 	}
+	if out["context"] != "kind-lab" || out["apiServer"] != "https://127.0.0.1:6443" {
+		t.Errorf("context/apiServer wrong: %v/%v", out["context"], out["apiServer"])
+	}
 	if out["durationMs"].(float64) != 3200 {
 		t.Errorf("durationMs wrong: %v", out["durationMs"])
 	}
@@ -231,6 +235,7 @@ func TestWriteVerdictMarkdown(t *testing.T) {
 		"| NEWLY_DROPPED | alpha/client-1 | alpha/web-1 | TCP/81 | 1 |",
 		"<details><summary>1 unchanged flow(s)</summary>",
 		"Replaces live CiliumNetworkPolicy alpha/web",
+		"- Context: `kind-lab` (https://127.0.0.1:6443)",
 		"- Duration: 3.2s",
 	} {
 		if !strings.Contains(md, want) {

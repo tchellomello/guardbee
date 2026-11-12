@@ -171,6 +171,7 @@ Flags:
 		os.Exit(1)
 	}
 	warnOnVersionSkew(core, cfg)
+	target := resolveKubeTarget(flags.kubeconfig, cfg)
 
 	candidateRules, err := parseCandidateFile(logger, candidatePath, namespace)
 	if err != nil {
@@ -195,8 +196,8 @@ Flags:
 	counts := &verdictCounts{}
 
 	if follow {
-		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s — streaming flows live, Ctrl+C to stop.\n\n",
-			len(candidateRules), candidatePath, baselineRuleCount, namespaceLabel(namespace), filterLabel(*dst))
+		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s — streaming flows live, Ctrl+C to stop.\n\n",
+			len(candidateRules), candidatePath, baselineRuleCount, namespaceLabel(namespace), contextLabel(target), filterLabel(*dst))
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
@@ -223,6 +224,7 @@ Flags:
 	comp.baselineRuleCount = baselineRuleCount
 	comp.skippedPolicies = skipped
 	comp.elapsed = time.Since(start)
+	comp.target = target
 
 	code := verdictExitCode(comp.counts, failOnDropped, minFlows)
 	switch format {
@@ -265,6 +267,10 @@ type verdictComputation struct {
 	// measured). The UI times its runs browser-side instead, so its clock
 	// also covers a --follow-style stream that has no server-side end.
 	elapsed time.Duration
+	// target is the cluster this run judged, set by the caller that owns the
+	// clients (runVerdict, ui.go's handleVerdict) rather than computeVerdict,
+	// which only ever sees already-built clients.
+	target kubeTarget
 }
 
 // computeVerdict is the full, self-contained one-shot verdict computation:
@@ -404,17 +410,26 @@ func printVerdictComputation(comp *verdictComputation, candidatePath string) {
 	}
 
 	if uint64(comp.flowsSampled) < comp.flowsRequested {
-		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s, using %d of up to %d requested flows — that's every flow Hubble's live buffer currently holds for this scope, not a shortfall in this tool; use --follow to keep sampling over time instead of raising --last.\n\n",
-			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), filterLabel(comp.dst), comp.flowsSampled, comp.flowsRequested)
+		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s, using %d of up to %d requested flows — that's every flow Hubble's live buffer currently holds for this scope, not a shortfall in this tool; use --follow to keep sampling over time instead of raising --last.\n\n",
+			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), contextLabel(comp.target), filterLabel(comp.dst), comp.flowsSampled, comp.flowsRequested)
 	} else {
-		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s, using %d sampled flows.\n\n",
-			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), filterLabel(comp.dst), comp.flowsSampled)
+		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s, using %d sampled flows.\n\n",
+			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), contextLabel(comp.target), filterLabel(comp.dst), comp.flowsSampled)
 	}
 
 	for i, row := range comp.rows {
 		fmt.Println(row.line(comp.rowCounts[i]))
 	}
 	printVerdictSummary(comp.counts, comp.elapsed)
+}
+
+// contextLabel is the " on context x" fragment for the CLI's summary lines,
+// or "" when the kubeconfig names no context.
+func contextLabel(t kubeTarget) string {
+	if t.context == "" {
+		return ""
+	}
+	return " on context " + t.context
 }
 
 // filterLabel is the " (only flows --to-pod x …)" suffix for the CLI's

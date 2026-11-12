@@ -84,7 +84,9 @@ Flags:
 	logger.Info("loaded policy editor templates",
 		"generic", len(templates.Generic), "ingress", len(templates.Ingress), "egress", len(templates.Egress))
 
-	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, logger: logger, templates: templates}
+	target := resolveKubeTarget(kubeconfig, cfg)
+	fmt.Printf("%s ui: using kubeconfig context %q (%s)\n", binName, target.context, target.apiServer)
+	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, target: target, logger: logger, templates: templates}
 
 	static, err := iofs.Sub(uiAssets, "ui/dist")
 	if err != nil {
@@ -123,6 +125,7 @@ type uiServer struct {
 	core      kubernetes.Interface
 	cilium    ciliumclient.Interface
 	cfg       *rest.Config
+	target    kubeTarget // the cluster the clients above talk to, fixed for the server's lifetime
 	logger    *slog.Logger
 	templates templatesResponse
 }
@@ -276,6 +279,11 @@ type verdictResponse struct {
 	Counts             verdictCountsOut `json:"counts"`
 	Rows               []verdictRowOut  `json:"rows"`
 	SkippedPolicies    []string         `json:"skippedPolicies,omitempty"`
+	// Context/APIServer: the cluster this verdict judged (see kubeTarget).
+	// Stamped on every result rather than served once per page, so stacked
+	// UI runs stay labeled correctly if the server restarts on another context.
+	Context   string `json:"context,omitempty"`
+	APIServer string `json:"apiServer,omitempty"`
 }
 
 func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +312,7 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("computing verdict: %v", err), http.StatusInternalServerError)
 		return
 	}
+	comp.target = s.target
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(toVerdictResponse(comp))
@@ -356,6 +365,9 @@ type verdictStreamEvent struct {
 	BaselineRuleCount int      `json:"baselineRuleCount,omitempty"`
 	// CandidateRuleCount is set only on the first event, like BaselineRuleCount.
 	CandidateRuleCount int `json:"candidateRuleCount,omitempty"`
+	// Context/APIServer are set only on the first event too, see verdictResponse.
+	Context   string `json:"context,omitempty"`
+	APIServer string `json:"apiServer,omitempty"`
 }
 
 // handleVerdictStream is the streaming counterpart to handleVerdict — same
@@ -412,7 +424,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	counts := &verdictCounts{}
 	// First event carries what the baseline load knows (rule count, skipped
 	// policies) so the UI can show it before the first flow arrives.
-	if first, err := json.Marshal(verdictStreamEvent{Counts: toCountsOut(counts), BaselineRuleCount: baselineRuleCount, CandidateRuleCount: len(candidateRules), SkippedPolicies: skipped}); err == nil {
+	if first, err := json.Marshal(verdictStreamEvent{Counts: toCountsOut(counts), BaselineRuleCount: baselineRuleCount, CandidateRuleCount: len(candidateRules), SkippedPolicies: skipped, Context: s.target.context, APIServer: s.target.apiServer}); err == nil {
 		fmt.Fprintf(w, "data: %s\n\n", first)
 		flusher.Flush()
 	}
