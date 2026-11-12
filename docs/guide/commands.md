@@ -59,12 +59,39 @@ guardbee verdict [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port
 | `--last N` / `-f`, `--follow` | Same as `flows` |
 | `--to-pod`, `--to-service`, `--to-label`, `--to-port` | Same as `flows`: judge only flows going to that destination |
 | `--show-unchanged` | Also print `UNCHANGED` rows (default: just a count) |
+| `--replace-existing` | Judge the candidate as replacing a live policy with the same kind, namespace and name, instead of adding it on top |
+| `--fail-on-dropped` | Exit `2` if any sampled flow is `NEWLY_DROPPED` |
+| `--min-flows N` | Exit `3` if fewer than N flows were judged (replies and not-simulated flows don't count) |
+| `--format table\|json\|markdown` | Output format; `json` and `markdown` are one-shot only |
 
 > Output is three buckets: `NEWLY_DROPPED` and `NEWLY_ALLOWED` (each with a one-line plain-English reason), and `UNCHANGED`. See [how verdict works](how-it-works.html) for the engine mechanics.
 
 `<candidate.yaml>` may hold several `---`-separated policies, like a file for `kubectl apply -f`; they're judged together as one candidate. In the UI, a row's **Allow / Deny** button uses this: it shows the affected workload's detected identity labels, and appends a separate exception policy scoped to the labels you pick (with `enableDefaultDeny` off for that direction, so it never default-denies anything on its own). Then it re-runs the verdict.
 
 The `--to-*` filters are applied in Hubble's query, not to the results, so all `--last` flows go to that destination instead of a quiet destination getting a handful of the cluster-wide buffer. For example, `guardbee verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 candidate.yaml`. The UI's **Destination filter** (under Scope) does the same, and each run card shows the filter it ran with. Its fields suggest destinations seen in earlier runs: workload pod prefixes, Services, labels and ports, most-seen first. Flows to other destinations aren't judged at all, so a filtered run is for investigating one path, not for signing off on a policy.
+
+### Editing an existing policy
+
+By default the candidate is added on top of the live policy set, including a live policy with the same name. When the candidate is an edit of a live policy, pass `--replace-existing`: the live copy is left out of the candidate side, which is what applying the edit does. Without it, rules the edit removes or narrows still allow traffic, and the regression is not reported. Matching uses the policy labels Cilium's own parser attaches (kind, namespace, name), so a same-name policy in another namespace is never replaced.
+
+### CI mode
+
+For a pull-request check:
+
+```
+guardbee verdict -n myapp --replace-existing --fail-on-dropped --min-flows 20 --format markdown candidate.yaml
+```
+
+| Exit code | Meaning |
+|---|---|
+| `0` | No gate tripped |
+| `1` | Error (cluster, Hubble or candidate) |
+| `2` | `--fail-on-dropped`: at least one sampled flow is `NEWLY_DROPPED` |
+| `3` | `--min-flows`: too few flows judged to call it a pass (a dropped flow outranks this) |
+
+`--format json` prints the same object as the UI's `POST /api/verdict`, plus `candidate`, `replacedPolicies`, `judgedFlows`, `minFlows`, `result` (`pass`, `dropped` or `insufficient-flows`) and `exitCode`. `--format markdown` prints a summary ready to post as a PR comment: a status line, the counts, a table of changed rows, and unchanged rows in a collapsed section.
+
+A pass only covers flows that were in Hubble's buffer at run time. Use `--min-flows` so a quiet namespace reads as inconclusive, not clean.
 
 ---
 
