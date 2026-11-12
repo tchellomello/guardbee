@@ -305,22 +305,8 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := verdictResponse{
-		Namespace:          comp.namespace,
-		CandidateRuleCount: comp.candidateRuleCount,
-		BaselineRuleCount:  comp.baselineRuleCount,
-		FlowsRequested:     comp.flowsRequested,
-		FlowsSampled:       comp.flowsSampled,
-		Counts:             toCountsOut(comp.counts),
-		Rows:               make([]verdictRowOut, len(comp.rows)),
-		SkippedPolicies:    comp.skippedPolicies,
-	}
-	for i, row := range comp.rows {
-		resp.Rows[i] = toRowOut(row, comp.rowCounts[i])
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(toVerdictResponse(comp))
 }
 
 // toCountsOut/toRowOut convert the internal verdictCounts/verdictRow into

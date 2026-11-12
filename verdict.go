@@ -91,6 +91,13 @@ func runVerdict(args []string) {
 	fs.Uint64Var(&last, "last", 50, "number of recent flows to sample")
 	fs.BoolVarP(&follow, "follow", "f", false, "keep judging new flows until Ctrl+C, instead of stopping after --last")
 	fs.BoolVar(&showUnchanged, "show-unchanged", false, "also print UNCHANGED rows (deduplicated and grouped last), not just what changed")
+	var failOnDropped, replaceExisting bool
+	var minFlows int
+	var format string
+	fs.BoolVar(&failOnDropped, "fail-on-dropped", false, fmt.Sprintf("exit %d if any sampled flow is NEWLY_DROPPED (for CI)", exitVerdictDropped))
+	fs.IntVar(&minFlows, "min-flows", 0, fmt.Sprintf("exit %d if fewer than this many flows were actually judged (replies and not-simulated flows don't count); 0 disables", exitVerdictTooFewFlows))
+	fs.StringVar(&format, "format", formatTable, "output format: table, json or markdown (json/markdown: one-shot only, not with --follow)")
+	fs.BoolVar(&replaceExisting, "replace-existing", false, "judge the candidate as REPLACING any live policy with the same kind, namespace and name, instead of being added on top of it — use for edits to an existing policy")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port ...] [--last N] [-f] <candidate.yaml>
 
@@ -113,12 +120,23 @@ destination (hubble observe's semantics, applied in Hubble's query, so all
 destinations is then not sampled at all: narrow to investigate, not to
 sign off on a policy.
 
+By default a candidate is judged ON TOP of the live policy set, including a
+live policy with the same name. --replace-existing drops that same-name live
+policy first, which is what applying the candidate would really do; without
+it, rules an edit removes or narrows still allow traffic and the regression
+is not reported.
+
+For CI: --fail-on-dropped exits %[3]d on any NEWLY_DROPPED flow, --min-flows N
+exits %[4]d when fewer than N flows were judged (so an empty sample can't read
+as a pass), and --format json|markdown prints a machine-readable result or a
+PR-comment summary. Errors always exit 1; a dropped flow outranks a thin sample.
+
 %[2]s
 
 Flags:
-`, binName, numberFlagHelp)
+`, binName, numberFlagHelp, exitVerdictDropped, exitVerdictTooFewFlows)
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s verdict -n myapp examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --last 200 examples/myapp-wrong-port.yaml\n  %[1]s verdict -n myapp --follow examples/myapp-merge-ready.yaml\n  %[1]s verdict --all-namespaces examples/ccnp-coredns-merge-ready.yaml\n  %[1]s verdict -n myapp --show-unchanged examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 examples/myapp-merge-ready.yaml\n", binName)
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s verdict -n myapp examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --last 200 examples/myapp-wrong-port.yaml\n  %[1]s verdict -n myapp --follow examples/myapp-merge-ready.yaml\n  %[1]s verdict --all-namespaces examples/ccnp-coredns-merge-ready.yaml\n  %[1]s verdict -n myapp --show-unchanged examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --replace-existing --fail-on-dropped --min-flows 20 --format markdown examples/myapp-merge-ready.yaml\n", binName)
 	}
 	_ = fs.Parse(args)
 	namespace := flags.resolveNamespace()
@@ -127,6 +145,18 @@ Flags:
 		os.Exit(1)
 	}
 	candidatePath := fs.Arg(0)
+	if !validVerdictFormat(format) {
+		fmt.Fprintf(os.Stderr, "%s verdict: --format must be %s, %s or %s, got %q\n", binName, formatTable, formatJSON, formatMarkdown, format)
+		os.Exit(1)
+	}
+	if minFlows < 0 {
+		fmt.Fprintf(os.Stderr, "%s verdict: --min-flows must be >= 0\n", binName)
+		os.Exit(1)
+	}
+	if follow && (format != formatTable || failOnDropped || minFlows > 0) {
+		fmt.Fprintf(os.Stderr, "%s verdict: --format json|markdown, --fail-on-dropped and --min-flows need a one-shot run, not --follow\n", binName)
+		os.Exit(1)
+	}
 
 	logger := slog.Default()
 
@@ -143,7 +173,7 @@ Flags:
 		os.Exit(1)
 	}
 
-	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
+	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, candidateRules, replaceExisting)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
@@ -151,6 +181,11 @@ Flags:
 	warnSkippedBaseline(skipped)
 	defer baseline.close(logger)
 	defer candidate.close(logger)
+	if format == formatTable {
+		for _, r := range replaced {
+			fmt.Printf("Replacing live %s with the candidate (--replace-existing).\n", r)
+		}
+	}
 
 	counts := &verdictCounts{}
 
@@ -182,7 +217,27 @@ Flags:
 	comp.candidateRuleCount = len(candidateRules)
 	comp.baselineRuleCount = baselineRuleCount
 	comp.skippedPolicies = skipped
-	printVerdictComputation(comp, candidatePath)
+
+	code := verdictExitCode(comp.counts, failOnDropped, minFlows)
+	switch format {
+	case formatJSON:
+		if err := writeVerdictJSON(os.Stdout, comp, candidatePath, replaced, minFlows, code); err != nil {
+			fmt.Fprintf(os.Stderr, binName+" verdict: writing JSON: %v\n", err)
+			os.Exit(1)
+		}
+	case formatMarkdown:
+		writeVerdictMarkdown(os.Stdout, comp, candidatePath, replaced, minFlows, code)
+	default:
+		printVerdictComputation(comp, candidatePath)
+		if code == exitVerdictTooFewFlows {
+			fmt.Printf("\nOnly %d flow(s) judged, fewer than --min-flows %d: not enough evidence to call this a pass.\n", judgedFlows(comp.counts), minFlows)
+		}
+	}
+	if code != 0 {
+		baseline.close(logger)
+		candidate.close(logger)
+		os.Exit(code)
+	}
 }
 
 // verdictComputation is the structured result of one one-shot verdict run —
@@ -239,23 +294,37 @@ func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliu
 // what lets --follow/streaming keep working correctly no matter how long it
 // runs or how many new identities show up over time.
 func buildVerdictEngines(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules) (baselineRuleCount int, skipped []string, baseline, candidate *verdictEngine, err error) {
+	baselineRuleCount, skipped, _, baseline, candidate, err = buildVerdictEnginesWith(logger, cilium, namespace, candidateRules, false)
+	return baselineRuleCount, skipped, baseline, candidate, err
+}
+
+// buildVerdictEnginesWith is buildVerdictEngines plus --replace-existing:
+// when replaceExisting is set, live rules from a policy the candidate also
+// defines (same kind/namespace/name, see replaceSameNamePolicies) are left
+// out of the baseline+candidate engine only — the baseline engine always
+// keeps today's full live state. replaced names the policies dropped.
+func buildVerdictEnginesWith(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules, replaceExisting bool) (baselineRuleCount int, skipped, replaced []string, baseline, candidate *verdictEngine, err error) {
 	baselineRules, skipped, err := fetchBaselineRules(logger, cilium, namespace)
 	if err != nil {
-		return 0, nil, nil, nil, fmt.Errorf("fetching baseline policy: %w", err)
+		return 0, nil, nil, nil, nil, fmt.Errorf("fetching baseline policy: %w", err)
 	}
 
 	baseline, err = newVerdictEngine(logger, baselineRules, identity.IdentityMap{})
 	if err != nil {
-		return 0, nil, nil, nil, fmt.Errorf("building baseline engine: %w", err)
+		return 0, nil, nil, nil, nil, fmt.Errorf("building baseline engine: %w", err)
 	}
 
-	candidate, err = newVerdictEngine(logger, append(append(api.Rules{}, baselineRules...), candidateRules...), identity.IdentityMap{})
+	candidateBase := baselineRules
+	if replaceExisting {
+		candidateBase, replaced = replaceSameNamePolicies(baselineRules, candidateRules)
+	}
+	candidate, err = newVerdictEngine(logger, append(append(api.Rules{}, candidateBase...), candidateRules...), identity.IdentityMap{})
 	if err != nil {
 		baseline.close(logger)
-		return 0, nil, nil, nil, fmt.Errorf("building candidate engine: %w", err)
+		return 0, nil, nil, nil, nil, fmt.Errorf("building candidate engine: %w", err)
 	}
 
-	return len(baselineRules), skipped, baseline, candidate, nil
+	return len(baselineRules), skipped, replaced, baseline, candidate, nil
 }
 
 // warnSkippedBaseline is the CLI's stderr counterpart to the UI's banner for
