@@ -57,6 +57,9 @@ export interface VerdictResponse {
   rows: VerdictRow[]
   // Live baseline policies the engine couldn't load (fromNodes/toNodes), see fetchBaselineRules in policies.go.
   skippedPolicies?: string[]
+  // The kubeconfig context and API server this verdict judged (see kubeTarget in kube.go).
+  context?: string
+  apiServer?: string
 }
 
 export interface Flow {

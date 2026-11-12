@@ -53,6 +53,33 @@ func restConfig(kubeconfigPath string) (*rest.Config, error) {
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).ClientConfig()
 }
 
+// kubeTarget names the cluster a run's clients actually talk to, so a
+// verdict can say which cluster it judged: the kubeconfig context name, plus
+// the API server URL since names like "default" or "admin@cluster" are often
+// ambiguous across kubeconfigs.
+type kubeTarget struct {
+	context   string
+	apiServer string
+}
+
+// resolveKubeTarget reads the context from the same loading rules restConfig
+// uses, and the server from the rest.Config the clients were built with.
+// Called once, next to newClientsets: clients are built once per process, so
+// a later "kubectl config use-context" doesn't change where this process
+// talks to and must not change what it reports either. Best effort — an
+// in-cluster or otherwise context-less config just reports no context.
+func resolveKubeTarget(kubeconfigPath string, cfg *rest.Config) kubeTarget {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		rules.ExplicitPath = kubeconfigPath
+	}
+	t := kubeTarget{apiServer: cfg.Host}
+	if raw, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{}).RawConfig(); err == nil {
+		t.context = raw.CurrentContext
+	}
+	return t
+}
+
 func newClientsets(kubeconfigPath string) (kubernetes.Interface, ciliumclient.Interface, *rest.Config, error) {
 	cfg, err := restConfig(kubeconfigPath)
 	if err != nil {

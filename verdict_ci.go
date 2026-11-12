@@ -133,6 +133,8 @@ func toVerdictResponse(comp *verdictComputation) verdictResponse {
 		Counts:             toCountsOut(comp.counts),
 		Rows:               make([]verdictRowOut, len(comp.rows)),
 		SkippedPolicies:    comp.skippedPolicies,
+		Context:            comp.target.context,
+		APIServer:          comp.target.apiServer,
 	}
 	for i, row := range comp.rows {
 		resp.Rows[i] = toRowOut(row, comp.rowCounts[i])
@@ -187,6 +189,9 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 		}
 	}
 	fmt.Fprintf(w, "### GuardBee verdict: `%s`\n\n%s\n\n", candidatePath, status)
+	if comp.target.context != "" {
+		fmt.Fprintf(w, "- Context: `%s` (%s)\n", comp.target.context, comp.target.apiServer)
+	}
 	fmt.Fprintf(w, "- Scope: %s%s\n", namespaceLabel(comp.namespace), filterLabel(comp.dst))
 	fmt.Fprintf(w, "- Flows: %d sampled, %d judged (%d unchanged, %d newly dropped, %d newly allowed), %d not simulated, %d replies skipped\n",
 		c.total, judgedFlows(c), c.unchanged, c.newlyDropped, c.newlyAllowed, c.notSimulated, c.replySkipped)

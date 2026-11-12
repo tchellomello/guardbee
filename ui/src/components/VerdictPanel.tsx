@@ -262,6 +262,8 @@ export function VerdictPanel({
           skippedPolicies?: string[]
           baselineRuleCount?: number
           candidateRuleCount?: number
+          context?: string
+          apiServer?: string
         }
         setRuns((prevRuns) =>
           prevRuns.map((r) => {
@@ -283,6 +285,8 @@ export function VerdictPanel({
                 flowsSampled: total,
                 baselineRuleCount: payload.baselineRuleCount ?? prev.baselineRuleCount,
                 candidateRuleCount: payload.candidateRuleCount ?? prev.candidateRuleCount,
+                context: payload.context ?? prev.context,
+                apiServer: payload.apiServer ?? prev.apiServer,
                 skippedPolicies: payload.skippedPolicies ?? prev.skippedPolicies,
               },
             }
@@ -695,6 +699,16 @@ function RunCard({
           <span className="text-[0.7rem] font-mono text-ink-faint">
             {run.timestamp.toLocaleTimeString()}
           </span>
+          {run.result.context && (
+            <span
+              title={`The cluster this run judged: kubeconfig context ${run.result.context}${
+                run.result.apiServer ? ` (${run.result.apiServer})` : ''
+              }`}
+              className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink"
+            >
+              context: {run.result.context}
+            </span>
+          )}
           <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink">
             {run.namespace ? `namespace: ${run.namespace}` : 'all namespaces'}
           </span>
