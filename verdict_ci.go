@@ -150,6 +150,7 @@ type cliVerdictOutput struct {
 	MinFlows         int      `json:"minFlows,omitempty"`
 	Result           string   `json:"result"`
 	ExitCode         int      `json:"exitCode"`
+	DurationMs       int64    `json:"durationMs"`
 }
 
 func writeVerdictJSON(w io.Writer, comp *verdictComputation, candidatePath string, replaced []string, minFlows, code int) error {
@@ -163,6 +164,7 @@ func writeVerdictJSON(w io.Writer, comp *verdictComputation, candidatePath strin
 		MinFlows:         minFlows,
 		Result:           verdictResult(code),
 		ExitCode:         code,
+		DurationMs:       comp.elapsed.Milliseconds(),
 	})
 }
 
@@ -191,6 +193,9 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 	fmt.Fprintf(w, "- Flows: %d sampled, %d judged (%d unchanged, %d newly dropped, %d newly allowed), %d not simulated, %d replies skipped\n",
 		c.total, judgedFlows(c), c.unchanged, c.newlyDropped, c.newlyAllowed, c.notSimulated, c.replySkipped)
 	fmt.Fprintf(w, "- Rules: %d candidate vs %d live\n", comp.candidateRuleCount, comp.baselineRuleCount)
+	if comp.elapsed > 0 {
+		fmt.Fprintf(w, "- Duration: %s\n", formatElapsed(comp.elapsed))
+	}
 	for _, r := range replaced {
 		fmt.Fprintf(w, "- Replaces live %s\n", r)
 	}
