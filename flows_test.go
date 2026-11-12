@@ -9,11 +9,14 @@ package main
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"testing"
+	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	v1 "github.com/cilium/cilium/pkg/hubble/api/v1"
 	"github.com/cilium/cilium/pkg/hubble/filters"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func testFlow(srcNs, srcPod, dstNs, dstPod string, dstLabels []string, dstSvc string, port uint32) *flowpb.Flow {
@@ -78,5 +81,30 @@ func TestFlowWhitelist(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// hubble-relay asks each node for Number flows and merges them, so a
+// multi-node cluster returns more than --last asked for, not necessarily in
+// order. newestFlows must hand back the newest N, oldest first.
+func TestNewestFlows(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := func(sec int, node string) *flowpb.Flow {
+		return &flowpb.Flow{Time: timestamppb.New(base.Add(time.Duration(sec) * time.Second)), NodeName: node}
+	}
+	// Two nodes' replies to Number=3, interleaved out of order.
+	merged := []*flowpb.Flow{at(5, "a"), at(1, "b"), at(6, "b"), at(2, "a"), at(4, "b"), at(3, "a")}
+
+	got := newestFlows(merged, 3)
+	var secs []int
+	for _, f := range got {
+		secs = append(secs, int(f.GetTime().AsTime().Sub(base).Seconds()))
+	}
+	if want := []int{4, 5, 6}; !slices.Equal(secs, want) {
+		t.Fatalf("newestFlows kept %v, want %v", secs, want)
+	}
+
+	if got := newestFlows([]*flowpb.Flow{at(1, "a")}, 3); len(got) != 1 {
+		t.Fatalf("fewer flows than requested should all be kept, got %d", len(got))
 	}
 }

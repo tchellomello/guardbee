@@ -368,6 +368,8 @@ type verdictStreamEvent struct {
 	// SkippedPolicies is set only on the first event, before any flow.
 	SkippedPolicies   []string `json:"skippedPolicies,omitempty"`
 	BaselineRuleCount int      `json:"baselineRuleCount,omitempty"`
+	// CandidateRuleCount is set only on the first event, like BaselineRuleCount.
+	CandidateRuleCount int `json:"candidateRuleCount,omitempty"`
 }
 
 // handleVerdictStream is the streaming counterpart to handleVerdict — same
@@ -424,7 +426,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	counts := &verdictCounts{}
 	// First event carries what the baseline load knows (rule count, skipped
 	// policies) so the UI can show it before the first flow arrives.
-	if first, err := json.Marshal(verdictStreamEvent{Counts: toCountsOut(counts), BaselineRuleCount: baselineRuleCount, SkippedPolicies: skipped}); err == nil {
+	if first, err := json.Marshal(verdictStreamEvent{Counts: toCountsOut(counts), BaselineRuleCount: baselineRuleCount, CandidateRuleCount: len(candidateRules), SkippedPolicies: skipped}); err == nil {
 		fmt.Fprintf(w, "data: %s\n\n", first)
 		flusher.Flush()
 	}
