@@ -41,8 +41,11 @@ package main
 //     return traffic as NEWLY_DROPPED.
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -52,6 +55,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/pflag"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -80,6 +84,7 @@ type verdictCounts struct {
 func runVerdict(args []string) {
 	fs := pflag.NewFlagSet("verdict", pflag.ExitOnError)
 	flags := registerCommonFlags(fs)
+	dst := registerDestinationFlags(fs)
 	var last uint64
 	var follow bool
 	var showUnchanged bool
@@ -87,7 +92,7 @@ func runVerdict(args []string) {
 	fs.BoolVarP(&follow, "follow", "f", false, "keep judging new flows until Ctrl+C, instead of stopping after --last")
 	fs.BoolVar(&showUnchanged, "show-unchanged", false, "also print UNCHANGED rows (deduplicated and grouped last), not just what changed")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--last N] [-f] <candidate.yaml>
+		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port ...] [--last N] [-f] <candidate.yaml>
 
 Diffs a candidate CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy against
 today's live policy state, judging real recent Hubble flows against both.
@@ -102,12 +107,18 @@ omit --namespace (or pass --all-namespaces) so flows are sampled cluster-wide
 — otherwise a regression in a namespace the CCNP also touches, but that you
 didn't pass to --namespace, would go completely unsampled and unreported.
 
+--to-pod/--to-service/--to-label/--to-port judge only flows going to that
+destination (hubble observe's semantics, applied in Hubble's query, so all
+--last flows are ones that go there). Anything the candidate does to other
+destinations is then not sampled at all: narrow to investigate, not to
+sign off on a policy.
+
 %[2]s
 
 Flags:
 `, binName, numberFlagHelp)
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s verdict -n myapp examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --last 200 examples/myapp-wrong-port.yaml\n  %[1]s verdict -n myapp --follow examples/myapp-merge-ready.yaml\n  %[1]s verdict --all-namespaces examples/ccnp-coredns-merge-ready.yaml\n  %[1]s verdict -n myapp --show-unchanged examples/myapp-merge-ready.yaml\n", binName)
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s verdict -n myapp examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --last 200 examples/myapp-wrong-port.yaml\n  %[1]s verdict -n myapp --follow examples/myapp-merge-ready.yaml\n  %[1]s verdict --all-namespaces examples/ccnp-coredns-merge-ready.yaml\n  %[1]s verdict -n myapp --show-unchanged examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 examples/myapp-merge-ready.yaml\n", binName)
 	}
 	_ = fs.Parse(args)
 	namespace := flags.resolveNamespace()
@@ -144,12 +155,12 @@ Flags:
 	counts := &verdictCounts{}
 
 	if follow {
-		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s — streaming flows live, Ctrl+C to stop.\n\n",
-			len(candidateRules), candidatePath, baselineRuleCount, namespaceLabel(namespace))
+		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s — streaming flows live, Ctrl+C to stop.\n\n",
+			len(candidateRules), candidatePath, baselineRuleCount, namespaceLabel(namespace), filterLabel(*dst))
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		total, err := streamFlows(ctx, core, cfg, namespace, last, func(f *flowpb.Flow) {
+		total, err := streamFlows(ctx, core, cfg, namespace, *dst, last, func(f *flowpb.Flow) {
 			if row := judgeFlow(logger, baseline, candidate, f, counts, showUnchanged); row != nil {
 				fmt.Println(row.line(1))
 			}
@@ -163,7 +174,7 @@ Flags:
 		return
 	}
 
-	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, last, showUnchanged)
+	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, *dst, last, showUnchanged)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
@@ -181,6 +192,7 @@ Flags:
 // only present the same one differently.
 type verdictComputation struct {
 	namespace                             string
+	dst                                   destinationFilter // flows were narrowed to this destination, see destinationFilter
 	candidateRuleCount, baselineRuleCount int
 	flowsRequested                        uint64
 	flowsSampled                          int
@@ -197,7 +209,7 @@ type verdictComputation struct {
 // for) — this wrapper exists for callers that just want one answer with no
 // engine lifecycle to manage themselves, namely the "ui" subcommand's HTTP
 // API (see ui.go).
-func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, candidateRules api.Rules, last uint64, showUnchanged bool) (*verdictComputation, error) {
+func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, dst destinationFilter, candidateRules api.Rules, last uint64, showUnchanged bool) (*verdictComputation, error) {
 	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
 	if err != nil {
 		return nil, err
@@ -205,7 +217,7 @@ func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliu
 	defer baseline.close(logger)
 	defer candidate.close(logger)
 
-	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, last, showUnchanged)
+	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, dst, last, showUnchanged)
 	if err != nil {
 		return nil, err
 	}
@@ -261,8 +273,8 @@ func warnSkippedBaseline(skipped []string) {
 // the one-shot counterpart to runVerdict's --follow loop — same judging
 // logic (judgeFlow), batched instead of streamed, and reusable by both the
 // CLI and the "ui" subcommand's HTTP API.
-func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, core kubernetes.Interface, cfg *rest.Config, namespace string, last uint64, showUnchanged bool) (*verdictComputation, error) {
-	flows, err := fetchFlows(core, cfg, namespace, last)
+func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, core kubernetes.Interface, cfg *rest.Config, namespace string, dst destinationFilter, last uint64, showUnchanged bool) (*verdictComputation, error) {
+	flows, err := fetchFlows(core, cfg, namespace, dst, last)
 	if err != nil {
 		return nil, fmt.Errorf("tapping flows: %w", err)
 	}
@@ -287,6 +299,7 @@ func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, cor
 
 	comp := &verdictComputation{
 		namespace:      namespace,
+		dst:            dst,
 		flowsRequested: last,
 		flowsSampled:   len(flows),
 		counts:         counts,
@@ -307,22 +320,31 @@ func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, cor
 // one-shot verdict output always has.
 func printVerdictComputation(comp *verdictComputation, candidatePath string) {
 	if comp.flowsSampled == 0 {
-		fmt.Println("no flows observed for " + namespaceLabel(comp.namespace) + " in Hubble's current buffer — nothing to simulate")
+		fmt.Println("no flows observed for " + namespaceLabel(comp.namespace) + filterLabel(comp.dst) + " in Hubble's current buffer — nothing to simulate")
 		return
 	}
 
 	if uint64(comp.flowsSampled) < comp.flowsRequested {
-		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s, using %d of up to %d requested flows — that's every flow Hubble's live buffer currently holds for this scope, not a shortfall in this tool; use --follow to keep sampling over time instead of raising --last.\n\n",
-			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), comp.flowsSampled, comp.flowsRequested)
+		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s, using %d of up to %d requested flows — that's every flow Hubble's live buffer currently holds for this scope, not a shortfall in this tool; use --follow to keep sampling over time instead of raising --last.\n\n",
+			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), filterLabel(comp.dst), comp.flowsSampled, comp.flowsRequested)
 	} else {
-		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s, using %d sampled flows.\n\n",
-			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), comp.flowsSampled)
+		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s, using %d sampled flows.\n\n",
+			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), filterLabel(comp.dst), comp.flowsSampled)
 	}
 
 	for i, row := range comp.rows {
 		fmt.Println(row.line(comp.rowCounts[i]))
 	}
 	printVerdictSummary(comp.counts)
+}
+
+// filterLabel is the " (only flows --to-pod x …)" suffix for the CLI's
+// summary lines, or "" when no destination filter is set.
+func filterLabel(d destinationFilter) string {
+	if d.empty() {
+		return ""
+	}
+	return " (only flows " + d.String() + ")"
 }
 
 // verdictRow is one reportable verdict change — NEWLY_DROPPED/NEWLY_ALLOWED
@@ -334,6 +356,36 @@ type verdictRow struct {
 	src, dst string
 	proto    string
 	port     uint16
+	// side says which half of the verdict actually flipped between
+	// baseline and candidate: "ingress" (destination's policy), "egress"
+	// (source's policy), "both", or "" for UNCHANGED. It's read straight off
+	// the engine's own two isAllowed/isEgressAllowed answers, so the UI can
+	// tell which workload a fix has to select without guessing from
+	// namespaces. Not part of key(): it's fully determined by the same
+	// identities/port the key already carries.
+	side string
+	// srcLabels/dstLabels are the flow endpoints' security-identity labels
+	// exactly as Hubble reports them ("k8s:app=foo", "reserved:host", …) —
+	// the same labels identitiesFromFlows feeds the engine, i.e. what a
+	// selector really matches against. Not part of key() for the same reason
+	// side isn't.
+	srcLabels, dstLabels []string
+	// dstService is the Kubernetes Service the flow was addressed to
+	// ("ns/name", "" if none), as Hubble resolved it — what --to-service
+	// matches, so the UI can offer it as a filter suggestion. Not part of
+	// key(): one row's flows can reach the same pod with or without a
+	// Service in front, and that doesn't change the verdict.
+	dstService string
+}
+
+func serviceString(s *flowpb.Service) string {
+	if s.GetName() == "" {
+		return ""
+	}
+	if s.GetNamespace() == "" {
+		return s.GetName()
+	}
+	return s.GetNamespace() + "/" + s.GetName()
 }
 
 func (r *verdictRow) key() string {
@@ -448,8 +500,10 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		return nil
 	}
 
-	baseAllow := isAllowed(baseEpp, key) && isEgressAllowed(baseSrcEpp, egressKey)
-	candAllow := isAllowed(candEpp, key) && isEgressAllowed(candSrcEpp, egressKey)
+	baseIn, baseEg := isAllowed(baseEpp, key), isEgressAllowed(baseSrcEpp, egressKey)
+	candIn, candEg := isAllowed(candEpp, key), isEgressAllowed(candSrcEpp, egressKey)
+	baseAllow := baseIn && baseEg
+	candAllow := candIn && candEg
 
 	var change string
 	switch {
@@ -467,7 +521,21 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 	if change == "UNCHANGED" && !showUnchanged {
 		return nil
 	}
-	return &verdictRow{change: change, src: endpointString(src), dst: endpointString(dst), proto: proto, port: key.DestPort}
+	var side string
+	switch inFlipped, egFlipped := baseIn != candIn, baseEg != candEg; {
+	case change == "UNCHANGED":
+	case inFlipped && egFlipped:
+		side = "both"
+	case inFlipped:
+		side = "ingress"
+	case egFlipped:
+		side = "egress"
+	}
+	return &verdictRow{
+		change: change, src: endpointString(src), dst: endpointString(dst), proto: proto, port: key.DestPort,
+		side: side, srcLabels: src.GetLabels(), dstLabels: dst.GetLabels(),
+		dstService: serviceString(f.GetDestinationService()),
+	}
 }
 
 // changeExplanation gives a one-line, non-jargon reason for a row, printed
@@ -606,12 +674,61 @@ func parseCandidateFile(logger *slog.Logger, path, defaultNamespace string) (api
 // bytes via the same Parse() the real agent uses. Usable directly against
 // pasted/uploaded YAML (the "ui" subcommand's web form, see ui.go) without
 // needing a file on disk.
+//
+// raw may hold several "---"-separated documents, like a file passed to
+// kubectl apply -f: each is decoded/gated/Parse()d on its own and their
+// rules are judged together as one candidate. That's what lets a candidate
+// ship alongside a narrow per-workload exception policy (the UI's verdict-row
+// Allow/Deny button appends exactly that) and have Cilium's own engine
+// combine them — allows union across policies, a deny beats any allow —
+// rather than this tool merging them by hand.
 func parseCandidateYAML(logger *slog.Logger, raw []byte, defaultNamespace string) (api.Rules, error) {
-	decoded, err := decodeCandidateYAML(raw, defaultNamespace)
+	docs, err := splitYAMLDocuments(raw)
 	if err != nil {
 		return nil, err
 	}
-	return decoded.parse(logger)
+	if len(docs) == 0 {
+		// Nothing but whitespace/comments — let decodeCandidateYAML produce
+		// the same "unsupported kind" error a single empty document always did.
+		docs = [][]byte{raw}
+	}
+	var rules api.Rules
+	for i, doc := range docs {
+		decoded, err := decodeCandidateYAML(doc, defaultNamespace)
+		if err == nil {
+			var docRules api.Rules
+			docRules, err = decoded.parse(logger)
+			rules = append(rules, docRules...)
+		}
+		if err != nil {
+			if len(docs) > 1 {
+				return nil, fmt.Errorf("document %d: %w", i+1, err)
+			}
+			return nil, err
+		}
+	}
+	return rules, nil
+}
+
+// splitYAMLDocuments splits a multi-document YAML stream on "---",
+// dropping documents that are empty or comment-only.
+func splitYAMLDocuments(raw []byte) ([][]byte, error) {
+	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(raw)))
+	var docs [][]byte
+	for {
+		doc, err := reader.Read()
+		if err == io.EOF {
+			return docs, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("splitting YAML documents: %w", err)
+		}
+		var content map[string]any
+		if err := yaml.Unmarshal(doc, &content); err == nil && len(content) == 0 {
+			continue
+		}
+		docs = append(docs, doc)
+	}
 }
 
 // decodedCandidate is the raw kind/name/namespace/rule-spec a candidate

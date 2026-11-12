@@ -213,6 +213,28 @@ type verdictRequest struct {
 	CandidateYAML string `json:"candidateYAML"`
 	Last          uint64 `json:"last"`
 	ShowUnchanged bool   `json:"showUnchanged"`
+	// ToPod/ToService/ToLabel/ToPort mirror the verdict subcommand's
+	// --to-pod/--to-service/--to-label/--to-port (see destinationFilter).
+	ToPod     []string `json:"toPod,omitempty"`
+	ToService []string `json:"toService,omitempty"`
+	ToLabel   []string `json:"toLabel,omitempty"`
+	ToPort    []string `json:"toPort,omitempty"`
+}
+
+// newDestinationFilter builds a destinationFilter from form values, dropping
+// blanks: an empty form field means "no filter", whereas Hubble rejects an
+// empty pod/service name outright.
+func newDestinationFilter(pods, services, labels, ports []string) destinationFilter {
+	clean := func(vals []string) []string {
+		var out []string
+		for _, v := range vals {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	return destinationFilter{pods: clean(pods), services: clean(services), labels: clean(labels), ports: clean(ports)}
 }
 
 // verdictCountsOut/verdictRowOut/verdictResponse are JSON-friendly mirrors
@@ -237,6 +259,12 @@ type verdictRowOut struct {
 	Port        uint16 `json:"port"`
 	Count       int    `json:"count"`
 	Explanation string `json:"explanation"`
+	// Side/SourceLabels/DestinationLabels: see verdictRow.side/srcLabels/dstLabels.
+	Side              string   `json:"side,omitempty"`
+	SourceLabels      []string `json:"sourceLabels,omitempty"`
+	DestinationLabels []string `json:"destinationLabels,omitempty"`
+	// DestinationService: see verdictRow.dstService.
+	DestinationService string `json:"destinationService,omitempty"`
 }
 
 type verdictResponse struct {
@@ -270,7 +298,8 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comp, err := computeVerdict(s.logger, s.core, s.cilium, s.cfg, req.Namespace, candidateRules, req.Last, req.ShowUnchanged)
+	dst := newDestinationFilter(req.ToPod, req.ToService, req.ToLabel, req.ToPort)
+	comp, err := computeVerdict(s.logger, s.core, s.cilium, s.cfg, req.Namespace, dst, candidateRules, req.Last, req.ShowUnchanged)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("computing verdict: %v", err), http.StatusInternalServerError)
 		return
@@ -318,6 +347,11 @@ func toRowOut(row *verdictRow, count int) verdictRowOut {
 		Port:        row.port,
 		Count:       count,
 		Explanation: changeExplanation(row.change),
+
+		Side:               row.side,
+		SourceLabels:       row.srcLabels,
+		DestinationLabels:  row.dstLabels,
+		DestinationService: row.dstService,
 	}
 }
 
@@ -349,6 +383,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	namespace := q.Get("namespace")
 	candidateYAML := q.Get("candidateYAML")
 	showUnchanged := q.Get("showUnchanged") == "true"
+	dst := newDestinationFilter(q["toPod"], q["toService"], q["toLabel"], q["toPort"])
 	last := uint64(50)
 	if v := q.Get("last"); v != "" {
 		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
@@ -393,7 +428,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: %s\n\n", first)
 		flusher.Flush()
 	}
-	_, streamErr := streamFlows(r.Context(), s.core, s.cfg, namespace, last, func(f *flowpb.Flow) {
+	_, streamErr := streamFlows(r.Context(), s.core, s.cfg, namespace, dst, last, func(f *flowpb.Flow) {
 		row := judgeFlow(s.logger, baseline, candidate, f, counts, showUnchanged)
 		event := verdictStreamEvent{Counts: toCountsOut(counts)}
 		if row != nil {
@@ -447,7 +482,7 @@ func (s *uiServer) handleFlows(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	flows, err := fetchFlows(s.core, s.cfg, namespace, last)
+	flows, err := fetchFlows(s.core, s.cfg, namespace, destinationFilter{}, last)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("tapping flows: %v", err), http.StatusInternalServerError)
 		return

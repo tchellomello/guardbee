@@ -10,6 +10,11 @@ export interface VerdictRequest {
   candidateYAML: string
   last: number
   showUnchanged: boolean
+  // Destination filter, see shared/destinationFilter.ts and ui.go's verdictRequest.
+  toPod?: string[]
+  toService?: string[]
+  toLabel?: string[]
+  toPort?: string[]
 }
 
 export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'UNCHANGED'
@@ -22,6 +27,15 @@ export interface VerdictRow {
   port: number
   count: number
   explanation: string
+  // Which half of the verdict flipped (verdictRow.side in verdict.go):
+  // the destination's ingress policy, the source's egress policy, or both.
+  side?: 'ingress' | 'egress' | 'both'
+  // The endpoints' security-identity labels as Hubble reports them
+  // ("k8s:app=foo", "reserved:kube-apiserver", …).
+  sourceLabels?: string[]
+  destinationLabels?: string[]
+  // The Kubernetes Service the flow was addressed to ("ns/name"), if any.
+  destinationService?: string
 }
 
 export interface VerdictCounts {

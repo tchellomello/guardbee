@@ -4,14 +4,28 @@ import { CompatModal } from './components/CompatModal'
 import { FlowsPanel } from './components/FlowsPanel'
 import { PoliciesPanel } from './components/PoliciesPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
-import { VerdictPanel } from './components/VerdictPanel'
+import { VerdictPanel, type VerdictLoad } from './components/VerdictPanel'
+import { WorkspaceButton } from './components/WorkspaceButton'
+import { WorkspaceModal } from './components/WorkspaceModal'
 import { ThemeToggle } from './components/ThemeToggle'
 import { HomepageLink } from './components/HomepageLink'
 import { GitHubLink } from './components/GitHubLink'
 import { VersionBanner } from './components/VersionBanner'
 import { ThemeProvider } from './theme'
 import type { EditablePolicyModel } from './api'
-import { BLANK_POLICY, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
+import { BLANK_POLICY, generateCiliumNetworkPolicyYAML, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
+import {
+  WORKSPACE_STORAGE_KEY,
+  duplicateEntry,
+  loadSavedPolicies,
+  loadVerdictForm,
+  persistSavedPolicies,
+  removeEntry,
+  renameEntry,
+  saveEntry,
+  type NewSavedPolicy,
+  type SavedPolicy,
+} from './shared/workspace'
 
 type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
 
@@ -56,8 +70,9 @@ export default function App() {
 function AppContent() {
   const [tab, setTab] = useState<Tab>('flows')
   const [compatModalOpen, setCompatModalOpen] = useState(false)
-  const [verdictNamespace, setVerdictNamespace] = useState('')
-  const [verdictCandidateYAML, setVerdictCandidateYAML] = useState('')
+  const [verdictLoad, setVerdictLoad] = useState<VerdictLoad | null>(null)
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  const [savedPolicies, setSavedPolicies] = useState<SavedPolicy[]>(loadSavedPolicies)
 
   // The in-progress policy draft lives here, not inside PolicyEditorPanel,
   // so the Verdict tab can append a rule to it directly (see
@@ -82,10 +97,72 @@ function AppContent() {
     }
   }, [policyModel])
 
+  useEffect(() => {
+    persistSavedPolicies(savedPolicies)
+  }, [savedPolicies])
+
+  // Another GuardBee tab saving/deleting would otherwise be overwritten by
+  // this tab's stale list on its next save. The storage event only fires in
+  // the *other* tabs, so this can't loop.
+  useEffect(() => {
+    function handleStorage(e: StorageEvent) {
+      if (e.key === WORKSPACE_STORAGE_KEY) setSavedPolicies(loadSavedPolicies())
+    }
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [])
+
   function handleSendToVerdict(ns: string, yaml: string) {
-    setVerdictNamespace(ns)
-    setVerdictCandidateYAML(yaml)
+    setVerdictLoad({ namespace: ns, candidateYAML: yaml, token: Date.now() })
     setTab('verdict')
+  }
+
+  // Computed against the current list (not inside a state updater) so the
+  // caller learns synchronously whether it created or updated an entry.
+  function handleSavePolicy(entry: NewSavedPolicy): boolean {
+    const { list, updated } = saveEntry(savedPolicies, entry)
+    setSavedPolicies(list)
+    return updated
+  }
+
+  function handleSaveEditorDraft(name: string): boolean {
+    return handleSavePolicy({
+      name,
+      origin: 'editor',
+      candidateYAML: generateCiliumNetworkPolicyYAML(policyModel),
+      namespace: policyModel.namespace,
+      allNamespaces: policyModel.kind === 'CiliumClusterwideNetworkPolicy' && !policyModel.namespace,
+      editorModel: policyModel,
+    })
+  }
+
+  // Opening a saved entry replaces work in progress, so only ask when that
+  // work isn't itself already saved somewhere in the workspace.
+  function handleOpenInVerdict(p: SavedPolicy) {
+    const current = loadVerdictForm().candidateYAML
+    const unsaved = current.trim() && current !== p.candidateYAML && !savedPolicies.some((s) => s.candidateYAML === current)
+    if (unsaved && !window.confirm('Replace the Verdict tab\'s current (unsaved) candidate with this saved policy?')) return
+    setVerdictLoad({
+      namespace: p.namespace,
+      allNamespaces: p.allNamespaces,
+      candidateYAML: p.candidateYAML,
+      savedName: p.name,
+      token: Date.now(),
+    })
+    setWorkspaceOpen(false)
+    setTab('verdict')
+  }
+
+  function handleOpenInEditor(p: SavedPolicy) {
+    if (!p.editorModel) return
+    const current = JSON.stringify(policyModel)
+    const unsaved =
+      current !== JSON.stringify(BLANK_POLICY) && !savedPolicies.some((s) => JSON.stringify(s.editorModel) === current)
+    if (unsaved && !window.confirm('Replace the current (unsaved) Policy Editor draft with this saved policy?')) return
+    setPolicyModel(p.editorModel)
+    setOriginalLiveModel(null)
+    setWorkspaceOpen(false)
+    setTab('editor')
   }
 
   // "Edit in Policy Editor" from the Policies tab — loads a live CNP/CCNP
@@ -160,6 +237,7 @@ function AppContent() {
                 Policy Editor
               </TabButton>
             </nav>
+            <WorkspaceButton count={savedPolicies.length} onClick={() => setWorkspaceOpen(true)} />
             <CompatButton onClick={() => setCompatModalOpen(true)} />
             <HomepageLink />
             <GitHubLink />
@@ -169,6 +247,16 @@ function AppContent() {
       </header>
 
       <CompatModal isOpen={compatModalOpen} onClose={() => setCompatModalOpen(false)} />
+      <WorkspaceModal
+        isOpen={workspaceOpen}
+        onClose={() => setWorkspaceOpen(false)}
+        policies={savedPolicies}
+        onOpenInVerdict={handleOpenInVerdict}
+        onOpenInEditor={handleOpenInEditor}
+        onRename={(id, name) => setSavedPolicies((prev) => renameEntry(prev, id, name))}
+        onDuplicate={(id) => setSavedPolicies((prev) => duplicateEntry(prev, id))}
+        onDelete={(id) => setSavedPolicies((prev) => removeEntry(prev, id))}
+      />
 
       <VersionBanner />
 
@@ -179,8 +267,8 @@ function AppContent() {
             because each panel's state lives in local useState. */}
         <div className={tab === 'verdict' ? '' : 'hidden'}>
           <VerdictPanel
-            initialNamespace={verdictNamespace}
-            initialCandidateYAML={verdictCandidateYAML}
+            load={verdictLoad}
+            onSavePolicy={handleSavePolicy}
             policyNamespace={policyModel.namespace}
             onAppendRuleToPolicy={handleAppendRule}
           />
@@ -202,6 +290,7 @@ function AppContent() {
             autoSelectNodeId={autoSelectNodeId}
             onConsumeAutoSelect={() => setAutoSelectNodeId(null)}
             onSendToVerdict={handleSendToVerdict}
+            onSavePolicy={handleSaveEditorDraft}
             originalLiveModel={originalLiveModel}
             onClearOriginalLiveModel={() => setOriginalLiveModel(null)}
           />

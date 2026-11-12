@@ -8,6 +8,21 @@ import { PolicyTextModal } from './PolicyTextModal'
 import { VerdictGraph } from './VerdictGraph'
 import { VerdictHelpModal } from './VerdictHelpModal'
 import { parseNamespacePod } from '../shared/podLabels'
+import { appendPolicyDocument } from '../shared/workloadException'
+import { WorkloadExceptionMenu } from './WorkloadExceptionMenu'
+import { SaveToWorkspace } from './SaveToWorkspace'
+import { firstPolicyName, loadVerdictForm, persistVerdictForm, type NewSavedPolicy } from '../shared/workspace'
+import {
+  appendDestinationFilter,
+  describeDestinationFilter,
+  destinationFilterParams,
+  EMPTY_DESTINATION_FILTER,
+  filterSuggestions,
+  isDestinationFilterEmpty,
+  suggestionOptions,
+  type DestinationFilter,
+  type FilterSuggestions,
+} from '../shared/destinationFilter'
 import type { EgressRule, IngressRule, Protocol } from '../policy'
 
 // Visual language matches the CLI's own colorize/changeColor (colors.go):
@@ -61,14 +76,27 @@ export interface VerdictRunItem {
   last: number
   showUnchanged: boolean
   candidateYAML: string
+  filter: DestinationFilter
   isStreaming: boolean
   result: VerdictResponse
   isCollapsed?: boolean
 }
 
+// A request (from "Test in Verdict Simulator" or the workspace's "Open in
+// Verdict") to load a candidate into the form. token makes re-loading the
+// exact same content apply again — two plain string props wouldn't change,
+// so the effect wouldn't fire.
+export interface VerdictLoad {
+  namespace: string
+  allNamespaces?: boolean
+  candidateYAML: string
+  savedName?: string
+  token: number
+}
+
 export interface VerdictPanelProps {
-  initialNamespace?: string
-  initialCandidateYAML?: string
+  load?: VerdictLoad | null
+  onSavePolicy?: (entry: NewSavedPolicy) => boolean
   // The Policy Editor's in-progress draft namespace and a way to append a
   // rule to it — lets a NEWLY_DROPPED/NEWLY_ALLOWED row be turned straight
   // into a rule on that draft without retyping anything, then jumps to the
@@ -78,17 +106,24 @@ export interface VerdictPanelProps {
 }
 
 export function VerdictPanel({
-  initialNamespace,
-  initialCandidateYAML,
+  load,
+  onSavePolicy,
   policyNamespace = '',
   onAppendRuleToPolicy,
 }: VerdictPanelProps = {}) {
-  const [namespace, setNamespace] = useState(initialNamespace || '')
-  const [allNamespaces, setAllNamespaces] = useState(false)
-  const [last, setLast] = useState(50)
-  const [showUnchanged, setShowUnchanged] = useState(false)
+  // Restored from the last session (auto-saved below), so a reload doesn't
+  // throw away the candidate being worked on — appended Allow/Deny
+  // exceptions included. Runs aren't restored: they're snapshots of live
+  // traffic at that moment, and stale results would read as current.
+  const [stored] = useState(loadVerdictForm)
+  const [namespace, setNamespace] = useState(stored.namespace)
+  const [allNamespaces, setAllNamespaces] = useState(stored.allNamespaces)
+  const [last, setLast] = useState(stored.last)
+  const [showUnchanged, setShowUnchanged] = useState(stored.showUnchanged)
   const [follow, setFollow] = useState(false)
-  const [candidateYAML, setCandidateYAML] = useState(initialCandidateYAML || '')
+  const [candidateYAML, setCandidateYAML] = useState(stored.candidateYAML)
+  const [savedName, setSavedName] = useState(stored.savedName)
+  const [filter, setFilter] = useState(stored.filter)
   const [stackRuns, setStackRuns] = useState(false)
 
   const [runs, setRuns] = useState<VerdictRunItem[]>([])
@@ -106,12 +141,23 @@ export function VerdictPanel({
   const eventSourceRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
-    if (initialNamespace !== undefined) setNamespace(initialNamespace)
-  }, [initialNamespace])
+    if (!load) return
+    setNamespace(load.namespace)
+    if (load.allNamespaces !== undefined) setAllNamespaces(load.allNamespaces)
+    setCandidateYAML(load.candidateYAML)
+    setSavedName(load.savedName ?? '')
+  }, [load])
 
   useEffect(() => {
-    if (initialCandidateYAML !== undefined) setCandidateYAML(initialCandidateYAML)
-  }, [initialCandidateYAML])
+    persistVerdictForm({ namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter })
+  }, [namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter])
+
+  function handleSave(name: string): boolean {
+    const updated =
+      onSavePolicy?.({ name, origin: 'verdict', candidateYAML, namespace, allNamespaces }) ?? false
+    setSavedName(name)
+    return updated
+  }
 
   useEffect(() => () => eventSourceRef.current?.close(), [])
 
@@ -136,6 +182,8 @@ export function VerdictPanel({
     setShowUnchanged(false)
     setFollow(false)
     setCandidateYAML('')
+    setSavedName('')
+    setFilter(EMPTY_DESTINATION_FILTER)
   }
 
   function handleClearResults() {
@@ -150,6 +198,7 @@ export function VerdictPanel({
     setLast(run.last)
     setShowUnchanged(run.showUnchanged)
     setCandidateYAML(run.candidateYAML)
+    setFilter(run.filter)
     setStackRuns(true)
   }
 
@@ -181,6 +230,7 @@ export function VerdictPanel({
         last,
         showUnchanged,
         candidateYAML,
+        filter,
         isStreaming: true,
         result: {
           namespace: ns,
@@ -201,6 +251,7 @@ export function VerdictPanel({
         showUnchanged: String(showUnchanged),
       })
       if (ns) params.set('namespace', ns)
+      appendDestinationFilter(params, filter)
       const es = new EventSource(`/api/verdict/stream?${params}`)
       eventSourceRef.current = es
 
@@ -254,26 +305,46 @@ export function VerdictPanel({
       return
     }
 
+    await runOneShot({ namespace: ns, allNamespaces, last, showUnchanged, candidateYAML, filter }, stackRuns)
+  }
+
+  async function runOneShot(
+    params: Pick<VerdictRunItem, 'namespace' | 'allNamespaces' | 'last' | 'showUnchanged' | 'candidateYAML' | 'filter'>,
+    stack: boolean
+  ) {
     setLoading(true)
+    setError(null)
     try {
-      const res = await runVerdict({ namespace: ns, candidateYAML, last, showUnchanged })
+      const res = await runVerdict({
+        namespace: params.namespace,
+        candidateYAML: params.candidateYAML,
+        last: params.last,
+        showUnchanged: params.showUnchanged,
+        ...destinationFilterParams(params.filter),
+      })
       const newRun: VerdictRunItem = {
-        id: runId,
+        ...params,
+        id: `run-${Date.now()}`,
         timestamp: new Date(),
-        namespace: ns,
-        allNamespaces,
-        last,
-        showUnchanged,
-        candidateYAML,
         isStreaming: false,
         result: res,
       }
-      setRuns((prev) => (stackRuns ? [newRun, ...prev] : [newRun]))
+      setRuns((prev) => (stack ? [newRun, ...prev] : [newRun]))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
+  }
+
+  // A row's Allow/Deny exception: appended to the candidate that produced
+  // that run, loaded back into the form, and re-judged right away as a new
+  // stacked run — so the previous run stays visible for comparison.
+  async function handleAddException(run: VerdictRunItem, policyYAML: string) {
+    stopStreaming()
+    const next = { ...run, candidateYAML: appendPolicyDocument(run.candidateYAML, policyYAML) }
+    handleDuplicateToForm(next)
+    await runOneShot(next, true)
   }
 
   // Selection is decided server-side by Cilium's own engine, not by
@@ -328,6 +399,12 @@ export function VerdictPanel({
                 <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
               </div>
             </div>
+
+            <DestinationFilterFields
+              filter={filter}
+              onChange={setFilter}
+              suggestions={filterSuggestions(runs.flatMap((r) => r.result.rows))}
+            />
 
             <div className="h-px bg-line" />
 
@@ -421,6 +498,7 @@ export function VerdictPanel({
               onToggleCollapse={handleToggleCollapse}
               policyNamespace={policyNamespace}
               onAppendRuleToPolicy={onAppendRuleToPolicy}
+              onAddException={(yaml) => handleAddException(run, yaml)}
             />
           ))}
         </div>
@@ -430,15 +508,30 @@ export function VerdictPanel({
           <div className="rise-in space-y-3 border border-line bg-panel p-5">
             <div className="flex items-center justify-between">
               <SectionLabel>Candidate policy</SectionLabel>
-              <button
-                type="button"
-                onClick={() => setExpandedEditorOpen(true)}
-                title="Open a wider editor to hand-edit this policy"
-                className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer"
-              >
-                ⤢ Expand
-              </button>
+              <div className="flex shrink-0 items-center gap-3 pl-3">
+                {onSavePolicy && (
+                  <SaveToWorkspace
+                    defaultName={savedName || firstPolicyName(candidateYAML) || 'candidate'}
+                    disabled={!candidateYAML.trim()}
+                    onSave={handleSave}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setExpandedEditorOpen(true)}
+                  title="Open a wider editor to hand-edit this policy"
+                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer"
+                >
+                  ⤢ Expand
+                </button>
+              </div>
             </div>
+            {savedName && (
+              <p className="-mt-1 text-[0.65rem] text-ink-faint">
+                Workspace entry: <span className="font-mono text-ink-dim">{savedName}</span> (edits auto-save
+                in this browser; 💾 Save updates the entry)
+              </p>
+            )}
 
             {/* Run/Reset above the YAML box, not below it — with a long
                 candidate policy the box itself can run well past the fold,
@@ -538,6 +631,7 @@ function RunCard({
   onToggleCollapse,
   policyNamespace,
   onAppendRuleToPolicy,
+  onAddException,
 }: {
   run: VerdictRunItem
   runNumber: number
@@ -547,6 +641,7 @@ function RunCard({
   onToggleCollapse: (id: string) => void
   policyNamespace: string
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
+  onAddException: (policyYAML: string) => void
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
   const [exportCopied, setExportCopied] = useState(false)
@@ -604,6 +699,14 @@ function RunCard({
           <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
             last: {run.last}
           </span>
+          {!isDestinationFilterEmpty(run.filter) && (
+            <span
+              title="Only flows to this destination were fetched and judged. Anything the candidate does to other destinations isn't in this run."
+              className="border border-signal/40 bg-signal/5 px-2 py-0.5 font-mono text-[0.7rem] text-signal"
+            >
+              only to: {describeDestinationFilter(run.filter)}
+            </span>
+          )}
         </div>
 
         {/* Housekeeping, not the headline signal — kept as plain text/icon
@@ -811,13 +914,17 @@ function RunCard({
                       <td className="px-3 py-2 text-xs text-ink-faint">{row.count > 1 ? `${row.count}×` : '—'}</td>
                       <td className="px-3 py-2 text-xs text-ink-dim">{row.explanation}</td>
                       <td className="px-3 py-2">
-                        {row.change !== 'UNCHANGED' && onAppendRuleToPolicy && (
-                          <AddToPolicyButton
-                            row={row}
-                            policyNamespace={policyNamespace}
-                            onAppend={onAppendRuleToPolicy}
-                          />
-                        )}
+                        <div className="flex items-center gap-2">
+                          {/* Not while streaming: the exception re-runs one-shot, which would end the live stream. */}
+                          {!run.isStreaming && <WorkloadExceptionMenu row={row} onAddException={onAddException} />}
+                          {row.change !== 'UNCHANGED' && onAppendRuleToPolicy && (
+                            <AddToPolicyButton
+                              row={row}
+                              policyNamespace={policyNamespace}
+                              onAppend={onAppendRuleToPolicy}
+                            />
+                          )}
+                        </div>
                       </td>
                     </tr>
                     )
@@ -829,6 +936,89 @@ function RunCard({
         </div>
       )}
     </div>
+  )
+}
+
+// A <details> so the filter stays out of the way until wanted, but opens by
+// itself when one is set (e.g. restored after a reload): a filter that's
+// active but hidden would make a run look like it saw all traffic.
+//
+// Each field suggests destinations from the runs below (a native <datalist>:
+// type to narrow, or pick from the dropdown), so a destination seen in the
+// results can be filtered on without retyping it.
+function DestinationFilterFields({
+  filter,
+  onChange,
+  suggestions,
+}: {
+  filter: DestinationFilter
+  onChange: (f: DestinationFilter) => void
+  suggestions: FilterSuggestions
+}) {
+  const active = !isDestinationFilterEmpty(filter)
+  const hasSuggestions = Object.values(suggestions).some((s) => s.length > 0)
+  const input = (key: keyof DestinationFilter, label: string, placeholder: string) => {
+    const listId = `verdict-filter-${key}`
+    // A label selector can contain commas itself (see splitList), so only
+    // the other fields complete as a comma-separated list.
+    const options = suggestionOptions(filter[key], suggestions[key], key !== 'toLabel').slice(0, 50)
+    return (
+      <Field label={label}>
+        <input
+          value={filter[key]}
+          onChange={(e) => onChange({ ...filter, [key]: e.target.value })}
+          placeholder={placeholder}
+          spellCheck={false}
+          autoComplete="off"
+          list={options.length ? listId : undefined}
+          className="w-full border border-line bg-void px-3 py-2 font-mono text-xs text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none"
+        />
+        {options.length > 0 && (
+          <datalist id={listId}>
+            {options.map((o) => (
+              <option key={o} value={o} />
+            ))}
+          </datalist>
+        )}
+      </Field>
+    )
+  }
+  return (
+    <details open={active || undefined} className="group space-y-3">
+      <summary className="flex cursor-pointer list-none items-center justify-between text-[0.65rem] font-semibold tracking-[0.12em] text-ink-dim uppercase hover:text-ink">
+        <span>
+          <span className="inline-block transition-transform group-open:rotate-90">▸</span> Destination filter
+          {active ? <span className="ml-2 normal-case tracking-normal text-signal">{describeDestinationFilter(filter)}</span> : ' (optional)'}
+        </span>
+        {active && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              onChange(EMPTY_DESTINATION_FILTER)
+            }}
+            className="cursor-pointer font-display text-[0.65rem] font-bold tracking-wider text-ink-faint hover:text-drop"
+          >
+            Clear
+          </button>
+        )}
+      </summary>
+      <p className="text-[0.7rem] leading-relaxed text-ink-faint">
+        Judge only flows going to this destination. Hubble filters them before sampling, so all <em>Last</em> flows
+        go there. Same as the CLI's <code>--to-pod</code>/<code>--to-service</code>/<code>--to-label</code>/
+        <code>--to-port</code>. Fields combine with AND; commas separate alternatives. Flows to other destinations
+        aren't judged at all, so use this to investigate, not to sign off on a policy.{' '}
+        {hasSuggestions
+          ? 'Fields suggest destinations seen in the runs below.'
+          : 'After a run, fields suggest the destinations it saw (turn on Show unchanged to include unchanged traffic).'}
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        {input('toPod', 'To pod', '[namespace/]name-prefix')}
+        {input('toService', 'To service', '[namespace/]service')}
+        {input('toLabel', 'To label', 'k8s:app=db or reserved:kube-apiserver')}
+        {input('toPort', 'To port', '443, 5432')}
+      </div>
+    </details>
   )
 }
 
