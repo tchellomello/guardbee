@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -138,7 +139,24 @@ func fetchFlows(core kubernetes.Interface, cfg *rest.Config, namespace string, d
 			flows = append(flows, f)
 		}
 	}
-	return flows, nil
+	return newestFlows(flows, number), nil
+}
+
+// newestFlows keeps the `number` most recent flows, in time order.
+// hubble-relay forwards GetFlowsRequest.Number to every node and merges the
+// replies (pkg/hubble/relay/observer/server.go), so a 4-node cluster
+// answers --last 50 with up to 200 flows. Each node's reply is its own
+// newest N, so the newest N of the merged set is exactly the cluster-wide
+// last N that --last promises. Sorted here rather than trusting the relay's
+// merge order, which is only best-effort within its drain timeout.
+func newestFlows(flows []*flowpb.Flow, number uint64) []*flowpb.Flow {
+	sort.SliceStable(flows, func(i, j int) bool {
+		return flows[i].GetTime().AsTime().Before(flows[j].GetTime().AsTime())
+	})
+	if uint64(len(flows)) > number {
+		flows = flows[uint64(len(flows))-number:]
+	}
+	return flows
 }
 
 // streamFlows taps `number` recent flows and then keeps streaming new ones
@@ -147,7 +165,10 @@ func fetchFlows(core kubernetes.Interface, cfg *rest.Config, namespace string, d
 // owns ctx's cancellation policy — the CLI cancels on Ctrl+C
 // (signal.NotifyContext), the "ui" subcommand's SSE handler cancels on
 // client disconnect (the request's own context) — streamFlows itself has no
-// opinion on why it was asked to stop.
+// opinion on why it was asked to stop. Unlike fetchFlows, the initial
+// backlog isn't trimmed to `number`: hubble-relay asks every node for
+// `number` (see newestFlows), and a stream can't tell where the backlog
+// ends and live flows begin, so up to `number` per node arrive first.
 func streamFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Config, namespace string, dst destinationFilter, number uint64, onFlow func(*flowpb.Flow)) (int, error) {
 	client, closeFn, err := dialHubble(core, cfg)
 	if err != nil {

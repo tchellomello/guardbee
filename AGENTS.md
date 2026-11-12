@@ -97,6 +97,12 @@ Consequences that follow directly from this, non-negotiably:
 - **Hubble buffer semantics.** `GetFlows` samples a shared, cluster-wide
   bounded ring buffer, not a per-namespace one — counts drift run-to-run;
   this is what the `--last`-is-a-ceiling behavior above is actually about.
+- **Relay's `Number` is per node.** hubble-relay forwards
+  `GetFlowsRequest.Number` to every node and merges the replies, so
+  `--last 50` on a 4-node cluster came back with up to 200 flows ("200/50
+  flows sampled"). `fetchFlows` keeps the newest N (`newestFlows`);
+  `--follow`'s initial backlog can't be trimmed the same way and may be
+  up to N per node.
 
 ## Known v1 simplifications (intentional, documented in code — don't "fix" silently)
 

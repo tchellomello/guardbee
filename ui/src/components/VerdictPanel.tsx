@@ -261,6 +261,7 @@ export function VerdictPanel({
           counts: VerdictResponse['counts']
           skippedPolicies?: string[]
           baselineRuleCount?: number
+          candidateRuleCount?: number
         }
         setRuns((prevRuns) =>
           prevRuns.map((r) => {
@@ -281,6 +282,7 @@ export function VerdictPanel({
                 counts: { ...payload.counts, total },
                 flowsSampled: total,
                 baselineRuleCount: payload.baselineRuleCount ?? prev.baselineRuleCount,
+                candidateRuleCount: payload.candidateRuleCount ?? prev.candidateRuleCount,
                 skippedPolicies: payload.skippedPolicies ?? prev.skippedPolicies,
               },
             }
