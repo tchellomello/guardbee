@@ -61,8 +61,12 @@ bash lab/scripts/lab-up.sh
 
 echo
 echo "=== lab-validate: engine version ==="
-"./$bin" version
-if ! "./$bin" version | grep -qF "cilium engine ${pinned} (pinned)"; then
+# Captured, not piped into grep -q: grep exits on its first match, and
+# under pipefail the SIGPIPE `version` then gets writing its later
+# (cluster) line fails the whole check despite a correct engine line.
+out=$("./$bin" version --kubeconfig "$kubeconfig")
+echo "$out"
+if ! grep -qF "cilium engine ${pinned} (pinned)" <<<"$out"; then
 	echo "FAIL: binary doesn't report engine ${pinned} — stale build?" >&2
 	exit 1
 fi
