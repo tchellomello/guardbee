@@ -158,6 +158,7 @@ colors.go         ANSI color helpers (NO_COLOR-aware, terminal-detecting)
 clusterversion.go runtime Cilium-version detection + skew warning (CLI stderr / GET /api/version)
 compat.go         `compat` subcommand + version-gated policy construct table (GET /api/compat)
 scripts/compat-scan.sh  manual discovery aid for new compat.go gates — diffs Cilium versions, see AGENTS.md above
+flake.nix, nix/package.nix  Nix flake users install from (docs/guide/install.md); package.nix's npmDepsHash/vendorHash go stale on any go.sum or ui/package-lock.json change — `mise run nix-hashes` (bump-cilium runs it), CI "nix" job fails a stale one
 kubernetes/rbac.yaml  read-only ServiceAccount/ClusterRole for the CLI's own access, validated live
 templates/        generic/ingress/egress CiliumNetworkPolicy YAML presets (real, standalone CNPs)
 examples/         ready-to-run candidate policies matching the self-paced Lab's scenario, plus generic patterns

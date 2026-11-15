@@ -57,6 +57,16 @@ and **[how verdict works](https://tchellomello.github.io/guardbee/guide/how-it-w
 for flag-by-flag detail, known v1 simplifications, and two real
 regressions it caught.
 
+## Install
+
+- **Release binary**: Linux and macOS tarballs on the
+  [releases page](https://github.com/tchellomello/guardbee/releases).
+- **Nix / NixOS**: the repo is a flake. Try `nix run github:tchellomello/guardbee -- version`,
+  or add it as an input to your system flake. See
+  **[Install](https://tchellomello.github.io/guardbee/guide/install.html)**
+  for NixOS, Home Manager and `nix profile`.
+- **From source**: `mise run build` (see below).
+
 ## Quickstart
 
 ```

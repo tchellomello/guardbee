@@ -93,6 +93,10 @@ run = "bash scripts/compat-scan.sh \"$@\""
 description = "Bump the pinned Cilium version everywhere it's hand-maintained (go.mod, globals.go, lab-up.sh), print the compat-scan report, run check. Usage: mise run bump-cilium <vX.Y.Z> [--lab]. --lab also runs lab-validate. Leaves gate review and real-cluster validation to you — see AGENTS.md."
 run = "bash scripts/bump-cilium.sh \"$@\""
 
+[tasks.nix-hashes]
+description = "Recompute nix/package.nix's npmDepsHash and vendorHash after a dependency change (bump-cilium runs this for you). Needs nix; skips without it."
+run = "bash scripts/nix-hashes.sh"
+
 [tasks.lab-validate]
 description = "Create a fresh lab, assert the lab guide's known verdicts against the built binary (looks-correct regresses, merge-ready passes), then delete the lab. Refuses to reuse an existing lab."
 depends = ["build"]

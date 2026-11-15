@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Mechanical half of a Cilium version bump: moves every hand-maintained pin
 # (go.mod, globals.go's pinnedCiliumVersion, lab-up.sh's CILIUM_VERSION —
-# the three pin_test.go's TestCiliumPinsAgree holds together), prints the
+# the three pin_test.go's TestCiliumPinsAgree holds together), refreshes
+# the flake's dependency hashes (scripts/nix-hashes.sh), prints the
 # compat-scan report, then runs the full `mise run check`.
 #
 # Deliberately stops there. The two steps that actually make a bump safe
@@ -55,6 +56,8 @@ go get "github.com/cilium/cilium@v${NEW}"
 go mod tidy
 sed -i "s/^const pinnedCiliumVersion = \"${OLD}\"/const pinnedCiliumVersion = \"${NEW}\"/" globals.go
 sed -i "s/^CILIUM_VERSION=\"${OLD}\"/CILIUM_VERSION=\"${NEW}\"/" lab/scripts/lab-up.sh
+# go.sum just changed, so the flake's vendorHash did too.
+bash scripts/nix-hashes.sh
 git --no-pager diff --stat
 
 echo

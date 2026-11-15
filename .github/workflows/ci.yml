@@ -32,6 +32,33 @@ jobs:
       - name: mise run check
         run: mise run check
 
+  # The flake users install from (nix/package.nix). Its two dependency
+  # hashes go stale on any go.sum or ui/package-lock.json change, and a
+  # stale hash only shows up as a failed `nixos-rebuild` for every user
+  # after merge — so it fails the PR here instead, naming the fix. Make
+  # this a required check in branch protection: a stale hash that merges
+  # anyway is exactly the failure this job exists to stop.
+  nix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: nix build
+        run: |
+          if ! nix build .#guardbee -L; then
+            echo "::error::nix build failed. If it's a hash mismatch, run 'mise run nix-hashes' and commit nix/package.nix."
+            exit 1
+          fi
+
+      - name: Smoke-test the built binary
+        run: |
+          ./result/bin/guardbee version --client
+          ./result/bin/guardbee version --client | grep -q "cilium engine"
+          test -f result/share/bash-completion/completions/guardbee.bash
+
   # End-to-end: the built binary against a real Cilium (lab-up.sh's
   # CILIUM_VERSION, which pin_test.go keeps equal to go.mod's pin) in a
   # disposable kind cluster, asserting the lab guide's known verdicts —
