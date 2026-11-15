@@ -133,3 +133,55 @@ func TestHandlePolicyParseDenyRoundTripFit(t *testing.T) {
 		t.Fatalf("icmp deny: want valid+lossy, got %+v", r)
 	}
 }
+
+// A "---"-separated paste holds more than one policy; the editor model holds
+// one. It must come back valid but Lossy with the document count, never as a
+// plain valid parse of the first policy (which silently dropped the rest).
+// An invalid later document must fail the whole paste, as it would in verdict.
+func TestHandlePolicyParseMultiDocumentIsLossy(t *testing.T) {
+	srv := &uiServer{logger: slog.Default()}
+	parse := func(y string) policyParseResponse {
+		body, _ := json.Marshal(policyValidateRequest{Namespace: "default", CandidateYAML: y})
+		w := httptest.NewRecorder()
+		srv.handlePolicyParse(w, httptest.NewRequest(http.MethodPost, "/api/policy/parse", bytes.NewReader(body)))
+		var resp policyParseResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshaling response: %v", err)
+		}
+		return resp
+	}
+	doc := func(name string) string {
+		return "apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: " + name +
+			"\n  namespace: default\nspec:\n  endpointSelector:\n    matchLabels:\n      app: " + name +
+			"\n  ingress:\n    - fromEndpoints:\n        - matchLabels:\n            app: web\n"
+	}
+
+	two := parse(doc("first") + "---\n" + doc("second"))
+	if !two.Valid || !two.Lossy || two.Documents != 2 || two.Policy == nil || two.Policy.Name != "first" {
+		t.Fatalf("two documents: want valid, lossy, documents=2, policy=first; got %+v", two)
+	}
+	single := parse(doc("only"))
+	if !single.Valid || single.Lossy || single.Documents != 0 {
+		t.Fatalf("one document: want valid, not lossy, no document count; got %+v", single)
+	}
+	broken := parse(doc("first") + "---\nkind: CiliumNetworkPolicy\nspec: [\n")
+	if broken.Valid {
+		t.Fatalf("invalid second document: want invalid, got %+v", broken)
+	}
+}
+
+// ?client=1 is the header's fast path: binary + pinned version without any
+// cluster call. A uiServer with no clients proves it never reaches detection
+// (which would dereference them).
+func TestHandleVersionClientSkipsCluster(t *testing.T) {
+	srv := &uiServer{logger: slog.Default()}
+	w := httptest.NewRecorder()
+	srv.handleVersion(w, httptest.NewRequest(http.MethodGet, "/api/version?client=1", nil))
+	var resp versionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshaling response: %v", err)
+	}
+	if resp.Binary != version || resp.Pinned != pinnedCiliumVersion || !resp.Unknown {
+		t.Fatalf("want binary=%q pinned=%q unknown, got %+v", version, pinnedCiliumVersion, resp)
+	}
+}

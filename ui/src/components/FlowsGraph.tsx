@@ -22,6 +22,8 @@ import {
 import '@xyflow/react/dist/style.css'
 import type { Flow } from '../api'
 import { useTheme } from '../theme'
+import { graphTooLarge } from '../shared/graphBudget'
+import { GraphPlaceholder } from './GraphPlaceholder'
 import { NodeLabelsPanel } from './NodeLabelsPanel'
 
 const EDGE_COLORS: Record<'dark' | 'light', Record<string, string>> = {
@@ -227,7 +229,36 @@ interface FlowsGraphProps {
   onSelectNode: (id: string | null) => void
 }
 
-export function FlowsGraph({ flows, selectedNodeId, onSelectNode }: FlowsGraphProps) {
+// Size guard in front of the canvas: counts the exact nodes/edges buildGraph
+// would produce and, past the limit, shows a placeholder instead of mounting
+// React Flow (see shared/graphBudget.ts). A separate component rather than an
+// early return inside the canvas, because the canvas measures its container
+// once on mount — a container that only appears after "Draw anyway" would
+// never be measured.
+export function FlowsGraph({ hints, ...props }: FlowsGraphProps & { hints?: string[] }) {
+  const { theme } = useTheme()
+  const [drawAnyway, setDrawAnyway] = useState(false)
+  const size = useMemo(() => {
+    const g = buildGraph(props.flows, theme, 0)
+    return { nodes: g.initialNodes.length, edges: g.initialEdges.length }
+  }, [props.flows, theme])
+
+  if (props.flows.length === 0) return null
+  if (!drawAnyway && graphTooLarge(size.nodes, size.edges)) {
+    return (
+      <GraphPlaceholder
+        reason="tooLarge"
+        nodes={size.nodes}
+        edges={size.edges}
+        hints={hints}
+        onDraw={() => setDrawAnyway(true)}
+      />
+    )
+  }
+  return <FlowsGraphCanvas {...props} />
+}
+
+function FlowsGraphCanvas({ flows, selectedNodeId, onSelectNode }: FlowsGraphProps) {
   const { theme } = useTheme()
 
   // Container ref so column X-positions can be derived from the actual

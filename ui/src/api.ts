@@ -251,6 +251,9 @@ export interface PolicyParseResult {
   // ingressDeny/egressDeny the editor model can't express) — callers must
   // keep the user's text rather than regenerate it from `policy`.
   lossy?: boolean
+  // Set (> 1) for a "---"-separated paste: `policy` is only the first one,
+  // and the paste is always lossy for the single-policy editor.
+  documents?: number
   error?: string
 }
 
@@ -269,6 +272,7 @@ export function parsePolicy(namespace: string, candidateYAML: string): Promise<P
 // with Unknown and with each other (see clusterversion.go's
 // clusterVersionState).
 export interface VersionInfo {
+  binary: string
   pinned: string
   detected?: string
   skewed: boolean
@@ -279,6 +283,12 @@ export interface VersionInfo {
 
 export function fetchVersion(): Promise<VersionInfo> {
   return fetch('/api/version').then((res) => parseErrorOrJSON<VersionInfo>(res))
+}
+
+// Binary + pinned engine only, no cluster round trip (?client=1) — fast
+// enough for the header on page load.
+export function fetchClientVersion(): Promise<VersionInfo> {
+  return fetch('/api/version?client=1').then((res) => parseErrorOrJSON<VersionInfo>(res))
 }
 
 // CompatGate/CompatResponse back GET /api/compat — compat.go's featureGates

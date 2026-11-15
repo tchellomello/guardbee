@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchPods, fetchPolicyWorkloads, runVerdict, type WorkloadsResult, type VerdictChange, type VerdictResponse, type VerdictRow } from '../api'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { groupRows } from '../shared/groupRows'
@@ -25,6 +25,8 @@ import {
   type FilterSuggestions,
 } from '../shared/destinationFilter'
 import type { EgressRule, IngressRule, Protocol } from '../policy'
+import { runsWithLiveGraphs } from '../shared/graphBudget'
+import { GraphPlaceholder } from './GraphPlaceholder'
 
 // Visual language matches the CLI's own colorize/changeColor (colors.go):
 // red for NEWLY_DROPPED, amber for NEWLY_ALLOWED, green for UNCHANGED —
@@ -131,6 +133,7 @@ export function VerdictPanel({
   const [stackRuns, setStackRuns] = useState(false)
 
   const [runs, setRuns] = useState<VerdictRunItem[]>([])
+  const liveGraphRuns = useMemo(() => runsWithLiveGraphs(runs), [runs])
   const [loading, setLoading] = useState(false)
   const [loadingSince, setLoadingSince] = useState<number | null>(null)
   const loadingElapsedMs = useElapsedMs(loadingSince)
@@ -518,6 +521,7 @@ export function VerdictPanel({
             <RunCard
               key={run.id}
               run={run}
+              graphLive={liveGraphRuns.has(run.id)}
               runNumber={runs.length - runIndex}
               onOpenHelp={openHelp}
               onDuplicate={handleDuplicateToForm}
@@ -665,8 +669,16 @@ function RunDuration({ run }: { run: VerdictRunItem }) {
   )
 }
 
+const VERDICT_GRAPH_HINTS = [
+  'pick a single namespace instead of all namespaces',
+  'add a destination filter',
+  'turn off Show unchanged',
+  'lower Last',
+]
+
 function RunCard({
   run,
+  graphLive,
   runNumber,
   onOpenHelp,
   onDuplicate,
@@ -677,6 +689,9 @@ function RunCard({
   onAddException,
 }: {
   run: VerdictRunItem
+  // False for an older stacked run past LIVE_GRAPH_RUN_LIMIT (see
+  // shared/graphBudget.ts): its graph waits behind a "Show graph" button.
+  graphLive: boolean
   runNumber: number
   onOpenHelp: (cat: string) => void
   onDuplicate: (run: VerdictRunItem) => void
@@ -688,6 +703,7 @@ function RunCard({
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
   const [exportCopied, setExportCopied] = useState(false)
+  const [showPausedGraph, setShowPausedGraph] = useState(false)
   const [tableCopied, setTableCopied] = useState(false)
   // Per run card, not a form option: grouping is a view over rows already
   // received, so it applies to a live stream and to finished runs alike.
@@ -896,11 +912,18 @@ function RunCard({
           )}
 
           {/* Flow Graph with interactive selection and anti-collision labels */}
-          <VerdictGraph
-            rows={result.rows}
-            selectedNodeId={selectedGraphNode}
-            onSelectNode={setSelectedGraphNode}
-          />
+          {graphLive || showPausedGraph ? (
+            <VerdictGraph
+              rows={result.rows}
+              selectedNodeId={selectedGraphNode}
+              onSelectNode={setSelectedGraphNode}
+              hints={VERDICT_GRAPH_HINTS}
+            />
+          ) : (
+            result.rows.length > 0 && (
+              <GraphPlaceholder reason="paused" onDraw={() => setShowPausedGraph(true)} />
+            )
+          )}
 
           {rowsByCategory.length === 0 &&
             !run.isStreaming &&

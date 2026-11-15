@@ -2,7 +2,7 @@
 // clicking the compact sidebar textarea — comfortable hand-editing without
 // fighting a 380px-wide, 15-row box.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 
 const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
 
@@ -22,6 +22,11 @@ interface PolicyTextModalProps {
   // it") with an optional one-click action — amber, not the red error
   // styling, because the pasted text is fine.
   notice?: { message: string; actionLabel?: string; onAction?: () => void } | null
+  // Extra footer controls left of Done (e.g. the Policy Editor's 💾 Save,
+  // so a pasted policy can be saved without leaving the editor).
+  footerActions?: ReactNode
+  // Footer hint; defaults to the read-only or editable wording below.
+  hint?: string
 }
 
 export function PolicyTextModal({
@@ -33,26 +38,41 @@ export function PolicyTextModal({
   readOnly = false,
   error = null,
   notice = null,
+  footerActions = null,
+  hint,
 }: PolicyTextModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
 
+  // Callers pass onClose as an inline arrow, a new function on every render —
+  // and every keystroke re-renders them (onChange → their state). Keeping it
+  // in a ref lets the effects below depend on isOpen alone. When the keydown
+  // effect depended on onClose, each keystroke ran its cleanup, which handed
+  // focus back to the pre-open element: only the first typed character
+  // reached the textarea, the rest went to the button behind the backdrop.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
   // Capture the pre-open focus target and move focus into the textarea in
   // the same effect (replacing the old `autoFocus` JSX attribute), so the
   // capture always runs before focus moves — no render-phase ref writes
-  // needed to win a race against commit-time autoFocus.
+  // needed to win a race against commit-time autoFocus. Focus is handed
+  // back only when the modal actually closes (this effect's cleanup).
   useEffect(() => {
     if (!isOpen) return
     previousFocusRef.current = document.activeElement as HTMLElement | null
     textareaRef.current?.focus()
+    return () => previousFocusRef.current?.focus()
   }, [isOpen])
 
   useEffect(() => {
     if (!isOpen) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose()
+        onCloseRef.current()
         return
       }
       if (e.key === 'Tab' && panelRef.current) {
@@ -70,11 +90,8 @@ export function PolicyTextModal({
       }
     }
     window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      previousFocusRef.current?.focus()
-    }
-  }, [isOpen, onClose])
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -141,17 +158,21 @@ export function PolicyTextModal({
 
         <div className="flex items-center justify-between border-t border-line bg-panel-raised px-5 py-3">
           <span className="text-[0.65rem] text-ink-dim">
-            {readOnly
-              ? 'Esc or click outside to close — this is a read-only preview.'
-              : 'Esc or click outside to close — changes apply immediately.'}
+            {hint ??
+              (readOnly
+                ? 'Esc or click outside to close — this is a read-only preview.'
+                : 'Esc or click outside to close — your text is kept as you type it.')}
           </span>
-          <button
+          <div className="flex items-center gap-3">
+            {footerActions}
+            <button
             type="button"
             onClick={onClose}
             className="cursor-pointer bg-signal px-4 py-1.5 font-display text-xs font-bold tracking-wide text-void uppercase transition-opacity hover:opacity-90"
           >
             Done
           </button>
+          </div>
         </div>
       </div>
     </div>

@@ -33,6 +33,8 @@ import {
 import '@xyflow/react/dist/style.css'
 import type { VerdictChange, VerdictRow } from '../api'
 import { useTheme } from '../theme'
+import { graphTooLarge } from '../shared/graphBudget'
+import { GraphPlaceholder } from './GraphPlaceholder'
 import { NodeLabelsPanel } from './NodeLabelsPanel'
 
 const EDGE_COLORS: Record<'dark' | 'light', Record<VerdictChange, string>> = {
@@ -231,7 +233,36 @@ interface VerdictGraphProps {
   onSelectNode: (id: string | null) => void
 }
 
-export function VerdictGraph({ rows, selectedNodeId, onSelectNode }: VerdictGraphProps) {
+// Size guard in front of the canvas: counts the exact nodes/edges buildGraph
+// would produce and, past the limit, shows a placeholder instead of mounting
+// React Flow (see shared/graphBudget.ts). A separate component rather than an
+// early return inside the canvas, because the canvas measures its container
+// once on mount — a container that only appears after "Draw anyway" would
+// never be measured.
+export function VerdictGraph({ hints, ...props }: VerdictGraphProps & { hints?: string[] }) {
+  const { theme } = useTheme()
+  const [drawAnyway, setDrawAnyway] = useState(false)
+  const size = useMemo(() => {
+    const g = buildGraph(props.rows, theme, 0)
+    return { nodes: g.initialNodes.length, edges: g.initialEdges.length }
+  }, [props.rows, theme])
+
+  if (props.rows.length === 0) return null
+  if (!drawAnyway && graphTooLarge(size.nodes, size.edges)) {
+    return (
+      <GraphPlaceholder
+        reason="tooLarge"
+        nodes={size.nodes}
+        edges={size.edges}
+        hints={hints}
+        onDraw={() => setDrawAnyway(true)}
+      />
+    )
+  }
+  return <VerdictGraphCanvas {...props} />
+}
+
+function VerdictGraphCanvas({ rows, selectedNodeId, onSelectNode }: VerdictGraphProps) {
   const { theme } = useTheme()
 
   // Container ref so column X-positions can be derived from the actual

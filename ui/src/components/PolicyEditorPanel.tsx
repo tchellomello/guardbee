@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import { fetchNamespaces, parsePolicy, validatePolicy, type PolicyValidationResult } from '../api'
+import { fetchNamespaces, parsePolicy, validatePolicy, type PolicyParseResult, type PolicyValidationResult } from '../api'
 import { BLANK_POLICY, generateCiliumNetworkPolicyYAML, toPolicyModel, type EgressRule, type IngressRule, type PolicyKind, type PolicyModel } from '../policy'
 import { useTemplates } from '../shared/useTemplates'
+import { firstPolicyName, type NewSavedPolicy } from '../shared/workspace'
 import { PolicyGraph } from './PolicyGraph'
 import { PresetMenu, type PresetMenuItem } from './PresetMenu'
 import { PolicyTextModal } from './PolicyTextModal'
@@ -36,6 +37,9 @@ interface PolicyEditorPanelProps {
   // Saves the draft (model + its generated YAML) into the workspace; returns
   // whether a same-named entry was updated.
   onSavePolicy?: (name: string) => boolean
+  // Saves raw YAML as-is (a Verdict-style workspace entry) — used for a
+  // pasted policy the visual editor can't represent.
+  onSaveRawPolicy?: (entry: NewSavedPolicy) => boolean
   // Set only while the draft is editing a policy loaded via "Edit in Policy
   // Editor" (Policies tab) — the snapshot of what's actually live, so a
   // real diff can be shown instead of only ever comparing against nothing.
@@ -83,6 +87,7 @@ export function PolicyEditorPanel({
   onConsumeAutoSelect,
   onSendToVerdict,
   onSavePolicy,
+  onSaveRawPolicy,
   originalLiveModel,
   onClearOriginalLiveModel,
 }: PolicyEditorPanelProps) {
@@ -107,10 +112,21 @@ export function PolicyEditorPanel({
   // it parse is how an import happens, not a separate dialog.
   const [editingYAML, setEditingYAML] = useState('')
   const [yamlEditError, setYamlEditError] = useState<string | null>(null)
+  // The modal text last applied to the model. The text itself is never
+  // rewritten while the modal is open (see the parse effect below), so this
+  // — not editingYAML === generatedYAML — is how we know the box is in sync.
+  const [appliedYAML, setAppliedYAML] = useState<string | null>(null)
   // Set when the pasted YAML is valid but uses constructs the visual model
   // can't express (see PolicyParseResult.lossy). The text is left exactly as
   // typed and the model untouched.
-  const [yamlEditLossy, setYamlEditLossy] = useState<{ namespace: string } | null>(null)
+  const [yamlEditLossy, setYamlEditLossy] = useState<{
+    namespace: string
+    clusterwide: boolean
+    documents: number
+    // The model's YAML when this paste was rejected: the paste only comes
+    // back on reopen while the model is still exactly that.
+    modelYAML: string
+  } | null>(null)
   const { templates } = useTemplates()
   const genericPresets = useMemo(() => [BLANK_PRESET, ...templates.generic], [templates.generic])
   const presetMenuItems: PresetMenuItem[] = useMemo(
@@ -174,10 +190,65 @@ export function PolicyEditorPanel({
   }, [model.namespace, generatedYAML])
 
   function handleOpenYamlEditor() {
-    setEditingYAML(generatedYAML)
-    setYamlEditError(null)
-    setYamlEditLossy(null)
+    // A pasted policy the visual editor can't hold never reached the model,
+    // so reopening must bring back that text, not the model's YAML.
+    if (!yamlEditLossy || yamlEditLossy.modelYAML !== generatedYAML) {
+      setEditingYAML(generatedYAML)
+      setYamlEditError(null)
+      setYamlEditLossy(null)
+    }
+    setAppliedYAML(null)
     setYamlModalOpen(true)
+  }
+
+  // Closing within the 150ms debounce used to cancel the pending parse and
+  // lose the last edit; parse it now instead.
+  function handleCloseYamlEditor() {
+    setYamlModalOpen(false)
+    const text = editingYAML
+    if (text === generatedYAML || text === appliedYAML || yamlEditLossy || yamlEditError) return
+    parsePolicy(model.namespace, text)
+      .then((res) => applyParseResult(text, res))
+      .catch(() => {})
+  }
+
+  // 💾 Save inside the YAML modal saves exactly what's in the box. Text the
+  // editor understood is already the model (editingYAML === generatedYAML),
+  // so it's saved as an editor draft. A valid paste the editor can't hold
+  // (lossy, incl. multi-document) is saved verbatim, to open in Verdict —
+  // instead of the old route of testing it in Verdict just to save it there.
+  // Anything else is still being checked or invalid, so Save waits.
+  const modalTextIsModel = editingYAML === generatedYAML || editingYAML === appliedYAML
+  const modalSaveDisabledReason = modalTextIsModel || yamlEditLossy
+    ? undefined
+    : yamlEditError
+      ? 'Fix the error above to save'
+      : 'Checking the policy…'
+
+  function handleSaveModalText(name: string): boolean {
+    if (editingYAML === generatedYAML || !onSaveRawPolicy) return onSavePolicy?.(name) ?? false
+    if (modalTextIsModel) {
+      // Understood by the editor but typed by hand: keep the user's own
+      // text (comments, formatting) alongside the model it produced.
+      return onSaveRawPolicy({
+        name,
+        origin: 'editor',
+        candidateYAML: editingYAML,
+        namespace: model.namespace,
+        allNamespaces: model.kind === 'CiliumClusterwideNetworkPolicy' && !model.namespace,
+        editorModel: model,
+      })
+    }
+    if (!yamlEditLossy) return false
+    return (
+      onSaveRawPolicy?.({
+        name,
+        origin: 'verdict',
+        candidateYAML: editingYAML,
+        namespace: yamlEditLossy.namespace,
+        allNamespaces: yamlEditLossy.clusterwide,
+      }) ?? false
+    )
   }
 
   // Hand-editing/importing the YAML text directly, in the "⤢ Expand / Edit"
@@ -185,37 +256,45 @@ export function PolicyEditorPanel({
   // parsed through the real Cilium engine (/api/policy/parse) — never a
   // client-side YAML parser, same "call the real engine" principle as
   // every other candidate-parsing path in this project (see AGENTS.md).
-  // On success, the draft model is replaced outright and the modal's text
-  // snaps to the new model's own canonical YAML (generateCiliumNetworkPolicyYAML),
-  // which may reformat the user's original whitespace/comments — a known
-  // v1 simplification, not a bug: past a successful parse, raw typed text
-  // is never the model's source of truth, model always is, exactly as it
-  // already is for every other way of editing this draft. On failure, the
-  // model/graph are left untouched so a mid-edit typo can't blow away the
-  // user's last-good draft — only the error banner updates.
-  useEffect(() => {
-    if (!yamlModalOpen || editingYAML === generatedYAML) return
-    let cancelled = false
-    const timer = setTimeout(() => {
-      parsePolicy(model.namespace, editingYAML)
-        .then((res) => {
-          if (cancelled) return
-          if (res.valid && res.lossy) {
+  // On success the draft model is replaced, but the modal's text is left
+  // exactly as typed. It used to snap to the model's canonical YAML after
+  // every 150ms pause, which ate half-typed keys (`ingress:` before its
+  // rules), comments, blank lines and fields the model doesn't carry
+  // (metadata.labels), and threw the caret to the end. The canonical form
+  // only appears on the next open of the modal. On failure, the model/graph
+  // are left untouched so a mid-edit typo can't blow away the user's
+  // last-good draft — only the error banner updates.
+  function applyParseResult(text: string, res: PolicyParseResult) {
+    if (res.valid && res.lossy) {
             // Regenerating from the model would silently rewrite e.g. a
             // scoped egressDeny into deny-all egress — keep the user's text.
             setYamlEditError(null)
-            setYamlEditLossy({ namespace: res.policy?.namespace || model.namespace })
-          } else if (res.valid && res.policy) {
-            const nextModel = toPolicyModel(res.policy)
-            setYamlEditLossy(null)
-            setYamlEditError(null)
-            setModel(nextModel)
-            setEditingYAML(generateCiliumNetworkPolicyYAML(nextModel))
-            onClearOriginalLiveModel()
-          } else {
-            setYamlEditLossy(null)
-            setYamlEditError(res.error ?? 'invalid policy')
-          }
+      setYamlEditLossy({
+        namespace: res.policy?.namespace || model.namespace,
+        clusterwide: res.policy?.kind === 'CiliumClusterwideNetworkPolicy',
+        documents: res.documents ?? 1,
+        modelYAML: generatedYAML,
+      })
+    } else if (res.valid && res.policy) {
+      setYamlEditLossy(null)
+      setYamlEditError(null)
+      setModel(toPolicyModel(res.policy))
+      setAppliedYAML(text)
+      onClearOriginalLiveModel()
+    } else {
+      setYamlEditLossy(null)
+      setYamlEditError(res.error ?? 'invalid policy')
+    }
+  }
+
+  useEffect(() => {
+    if (!yamlModalOpen || editingYAML === generatedYAML || editingYAML === appliedYAML) return
+    let cancelled = false
+    const text = editingYAML
+    const timer = setTimeout(() => {
+      parsePolicy(model.namespace, text)
+        .then((res) => {
+          if (!cancelled) applyParseResult(text, res)
         })
         .catch((err) => {
           if (!cancelled) setYamlEditError(err instanceof Error ? err.message : String(err))
@@ -226,7 +305,7 @@ export function PolicyEditorPanel({
       cancelled = true
       clearTimeout(timer)
     }
-  }, [editingYAML, yamlModalOpen, model.namespace])
+  }, [editingYAML, yamlModalOpen, model.namespace, generatedYAML, appliedYAML])
 
   function handleLoadPreset(id: string) {
     const preset = genericPresets.find((p) => p.id === id)
@@ -634,7 +713,7 @@ export function PolicyEditorPanel({
 
       <PolicyTextModal
         isOpen={yamlModalOpen}
-        onClose={() => setYamlModalOpen(false)}
+        onClose={handleCloseYamlEditor}
         value={editingYAML}
         onChange={setEditingYAML}
         error={yamlEditError}
@@ -642,7 +721,9 @@ export function PolicyEditorPanel({
           yamlEditLossy
             ? {
                 message:
-                  "Valid policy, but the visual editor can't represent it faithfully (e.g. a scoped deny without enableDefaultDeny, an ICMP deny, or an enableDefaultDeny override it would drop). The graph is unchanged and your text is kept as-is.",
+                  yamlEditLossy.documents > 1
+                    ? `Valid, but this paste holds ${yamlEditLossy.documents} policies and the visual editor shows one at a time. The graph is unchanged and your text is kept as-is: 💾 Save it below, or test it in Verdict.`
+                    : "Valid policy, but the visual editor can't represent it faithfully (e.g. a scoped deny without enableDefaultDeny, an ICMP deny, or an enableDefaultDeny override it would drop). The graph is unchanged and your text is kept as-is: 💾 Save it below, or test it in Verdict.",
                 actionLabel: 'Test as-is in Verdict',
                 onAction: () => {
                   setYamlModalOpen(false)
@@ -652,6 +733,17 @@ export function PolicyEditorPanel({
             : null
         }
         title="Candidate Policy YAML"
+        footerActions={
+          onSavePolicy && (
+            <span title={modalSaveDisabledReason}>
+              <SaveToWorkspace
+                defaultName={firstPolicyName(editingYAML) || model.name}
+                disabled={modalSaveDisabledReason !== undefined}
+                onSave={handleSaveModalText}
+              />
+            </span>
+          )
+        }
       />
     </div>
   )
