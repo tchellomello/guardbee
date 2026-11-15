@@ -89,6 +89,10 @@ run = "bash scripts/gen-completions.sh"
 description = "Diff Cilium's pkg/policy/api between two versions to find candidate compat.go gates. Usage: mise run compat-scan <from-version> <to-version>. Not part of \"build\"/\"check\" (needs network, and only matters when bumping the pinned Cilium version) — run it manually, see AGENTS.md's Cilium-version-bump checklist."
 run = "bash scripts/compat-scan.sh \"$@\""
 
+[tasks.bump-cilium]
+description = "Bump the pinned Cilium version everywhere it's hand-maintained (go.mod, globals.go, lab-up.sh), print the compat-scan report, run check. Usage: mise run bump-cilium <vX.Y.Z>. Leaves gate review and live re-validation to you — see AGENTS.md."
+run = "bash scripts/bump-cilium.sh \"$@\""
+
 [tasks.install-completions]
 description = "Regenerate completions, then install them into the standard per-shell user directories"
 depends = ["completions"]
