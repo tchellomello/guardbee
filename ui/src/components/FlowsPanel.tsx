@@ -249,16 +249,26 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
           <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
         </div>
         <div className="flex gap-2">
+          {/* Separate keys, so React swaps in a different element instead of
+              turning one button into the other. Re-rendered in place, the
+              Stop click's default action ran after the swap, on what was by
+              then type="submit" — submitting the form and restarting the
+              stream it had just stopped. */}
           {streaming ? (
             <button
+              key="stop"
               type="button"
-              onClick={stopStreaming}
+              onClick={(e) => {
+                e.preventDefault()
+                stopStreaming()
+              }}
               className="border border-signal bg-signal/10 px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-signal uppercase transition-colors hover:bg-signal hover:text-void cursor-pointer"
             >
               Stop following
             </button>
           ) : (
             <button
+              key="fetch"
               type="submit"
               disabled={loading}
               className="bg-signal px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
@@ -512,11 +522,18 @@ function FlowRunCard({
               <GraphPlaceholder reason="paused" onDraw={() => setShowPausedGraph(true)} />
             ))}
 
-          {flows.length === 0 && (
-            <p className="text-sm text-ink-dim">
-              No flows observed for this scope in Hubble's current buffer.
-            </p>
-          )}
+          {flows.length === 0 &&
+            (run.isStreaming ? (
+              <p className="flex items-center gap-2 text-sm text-ink-dim">
+                <span className="glow-pulse h-2 w-2 rounded-full bg-signal" />
+                Following — waiting for matching flows. They appear here as they happen.
+              </p>
+            ) : (
+              <p className="text-sm text-ink-dim">
+                No {isFlowFilterEmpty(run.filter) ? '' : 'matching '}flows observed for this scope in Hubble's current
+                buffer.
+              </p>
+            ))}
 
           {flows.length > 0 && (
             <div className="flex items-center justify-end gap-2">
