@@ -107,6 +107,16 @@ Kinds are Cilium's own: `CNP`, `CCNP`, or spelled out (`NetworkPolicy:ns/name`).
 
 In the UI's **Flows** tab, the **Policy verdicts** quick filter and the **Either side → Pod** field give the same view. Each `✎ CNP:`/`✎ CCNP:` badge opens that live policy in the **Policy Editor**, ready to fix and run through Verdict.
 
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — decided by</span></div>
+<img src="../images/ui-blame-decided-by.png" alt="Flows tab filtered to postgres policy verdicts: each row shows its direction and which policy decided it, with CNP and CCNP badges that open the live policy in the Policy Editor" />
+</div>
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — default deny</span></div>
+<img src="../images/ui-blame-default-deny.png" alt="Internet traffic into webapp dropped with POLICY_DENIED, shown as default deny: no policy rule allows it" />
+</div>
+
 ---
 
 ## `verdict`
