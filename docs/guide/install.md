@@ -34,7 +34,18 @@ tar -xzf guardbee_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 guardbee-${OS}-${ARCH} ~/.local/bin/guardbee
 ```
 
-Shell completions aren't in the tarball. See [Build → Shell completions](build.html#shell-completions).
+The tarball also contains shell completions in `completions/`. Install the one for your shell:
+
+```
+# fish
+install -Dm0644 completions/guardbee.fish ~/.config/fish/completions/guardbee.fish
+# bash
+install -Dm0644 completions/guardbee.bash ~/.local/share/bash-completion/completions/guardbee
+# zsh: any directory on your $fpath, then run compinit
+install -Dm0644 completions/_guardbee ~/.zsh/completions/_guardbee
+```
+
+The tarballs of `v1.20.4-1` and earlier don't include completions. For those, take the files from the repo instead (see [Build → Shell completions](build.html#shell-completions)).
 
 ---
 
