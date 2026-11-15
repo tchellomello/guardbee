@@ -470,6 +470,7 @@ export function PolicyEditorPanel({
                   <button
                     key={kind}
                     type="button"
+                    title={kind}
                     onClick={() => handleSetKind(kind)}
                     className={
                       (idx > 0 ? 'border-l border-line ' : '') +
@@ -477,7 +478,10 @@ export function PolicyEditorPanel({
                       (model.kind === kind ? 'bg-signal text-void' : 'bg-void text-ink-dim hover:text-ink')
                     }
                   >
-                    {kind}
+                    {/* The two full names don't fit side by side on a
+                        phone (they pushed the page 49px sideways). */}
+                    <span className="sm:hidden">{kind === 'CiliumNetworkPolicy' ? 'CNP' : 'CCNP'}</span>
+                    <span className="hidden sm:inline">{kind}</span>
                   </button>
                 ))}
               </div>

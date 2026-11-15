@@ -10,6 +10,16 @@ export default defineConfig({
     // detectors) — no DOM/React rendering, so the default Node environment
     // is enough and jsdom/happy-dom aren't needed as dependencies.
     include: ['src/**/*.test.ts'],
+    // `npm run coverage` (and the coverage ratchet, scripts/coverage.sh):
+    // every source file counts, tested or not, so a new untested module
+    // shows up as a drop instead of being invisible.
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.ts', 'src/main.tsx', 'src/vite-env.d.ts'],
+      reporter: ['text-summary', 'json-summary'],
+      reportsDirectory: 'coverage',
+    },
   },
   build: {
     rollupOptions: {

@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright (mise run e2e)
+/test-results/
+/playwright-report/
+/blob-report/
+/coverage/

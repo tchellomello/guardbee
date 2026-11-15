@@ -24,7 +24,7 @@ let
     inherit version;
     src = lib.cleanSource ../ui;
     nodejs = nodejs_24;
-    npmDepsHash = "sha256-WAAyi8aHFl9KTlLbDPKkWePimYjEKjII+kFTQO9VSrw=";
+    npmDepsHash = "sha256-el8ePqmxYZo8CCq6EtdYD0pBQ3/qINI8ygs/zfUN3bI=";
     installPhase = ''
       runHook preInstall
       cp -r dist $out

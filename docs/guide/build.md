@@ -14,6 +14,8 @@ installs them if missing:
 ```
 mise run build     # npm run build in ui/, then go build -o guardbee .
 mise run check     # build + go vet + go test
+mise run e2e       # end-to-end UI tests in a real browser (Playwright)
+mise run coverage  # fails if unit-test coverage dropped below the recorded baseline
 mise run clean     # rm -f guardbee
 mise run ui-dev    # frontend dev server, hot reload (proxies /api to
                     # a separately-running "guardbee ui" on :4747)

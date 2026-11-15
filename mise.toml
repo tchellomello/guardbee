@@ -93,6 +93,16 @@ run = "bash scripts/compat-scan.sh \"$@\""
 description = "Bump the pinned Cilium version everywhere it's hand-maintained (go.mod, globals.go, lab-up.sh), print the compat-scan report, run check. Usage: mise run bump-cilium <vX.Y.Z> [--lab]. --lab also runs lab-validate. Leaves gate review and real-cluster validation to you — see AGENTS.md."
 run = "bash scripts/bump-cilium.sh \"$@\""
 
+[tasks.coverage]
+description = "Coverage ratchet: fail if Go or UI unit coverage drops below coverage-baseline.json; -- --update raises the baseline. CI runs it."
+depends = ["ui-install", "ui-build"]
+run = "bash scripts/coverage.sh \"$@\""
+
+[tasks.e2e]
+description = "End-to-end UI tests (ui/e2e, Playwright) against the freshly built binary, cluster endpoints mocked. Args go to playwright test, e.g. mise run e2e -- flows"
+depends = ["build"]
+run = "bash scripts/e2e.sh \"$@\""
+
 [tasks.nix-hashes]
 description = "Recompute nix/package.nix's npmDepsHash and vendorHash after a dependency change (bump-cilium runs this for you). Needs nix; skips without it."
 run = "bash scripts/nix-hashes.sh"

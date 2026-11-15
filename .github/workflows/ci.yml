@@ -32,6 +32,50 @@ jobs:
       - name: mise run check
         run: mise run check
 
+      # Fails the PR if Go or UI unit coverage drops below
+      # coverage-baseline.json (scripts/coverage.sh). A ratchet: it only
+      # has to never go down; raise it with `mise run coverage -- --update`.
+      - name: coverage ratchet
+        run: mise run coverage
+
+  # The UI end to end, in a real browser: the built binary serving the
+  # embedded production UI, cluster endpoints mocked (ui/e2e). Unit tests
+  # can't see the class of bug this exists for — focus moving mid-keystroke,
+  # a button turning into a submit button mid-click, a layout pushing a
+  # phone screen sideways — every one of which reached a PR before.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Playwright's Chromium
+        working-directory: ui
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: mise run e2e
+        run: mise run e2e
+
+      # Traces and failure screenshots: the only way to see what the
+      # browser saw on a runner nobody can look at.
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            ui/playwright-report
+            ui/test-results
+          retention-days: 7
+
   # The flake users install from (nix/package.nix). Its two dependency
   # hashes go stale on any go.sum or ui/package-lock.json change, and a
   # stale hash only shows up as a failed `nixos-rebuild` for every user

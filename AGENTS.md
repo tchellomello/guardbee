@@ -193,6 +193,8 @@ mise run clean
 mise run ui-dev     # frontend dev server, proxies /api to a separately-running "guardbee ui" on :4747
 mise run completions  # regenerate shell completions after a rename or flag/subcommand change
 mise run compat-scan <from-version> <to-version>  # discover new compat.go gate candidates; manual, see above
+mise run e2e       # end-to-end UI tests in a real browser (ui/e2e, Playwright); args go to playwright, e.g. -- flows
+mise run coverage  # coverage ratchet: fails if Go or UI unit coverage drops below coverage-baseline.json
 ```
 
 `mise run build` **always rebuilds the frontend first** — the Go binary
@@ -208,6 +210,37 @@ connection needed to run `go test ./...`). `verdict_test.go` holds the
 regression suite (e.g. `TestVerdictEngineNewlyDroppedOnDefaultDenyFlip`) —
 anything touching `pkg/policy` usage in `verdict.go` should have a
 regression test here before being trusted.
+
+### UI changes need an end-to-end spec
+
+Unit tests (vitest) cover `ui/src/shared/` and `policy.ts` only — there's
+no DOM in them by design. Everything a user does in the browser is covered
+by `ui/e2e/*.e2e.ts` (Playwright): the real built binary serving the
+embedded UI, with only the endpoints that need a cluster mocked
+(`e2e/fixtures/test.ts`, data from the Lab scenario in `fixtures/lab.ts`).
+Policy parse/validate, templates, compat and version run for real.
+
+- **A UI feature or UI bug fix lands with an e2e spec.** Every UI bug
+  found so far (focus lost mid-keystroke, typed text rewritten under the
+  cursor, a button turning into a submit button mid-click, a section
+  collapsing under the cursor, a phone screen scrolling sideways) was
+  invisible to unit tests.
+- **A bug fix's spec must fail without the fix.** Build the pre-fix
+  commit and run the spec against it:
+  `GUARDBEE_BIN=/path/to/old/guardbee mise run e2e -- -g "<spec title>"`.
+  A spec that passes either way protects nothing.
+- Type like a person (`typeSlowly`, per-key delays and pauses longer than
+  the 150ms parse debounce), not `fill()`, whenever typing is the thing
+  under test. Tabs stay mounted when hidden, so scope locators to visible
+  elements (`visibleForm`, `:visible`).
+- On NixOS the browsers come from nixpkgs via this repo's `flake.lock`;
+  `@playwright/test` in `ui/package.json` must stay pinned to that exact
+  playwright version (scripts/e2e.sh checks). Elsewhere and in CI,
+  `npx playwright install chromium` provides them.
+
+`mise run coverage` is a ratchet, not a target: CI fails a PR that lowers
+Go or UI unit coverage below `coverage-baseline.json`; after adding tests,
+`mise run coverage -- --update` raises the baseline (commit it).
 
 ## Running against a real cluster
 
