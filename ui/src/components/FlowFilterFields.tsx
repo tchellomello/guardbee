@@ -67,6 +67,17 @@ export function FlowFilterFields({
 }) {
   const options = useFlowFilterOptions()
   const active = !isFlowFilterEmpty(filter)
+  // Opens by itself when a filter gets set (e.g. restored after a reload, or
+  // "Duplicate to form"), but only the user closes it. Deriving `open` from
+  // `active` closed the section under the cursor the moment the filter
+  // became empty: un-toggling the last quick filter, Clear, or deleting the
+  // last character of the only filled field.
+  const [open, setOpen] = useState(active)
+  const [wasActive, setWasActive] = useState(active)
+  if (active !== wasActive) {
+    setWasActive(active)
+    if (active && !open) setOpen(true)
+  }
   const inputClass = (set: boolean) =>
     `w-full border px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none ${
       set ? 'border-signal/60 bg-signal/5' : 'border-line bg-void'
@@ -110,7 +121,11 @@ export function FlowFilterFields({
     Object.entries(q.set).every(([k, v]) => filter[k as keyof FlowFilter] === v)
 
   return (
-    <details open={active || undefined} className="group min-w-0">
+    <details
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+      className="group min-w-0"
+    >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-1 text-[0.7rem] font-semibold tracking-[0.12em] text-ink-dim uppercase hover:text-ink">
         <span className="flex min-w-0 items-center gap-2">
           <span className="inline-block transition-transform group-open:rotate-90">▸</span>
