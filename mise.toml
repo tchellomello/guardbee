@@ -90,8 +90,13 @@ description = "Diff Cilium's pkg/policy/api between two versions to find candida
 run = "bash scripts/compat-scan.sh \"$@\""
 
 [tasks.bump-cilium]
-description = "Bump the pinned Cilium version everywhere it's hand-maintained (go.mod, globals.go, lab-up.sh), print the compat-scan report, run check. Usage: mise run bump-cilium <vX.Y.Z>. Leaves gate review and live re-validation to you — see AGENTS.md."
+description = "Bump the pinned Cilium version everywhere it's hand-maintained (go.mod, globals.go, lab-up.sh), print the compat-scan report, run check. Usage: mise run bump-cilium <vX.Y.Z> [--lab]. --lab also runs lab-validate. Leaves gate review and real-cluster validation to you — see AGENTS.md."
 run = "bash scripts/bump-cilium.sh \"$@\""
+
+[tasks.lab-validate]
+description = "Create a fresh lab, assert the lab guide's known verdicts against the built binary (looks-correct regresses, merge-ready passes), then delete the lab. Refuses to reuse an existing lab."
+depends = ["build"]
+run = "bash lab/scripts/lab-validate.sh"
 
 [tasks.install-completions]
 description = "Regenerate completions, then install them into the standard per-shell user directories"

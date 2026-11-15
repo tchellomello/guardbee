@@ -54,7 +54,9 @@ Consequences that follow directly from this, non-negotiably:
   add a `featureGates` entry with a real "why" for anything genuine.
   `mise run bump-cilium <vX.Y.Z>` does the mechanical part (compat-scan
   report, go.mod + `pinnedCiliumVersion` + lab `CILIUM_VERSION`, then
-  `check`); the gate review and live re-validation stay manual.
+  `check`); `--lab` adds `mise run lab-validate` (fresh lab, asserts the
+  lab candidates' known exit codes, tears it down). The gate review and a
+  verdict against the real cluster stay manual.
   `pin_test.go` fails if those three pins ever disagree.
 - The engine is pinned to one Cilium version (`pinnedCiliumVersion`,
   `globals.go`), but is meant to stay usable against clusters running
