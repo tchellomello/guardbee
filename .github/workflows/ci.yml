@@ -31,3 +31,33 @@ jobs:
       # too.
       - name: mise run check
         run: mise run check
+
+  # End-to-end: the built binary against a real Cilium (lab-up.sh's
+  # CILIUM_VERSION, which pin_test.go keeps equal to go.mod's pin) in a
+  # disposable kind cluster, asserting the lab guide's known verdicts —
+  # see lab/scripts/lab-validate.sh. This is what catches a Cilium bump
+  # whose embedded pkg/policy still compiles and passes unit tests but
+  # judges real Hubble flows differently. Runs after "check" so a broken
+  # build fails fast without paying for a cluster.
+  lab:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # helm and kubectl ship with ubuntu-latest; kind doesn't. install_only:
+      # lab-up.sh creates the cluster itself, with the lab's own kind-config
+      # (no default CNI, so Cilium can own pod networking).
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: mise run lab-validate
+        run: mise run lab-validate

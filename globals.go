@@ -16,7 +16,7 @@ const binName = "guardbee"
 // Cilium version upgrade — clusterversion.go's detection and compat.go's
 // feature gates both key off this constant whenever the live cluster's own
 // version can't be determined.
-const pinnedCiliumVersion = "1.20.2"
+const pinnedCiliumVersion = "1.20.4"
 
 // numberFlagHelp explains --last's actual semantics, shared verbatim by
 // every subcommand's -h screen that takes it (flows, verdict) so the two

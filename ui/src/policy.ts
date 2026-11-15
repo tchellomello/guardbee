@@ -56,7 +56,7 @@ export interface EgressRule {
   //
   // FromRequires/ToRequires (Cilium's AND-style peer-narrowing constraint)
   // were deliberately NOT added alongside this: the exact Cilium version
-  // this project pins (go.mod: v1.20.2) marks both Deprecated with
+  // this project pins (go.mod: v1.20.4) marks both Deprecated with
   // `+kubebuilder:validation:MaxItems=0` — a real cluster's CRD schema
   // rejects any non-empty value outright. An editor feature for it would
   // generate YAML that parses fine in this tool but gets rejected by the

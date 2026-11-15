@@ -18,7 +18,7 @@ package main
 // against this project's actual vendored source before writing this gate
 // (not assumed): the vendored pkg/policy/api (ingress.go/egress.go) marks
 // both Deprecated with `+kubebuilder:validation:MaxItems=0` in pinned
-// v1.20.2 — a real cluster's CRD schema rejects any non-empty value at
+// v1.20.2 (re-checked unchanged in v1.20.4) — a real cluster's CRD schema rejects any non-empty value at
 // admission. More importantly for this tool specifically: Parse() does
 // NOT reject, error, or panic on a non-empty value (verified with a
 // throwaway test against parseCandidateYAML) — it succeeds silently, and

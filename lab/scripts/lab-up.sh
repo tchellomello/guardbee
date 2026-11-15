@@ -5,7 +5,7 @@
 # thing it deletes.
 set -euo pipefail
 
-CILIUM_VERSION="1.20.2" # must match go.mod's github.com/cilium/cilium version — see AGENTS.md
+CILIUM_VERSION="1.20.4" # must match go.mod's github.com/cilium/cilium version — see AGENTS.md
 CLUSTER_NAME="guardbee-lab"
 LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

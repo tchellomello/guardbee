@@ -36,7 +36,7 @@ cd ui && npm install && npm run build
 cd .. && go build -o guardbee .
 ```
 
-> Built against `github.com/cilium/cilium@v1.20.2` as a plain Go
+> Built against `github.com/cilium/cilium@v1.20.4` as a plain Go
 > dependency — including the internal `pkg/policy` engine, not just the
 > generated clientset and Hubble's `observer` gRPC stubs. No eBPF/CGO/
 > privileged build step required.

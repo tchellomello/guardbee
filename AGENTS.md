@@ -34,7 +34,7 @@ All four are read-only against the cluster, by design, in v1.
 **The whole trust model rests on embedding Cilium's actual `pkg/policy`
 engine** (`ResolvePolicy`/`DistillPolicy`/`EndpointPolicy.Lookup`, plus the
 generated `.Parse()` conversions for CNP/CCNP), pinned to the cluster's exact
-Cilium version (`go.mod`: `github.com/cilium/cilium v1.20.2`). A verdict from
+Cilium version (`go.mod`: `github.com/cilium/cilium v1.20.4`). A verdict from
 this tool must be a verdict from Cilium's own code, never this project's
 guess at Cilium's semantics.
 
@@ -52,6 +52,12 @@ Consequences that follow directly from this, non-negotiably:
   otherwise silently stop detecting or start silently dropping. It's a
   report, not a generator — read each finding against the real source and
   add a `featureGates` entry with a real "why" for anything genuine.
+  `mise run bump-cilium <vX.Y.Z>` does the mechanical part (compat-scan
+  report, go.mod + `pinnedCiliumVersion` + lab `CILIUM_VERSION`, then
+  `check`); `--lab` adds `mise run lab-validate` (fresh lab, asserts the
+  lab candidates' known exit codes, tears it down). The gate review and a
+  verdict against the real cluster stay manual.
+  `pin_test.go` fails if those three pins ever disagree.
 - The engine is pinned to one Cilium version (`pinnedCiliumVersion`,
   `globals.go`), but is meant to stay usable against clusters running
   somewhat older versions too (currently targeting 1.18–1.20). The cluster's

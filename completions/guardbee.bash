@@ -30,6 +30,9 @@ _guardbee_complete() {
         ui)
             COMPREPLY=($(compgen -W "--kubeconfig --addr" -- "$cur"))
             ;;
+        version)
+            COMPREPLY=($(compgen -W "--kubeconfig --client" -- "$cur"))
+            ;;
     esac
 }
 complete -F _guardbee_complete guardbee
