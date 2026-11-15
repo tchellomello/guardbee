@@ -85,7 +85,7 @@ type verdictCounts struct {
 func runVerdict(args []string) {
 	fs := pflag.NewFlagSet("verdict", pflag.ExitOnError)
 	flags := registerCommonFlags(fs)
-	dst := registerDestinationFlags(fs)
+	filterFlags := registerFlowFilterFlags(fs)
 	var last uint64
 	var follow bool
 	var showUnchanged bool
@@ -100,7 +100,7 @@ func runVerdict(args []string) {
 	fs.StringVar(&format, "format", formatTable, "output format: table, json or markdown (json/markdown: one-shot only, not with --follow)")
 	fs.BoolVar(&replaceExisting, "replace-existing", false, "judge the candidate as REPLACING any live policy with the same kind, namespace and name, instead of being added on top of it — use for edits to an existing policy")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port ...] [--last N] [-f] <candidate.yaml>
+		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f] <candidate.yaml>
 
 Diffs a candidate CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy against
 today's live policy state, judging real recent Hubble flows against both.
@@ -115,11 +115,12 @@ omit --namespace (or pass --all-namespaces) so flows are sampled cluster-wide
 — otherwise a regression in a namespace the CCNP also touches, but that you
 didn't pass to --namespace, would go completely unsampled and unreported.
 
---to-pod/--to-service/--to-label/--to-port judge only flows going to that
-destination (hubble observe's semantics, applied in Hubble's query, so all
---last flows are ones that go there). Anything the candidate does to other
-destinations is then not sampled at all: narrow to investigate, not to
-sign off on a policy.
+--from-*/--to-*/--verdict/--drop-reason-desc judge only matching flows
+(hubble observe's names and semantics, applied in Hubble's query, so all
+--last flows match). Anything the candidate does to other traffic is then not
+sampled at all: narrow to investigate, not to sign off on a policy.
+--verdict is the flow's verdict TODAY, e.g. --verdict DROPPED asks "which of
+today's drops would the candidate newly allow?".
 
 By default a candidate is judged ON TOP of the live policy set, including a
 live policy with the same name. --replace-existing drops that same-name live
@@ -152,6 +153,11 @@ Flags:
 	}
 	if minFlows < 0 {
 		fmt.Fprintf(os.Stderr, "%s verdict: --min-flows must be >= 0\n", binName)
+		os.Exit(1)
+	}
+	filter, err := filterFlags.parse()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s verdict: %v\n", binName, err)
 		os.Exit(1)
 	}
 	if follow && (format != formatTable || failOnDropped || minFlows > 0) {
@@ -197,11 +203,11 @@ Flags:
 
 	if follow {
 		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s — streaming flows live, Ctrl+C to stop.\n\n",
-			len(candidateRules), candidatePath, baselineRuleCount, namespaceLabel(namespace), contextLabel(target), filterLabel(*dst))
+			len(candidateRules), candidatePath, baselineRuleCount, namespaceLabel(namespace), contextLabel(target), filterLabel(filter))
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		total, err := streamFlows(ctx, core, cfg, namespace, *dst, last, func(f *flowpb.Flow) {
+		total, err := streamFlows(ctx, core, cfg, namespace, filter, last, func(f *flowpb.Flow) {
 			if row := judgeFlow(logger, baseline, candidate, f, counts, showUnchanged); row != nil {
 				fmt.Println(row.line(1))
 			}
@@ -215,7 +221,7 @@ Flags:
 		return
 	}
 
-	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, *dst, last, showUnchanged)
+	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, filter, last, showUnchanged)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
@@ -255,7 +261,7 @@ Flags:
 // only present the same one differently.
 type verdictComputation struct {
 	namespace                             string
-	dst                                   destinationFilter // flows were narrowed to this destination, see destinationFilter
+	filter                                flowFilter // flows were narrowed by this, see flowFilter
 	candidateRuleCount, baselineRuleCount int
 	flowsRequested                        uint64
 	flowsSampled                          int
@@ -280,7 +286,7 @@ type verdictComputation struct {
 // for) — this wrapper exists for callers that just want one answer with no
 // engine lifecycle to manage themselves, namely the "ui" subcommand's HTTP
 // API (see ui.go).
-func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, dst destinationFilter, candidateRules api.Rules, last uint64, showUnchanged bool) (*verdictComputation, error) {
+func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, filter flowFilter, candidateRules api.Rules, last uint64, showUnchanged bool) (*verdictComputation, error) {
 	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
 	if err != nil {
 		return nil, err
@@ -288,7 +294,7 @@ func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliu
 	defer baseline.close(logger)
 	defer candidate.close(logger)
 
-	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, dst, last, showUnchanged)
+	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, filter, last, showUnchanged)
 	if err != nil {
 		return nil, err
 	}
@@ -358,8 +364,8 @@ func warnSkippedBaseline(skipped []string) {
 // the one-shot counterpart to runVerdict's --follow loop — same judging
 // logic (judgeFlow), batched instead of streamed, and reusable by both the
 // CLI and the "ui" subcommand's HTTP API.
-func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, core kubernetes.Interface, cfg *rest.Config, namespace string, dst destinationFilter, last uint64, showUnchanged bool) (*verdictComputation, error) {
-	flows, err := fetchFlows(core, cfg, namespace, dst, last)
+func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, last uint64, showUnchanged bool) (*verdictComputation, error) {
+	flows, err := fetchFlows(core, cfg, namespace, filter, last)
 	if err != nil {
 		return nil, fmt.Errorf("tapping flows: %w", err)
 	}
@@ -384,7 +390,7 @@ func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, cor
 
 	comp := &verdictComputation{
 		namespace:      namespace,
-		dst:            dst,
+		filter:         filter,
 		flowsRequested: last,
 		flowsSampled:   len(flows),
 		counts:         counts,
@@ -405,16 +411,16 @@ func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, cor
 // one-shot verdict output always has.
 func printVerdictComputation(comp *verdictComputation, candidatePath string) {
 	if comp.flowsSampled == 0 {
-		fmt.Println("no flows observed for " + namespaceLabel(comp.namespace) + filterLabel(comp.dst) + " in Hubble's current buffer — nothing to simulate")
+		fmt.Println("no flows observed for " + namespaceLabel(comp.namespace) + filterLabel(comp.filter) + " in Hubble's current buffer — nothing to simulate")
 		return
 	}
 
 	if uint64(comp.flowsSampled) < comp.flowsRequested {
 		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s, using %d of up to %d requested flows — that's every flow Hubble's live buffer currently holds for this scope, not a shortfall in this tool; use --follow to keep sampling over time instead of raising --last.\n\n",
-			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), contextLabel(comp.target), filterLabel(comp.dst), comp.flowsSampled, comp.flowsRequested)
+			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), contextLabel(comp.target), filterLabel(comp.filter), comp.flowsSampled, comp.flowsRequested)
 	} else {
 		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s, using %d sampled flows.\n\n",
-			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), contextLabel(comp.target), filterLabel(comp.dst), comp.flowsSampled)
+			comp.candidateRuleCount, candidatePath, comp.baselineRuleCount, namespaceLabel(comp.namespace), contextLabel(comp.target), filterLabel(comp.filter), comp.flowsSampled)
 	}
 
 	for i, row := range comp.rows {
@@ -433,8 +439,8 @@ func contextLabel(t kubeTarget) string {
 }
 
 // filterLabel is the " (only flows --to-pod x …)" suffix for the CLI's
-// summary lines, or "" when no destination filter is set.
-func filterLabel(d destinationFilter) string {
+// summary lines, or "" when no filter is set.
+func filterLabel(d flowFilter) string {
 	if d.empty() {
 		return ""
 	}

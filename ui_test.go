@@ -11,9 +11,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	flowpb "github.com/cilium/cilium/api/v1/flow"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"testing"
 )
 
@@ -183,5 +186,57 @@ func TestHandleVersionClientSkipsCluster(t *testing.T) {
 	}
 	if resp.Binary != version || resp.Pinned != pinnedCiliumVersion || !resp.Unknown {
 		t.Fatalf("want binary=%q pinned=%q unknown, got %+v", version, pinnedCiliumVersion, resp)
+	}
+}
+
+// The web form's filter goes through the same validation as the CLI flags:
+// blank fields mean "no filter", enum names are checked, and a pod
+// combination that can't match in the namespace is rejected up front.
+func TestFlowFilterParams(t *testing.T) {
+	f, err := flowFilterParams{FromLabel: []string{" reserved:world ", ""}, Verdict: []string{"DROPPED"}, ToPort: []string{""}}.filter("app")
+	if err != nil {
+		t.Fatalf("valid params: %v", err)
+	}
+	if len(f.fromLabels) != 1 || f.fromLabels[0] != "reserved:world" || len(f.toPorts) != 0 || len(f.verdicts) != 1 {
+		t.Fatalf("got %+v", f)
+	}
+	if _, err := (flowFilterParams{Verdict: []string{"nope"}}).filter("app"); err == nil {
+		t.Error("invalid verdict: want an error")
+	}
+	if _, err := (flowFilterParams{FromPod: []string{"x/a"}, ToPod: []string{"y/b"}}).filter("app"); err == nil {
+		t.Error("both pods outside the namespace: want an error")
+	}
+	q, _ := url.ParseQuery("namespace=app&fromIp=10.0.0.0/8&dropReason=POLICY_DENIED&toPod=db")
+	got := flowFilterParamsFromQuery(q)
+	if got.FromIP[0] != "10.0.0.0/8" || got.DropReason[0] != "POLICY_DENIED" || got.ToPod[0] != "db" {
+		t.Fatalf("from query: %+v", got)
+	}
+}
+
+func TestHandleFlowFilterOptions(t *testing.T) {
+	srv := &uiServer{logger: slog.Default()}
+	w := httptest.NewRecorder()
+	srv.handleFlowFilterOptions(w, httptest.NewRequest(http.MethodGet, "/api/flow-filter-options", nil))
+	var resp flowFilterOptions
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshaling: %v", err)
+	}
+	if !slices.Contains(resp.Verdicts, "DROPPED") || slices.Contains(resp.Verdicts, "VERDICT_UNKNOWN") {
+		t.Errorf("verdicts: %v", resp.Verdicts)
+	}
+	if !slices.Contains(resp.DropReasons, "POLICY_DENIED") || slices.Contains(resp.DropReasons, "DROP_REASON_UNKNOWN") {
+		t.Errorf("drop reasons missing POLICY_DENIED or include UNKNOWN (%d values)", len(resp.DropReasons))
+	}
+}
+
+// Flow rows carry each endpoint's identity labels, which the filter fields'
+// autocomplete offers for --from-label/--to-label.
+func TestToFlowOutCarriesLabels(t *testing.T) {
+	out := toFlowOut(&flowpb.Flow{
+		Source:      &flowpb.Endpoint{Labels: []string{"reserved:world"}},
+		Destination: &flowpb.Endpoint{Namespace: "app", PodName: "db-0", Labels: []string{"k8s:app=db"}},
+	})
+	if !slices.Equal(out.SourceLabels, []string{"reserved:world"}) || !slices.Equal(out.DestinationLabels, []string{"k8s:app=db"}) {
+		t.Fatalf("labels not passed through: %+v", out)
 	}
 }

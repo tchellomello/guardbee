@@ -20,6 +20,8 @@ _${fn}_complete() {
     prev="\${COMP_WORDS[COMP_CWORD-1]}"
     subcommands="policies flows verdict ui version compat"
     common_flags="--kubeconfig --namespace -n --all-namespaces -A"
+    # Flow filters (flowFilter in flows.go), shared by flows and verdict.
+    filter_flags="--from-pod --from-label --from-ip --to-pod --to-service --to-label --to-ip --to-port --verdict --drop-reason-desc"
 
     if [[ "\$COMP_CWORD" -eq 1 ]]; then
         COMPREPLY=(\$(compgen -W "\$subcommands" -- "\$cur"))
@@ -31,11 +33,11 @@ _${fn}_complete() {
             COMPREPLY=(\$(compgen -W "\$common_flags" -- "\$cur"))
             ;;
         flows)
-            COMPREPLY=(\$(compgen -W "\$common_flags --last --follow -f" -- "\$cur"))
+            COMPREPLY=(\$(compgen -W "\$common_flags \$filter_flags --last --follow -f" -- "\$cur"))
             ;;
         verdict)
             if [[ "\$cur" == -* ]]; then
-                COMPREPLY=(\$(compgen -W "\$common_flags --last --follow -f --show-unchanged" -- "\$cur"))
+                COMPREPLY=(\$(compgen -W "\$common_flags \$filter_flags --last --follow -f --show-unchanged" -- "\$cur"))
             else
                 COMPREPLY=(\$(compgen -f -- "\$cur"))
             fi
@@ -68,6 +70,16 @@ complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict" -l a
 complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l last -d "number of flows"
 complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l follow -s f -d "keep streaming/judging until Ctrl+C"
 complete -c ${name} -n "__fish_seen_subcommand_from verdict" -l show-unchanged -d "also print UNCHANGED rows, not just what changed"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l from-pod -d "only flows from pods with this name prefix"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l from-label -d "only flows from endpoints with this label (e.g. reserved:world)"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l from-ip -d "only flows from this IP or CIDR"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l to-pod -d "only flows to pods with this name prefix"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l to-service -d "only flows to this Service"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l to-label -d "only flows to endpoints with this label"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l to-ip -d "only flows to this IP or CIDR"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l to-port -d "only flows to this port"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l verdict -x -a "FORWARDED DROPPED AUDIT ERROR REDIRECTED TRACED TRANSLATED" -d "only flows with this observed verdict"
+complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l drop-reason-desc -x -d "only flows dropped for this reason (e.g. POLICY_DENIED)"
 complete -c ${name} -n "__fish_seen_subcommand_from verdict" -a "(__fish_complete_suffix .yaml)" -d "candidate policy YAML"
 complete -c ${name} -n "__fish_seen_subcommand_from ui" -l addr -d "address to listen on"
 EOF
@@ -97,10 +109,10 @@ _${fn}() {
       _arguments '--kubeconfig[path to kubeconfig]:file:_files' '(-n --namespace)'{-n,--namespace}'[namespace]:namespace:' '(-A --all-namespaces)'{-A,--all-namespaces}'[query cluster-wide]'
       ;;
     flows)
-      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '(-n --namespace)'{-n,--namespace}'[namespace]:namespace:' '(-A --all-namespaces)'{-A,--all-namespaces}'[query cluster-wide]' '--last[number of flows]:count:' '(-f --follow)'{-f,--follow}'[keep streaming until Ctrl+C]'
+      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '(-n --namespace)'{-n,--namespace}'[namespace]:namespace:' '(-A --all-namespaces)'{-A,--all-namespaces}'[query cluster-wide]' '--last[number of flows]:count:' '(-f --follow)'{-f,--follow}'[keep streaming until Ctrl+C]' '--from-pod[only flows from pods with this name prefix]:pod:' '--from-label[only flows from endpoints with this label]:label:' '--from-ip[only flows from this IP or CIDR]:ip:' '--to-pod[only flows to pods with this name prefix]:pod:' '--to-service[only flows to this Service]:service:' '--to-label[only flows to endpoints with this label]:label:' '--to-ip[only flows to this IP or CIDR]:ip:' '--to-port[only flows to this port]:port:' '--verdict[only flows with this observed verdict]:verdict:(FORWARDED DROPPED AUDIT ERROR REDIRECTED TRACED TRANSLATED)' '--drop-reason-desc[only flows dropped for this reason]:reason:'
       ;;
     verdict)
-      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '(-n --namespace)'{-n,--namespace}'[namespace]:namespace:' '(-A --all-namespaces)'{-A,--all-namespaces}'[query cluster-wide]' '--last[number of flows to sample]:count:' '(-f --follow)'{-f,--follow}'[keep judging until Ctrl+C]' '--show-unchanged[also print UNCHANGED rows]' '*:candidate policy YAML:_files -g "*.yaml"'
+      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '(-n --namespace)'{-n,--namespace}'[namespace]:namespace:' '(-A --all-namespaces)'{-A,--all-namespaces}'[query cluster-wide]' '--last[number of flows to sample]:count:' '(-f --follow)'{-f,--follow}'[keep judging until Ctrl+C]' '--show-unchanged[also print UNCHANGED rows]' '--from-pod[only flows from pods with this name prefix]:pod:' '--from-label[only flows from endpoints with this label]:label:' '--from-ip[only flows from this IP or CIDR]:ip:' '--to-pod[only flows to pods with this name prefix]:pod:' '--to-service[only flows to this Service]:service:' '--to-label[only flows to endpoints with this label]:label:' '--to-ip[only flows to this IP or CIDR]:ip:' '--to-port[only flows to this port]:port:' '--verdict[only flows with this observed verdict]:verdict:(FORWARDED DROPPED AUDIT ERROR REDIRECTED TRACED TRANSLATED)' '--drop-reason-desc[only flows dropped for this reason]:reason:' '*:candidate policy YAML:_files -g "*.yaml"'
       ;;
     ui)
       _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--addr[address to listen on]:address:'

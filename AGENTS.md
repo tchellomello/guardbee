@@ -14,9 +14,11 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
 
 - `guardbee policies [-n <ns>|-A]` — lists live CNPs (namespaced) + CCNPs
   (cluster-wide) via the generated Cilium clientset. Pure read, proves RBAC.
-- `guardbee flows [-n <ns>|-A] [--last N] [-f]` — port-forwards to
+- `guardbee flows [-n <ns>|-A] [filters] [--last N] [-f]` — port-forwards to
   `hubble-relay` (`cilium-system` namespace) and streams real flows via
-  Hubble's `Observer.GetFlows` gRPC API.
+  Hubble's `Observer.GetFlows` gRPC API. Filters (`--from-*`/`--to-*`/
+  `--verdict`/`--drop-reason-desc`, hubble's names) are `flowFilter` in
+  `flows.go`, shared by `verdict` and the UI, and applied in Hubble's query.
 - `guardbee verdict [-n <ns>|-A] [--last N] [-f] <candidate.yaml>` — the
   actual engine. Judges real recent flows twice (baseline live policy vs.
   baseline+candidate) using **Cilium's own `pkg/policy` engine** — not a
@@ -149,7 +151,7 @@ main.go           entry point, subcommand dispatch, --help text
 globals.go        binName (single source of truth for the binary's name — see below)
 kube.go           shared flags (--namespace/-n, --all-namespaces/-A, --kubeconfig), clientset wiring
 policies.go       `policies` subcommand
-flows.go          `flows` subcommand (hubble-relay port-forward + GetFlows)
+flows.go          `flows` subcommand (hubble-relay port-forward + GetFlows) and `flowFilter`, the filter flags shared with `verdict`/the UI
 verdict.go        `verdict` subcommand — the core engine (690 lines, read this first for engine changes)
 templates.go      Policy Editor "preset" templates, loaded from templates/*.yaml, not hardcoded data
 ui.go             `ui` subcommand — local HTTP/JSON API over the same verdict/flows functions

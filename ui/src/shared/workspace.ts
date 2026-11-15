@@ -4,7 +4,7 @@
 // to the backend or the cluster (GuardBee stays read-only there).
 
 import type { PolicyModel } from '../policy'
-import { EMPTY_DESTINATION_FILTER, type DestinationFilter } from './destinationFilter'
+import { EMPTY_FLOW_FILTER, type FlowFilter } from './flowFilter'
 
 export interface SavedPolicy {
   id: string
@@ -121,7 +121,7 @@ export interface VerdictFormState {
   // The workspace entry this form was loaded from / last saved as, so Save
   // offers to update it instead of asking for a name again.
   savedName: string
-  filter: DestinationFilter
+  filter: FlowFilter
 }
 
 export const EMPTY_VERDICT_FORM: VerdictFormState = {
@@ -131,7 +131,7 @@ export const EMPTY_VERDICT_FORM: VerdictFormState = {
   showUnchanged: false,
   candidateYAML: '',
   savedName: '',
-  filter: EMPTY_DESTINATION_FILTER,
+  filter: EMPTY_FLOW_FILTER,
 }
 
 export function loadVerdictForm(): VerdictFormState {
@@ -140,7 +140,7 @@ export function loadVerdictForm(): VerdictFormState {
     if (parsed && typeof parsed === 'object' && typeof parsed.candidateYAML === 'string') {
       // filter merged separately so a form saved before it existed (or
       // missing a field) still gets every key.
-      return { ...EMPTY_VERDICT_FORM, ...parsed, filter: { ...EMPTY_DESTINATION_FILTER, ...parsed.filter } }
+      return { ...EMPTY_VERDICT_FORM, ...parsed, filter: { ...EMPTY_FLOW_FILTER, ...parsed.filter } }
     }
   } catch {
     // fall through

@@ -225,8 +225,10 @@ function AppContent() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <nav className="flex gap-1 rounded-sm border border-line bg-void/60 p-1">
+          {/* Wraps on a phone: the tab bar takes its own line, the icon
+              buttons the next, instead of pushing the page sideways. */}
+          <div className="flex max-w-full flex-wrap items-center gap-3">
+            <nav className="flex max-w-full gap-1 overflow-x-auto rounded-sm border border-line bg-void/60 p-1">
               <TabButton active={tab === 'verdict'} onClick={() => setTab('verdict')}>
                 Verdict
               </TabButton>

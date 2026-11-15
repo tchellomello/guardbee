@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { fetchFlows, fetchPods, type Flow, type FlowsResponse } from '../api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { fetchFlows, fetchPods, flowsQuery, type Flow, type FlowsResponse } from '../api'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { FlowsGraph } from './FlowsGraph'
 import { classifyTrafficPeer } from './RuleEditorCard'
@@ -7,6 +7,16 @@ import { parseNamespacePod } from '../shared/podLabels'
 import { downloadTextFile, flowsToCSV, flowsToText } from '../shared/tableExport'
 import { runsWithLiveGraphs } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
+import { GraphNodeLink } from './GraphNodeLink'
+import { FlowFilterFields } from './FlowFilterFields'
+import {
+  describeFlowFilter,
+  EMPTY_FLOW_FILTER,
+  flowFilterParams,
+  flowSuggestions,
+  isFlowFilterEmpty,
+  type FlowFilter,
+} from '../shared/flowFilter'
 import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel, type Protocol } from '../policy'
 
 // Flows' own L4 field is a pre-formatted "TCP:8080"/"UDP:53" string (see
@@ -34,9 +44,17 @@ export interface FlowsRunItem {
   namespace: string
   allNamespaces: boolean
   last: number
+  filter: FlowFilter
   result: FlowsResponse
   isCollapsed?: boolean
+  // A live --follow run: flows keep arriving until stopped.
+  isStreaming?: boolean
 }
+
+// A followed run keeps only its newest flows: unlike a one-shot sample it
+// has no natural end, so without a cap a tab left following grows without
+// bound. The graph has its own, lower limit (shared/graphBudget.ts).
+const MAX_FOLLOW_FLOWS = 2000
 
 export interface FlowsPanelProps {
   // Mirrors VerdictPanelProps's own policyNamespace/onAppendRuleToPolicy —
@@ -55,26 +73,97 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
   const [allNamespaces, setAllNamespaces] = useState(false)
   const [last, setLast] = useState(20)
   const [stackRuns, setStackRuns] = useState(false)
+  const [filter, setFilter] = useState<FlowFilter>(EMPTY_FLOW_FILTER)
+  const [follow, setFollow] = useState(false)
+  const [streaming, setStreaming] = useState(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const streamRunIdRef = useRef<string | null>(null)
 
   const [runs, setRuns] = useState<FlowsRunItem[]>([])
   const liveGraphRuns = useMemo(() => runsWithLiveGraphs(runs), [runs])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => () => eventSourceRef.current?.close(), [])
+
+  function stopStreaming() {
+    eventSourceRef.current?.close()
+    eventSourceRef.current = null
+    setStreaming(false)
+    const runId = streamRunIdRef.current
+    streamRunIdRef.current = null
+    if (runId) setRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, isStreaming: false } : r)))
+  }
+
+  // `guardbee flows --follow` over Server-Sent Events (GET /api/flows/stream),
+  // the same lifecycle as the Verdict tab's live mode.
+  function startStreaming(ns: string) {
+    stopStreaming()
+    setError(null)
+    const runId = crypto.randomUUID()
+    const run: FlowsRunItem = {
+      id: runId,
+      timestamp: new Date(),
+      namespace: ns,
+      allNamespaces,
+      last,
+      filter,
+      result: { namespace: ns, flows: [] },
+      isStreaming: true,
+    }
+    setRuns((prev) => (stackRuns ? [run, ...prev] : [run]))
+    streamRunIdRef.current = runId
+    setStreaming(true)
+
+    const query = flowsQuery(ns, last, flowFilterParams(filter))
+    const es = new EventSource(`/api/flows/stream?${query}`)
+    eventSourceRef.current = es
+    es.onmessage = (ev) => {
+      const flow = JSON.parse(ev.data) as Flow
+      setRuns((prev) =>
+        prev.map((r) => {
+          if (r.id !== runId) return r
+          const flows = [...r.result.flows, flow]
+          return { ...r, result: { ...r.result, flows: flows.slice(-MAX_FOLLOW_FLOWS) } }
+        })
+      )
+    }
+    es.onerror = () => {
+      const generic = 'Live stream disconnected — the backend may have stopped, or Hubble relay is unreachable.'
+      // EventSource hides the HTTP error body. CLOSED means the server
+      // refused the stream outright (e.g. an invalid filter), so one plain
+      // fetch returns promptly with the real reason.
+      if (es.readyState === EventSource.CLOSED) {
+        fetch(`/api/flows/stream?${query}`)
+          .then(async (res) => (res.ok ? generic : (await res.text()).trim() || generic))
+          .catch(() => generic)
+          .then(setError)
+      } else {
+        setError(generic)
+      }
+      stopStreaming()
+    }
+  }
+
   async function runFetch() {
+    const ns = allNamespaces ? '' : namespace
+    if (follow) {
+      startStreaming(ns)
+      return
+    }
     setLoading(true)
     setError(null)
     const runId = crypto.randomUUID()
-    const ns = allNamespaces ? '' : namespace
 
     try {
-      const res = await fetchFlows(ns, last)
+      const res = await fetchFlows(ns, last, flowFilterParams(filter))
       const newRun: FlowsRunItem = {
         id: runId,
         timestamp: new Date(),
         namespace: ns,
         allNamespaces,
         last,
+        filter,
         result: res,
       }
       setRuns((prev) => (stackRuns ? [newRun, ...prev] : [newRun]))
@@ -91,6 +180,9 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
   }
 
   function handleResetSession() {
+    stopStreaming()
+    setFilter(EMPTY_FLOW_FILTER)
+    setFollow(false)
     setRuns([])
     setError(null)
     setNamespace('')
@@ -99,6 +191,7 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
   }
 
   function handleClearResults() {
+    stopStreaming()
     setRuns([])
     setError(null)
   }
@@ -107,10 +200,12 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
     setNamespace(run.namespace)
     setAllNamespaces(run.allNamespaces)
     setLast(run.last)
+    setFilter(run.filter)
     setStackRuns(true)
   }
 
   function handleRemoveRun(id: string) {
+    if (id === streamRunIdRef.current) stopStreaming()
     setRuns((prev) => prev.filter((r) => r.id !== id))
   }
 
@@ -145,21 +240,42 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
             />
           </Field>
         </div>
-        <div className="flex items-center pb-2.5">
+        <div className="flex flex-col gap-1.5 pb-1">
           <CheckRow
             label="Stack runs (keep previous flows)"
             checked={stackRuns}
             onChange={setStackRuns}
           />
+          <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
         </div>
         <div className="flex gap-2">
-          <button
-            type="submit"
-            disabled={loading}
-            className="bg-signal px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-          >
-            {loading ? 'Fetching…' : 'Fetch flows'}
-          </button>
+          {/* Separate keys, so React swaps in a different element instead of
+              turning one button into the other. Re-rendered in place, the
+              Stop click's default action ran after the swap, on what was by
+              then type="submit" — submitting the form and restarting the
+              stream it had just stopped. */}
+          {streaming ? (
+            <button
+              key="stop"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                stopStreaming()
+              }}
+              className="border border-signal bg-signal/10 px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-signal uppercase transition-colors hover:bg-signal hover:text-void cursor-pointer"
+            >
+              Stop following
+            </button>
+          ) : (
+            <button
+              key="fetch"
+              type="submit"
+              disabled={loading}
+              className="bg-signal px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            >
+              {loading ? 'Fetching…' : follow ? 'Follow flows' : 'Fetch flows'}
+            </button>
+          )}
           <button
             type="button"
             onClick={handleResetSession}
@@ -168,6 +284,14 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
           >
             Reset
           </button>
+        </div>
+        <div className="min-w-0 basis-full">
+          <FlowFilterFields
+            filter={filter}
+            onChange={setFilter}
+            suggestions={flowSuggestions(runs.flatMap((r) => r.result.flows))}
+            intro="Show only the flows you care about."
+          />
         </div>
       </form>
 
@@ -304,6 +428,20 @@ function FlowRunCard({
           <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
             last: {run.last}
           </span>
+          {!isFlowFilterEmpty(run.filter) && (
+            <span
+              title="Only matching flows were fetched"
+              className="border border-signal/40 bg-signal/5 px-2 py-0.5 font-mono text-[0.7rem] text-signal"
+            >
+              only: {describeFlowFilter(run.filter)}
+            </span>
+          )}
+          {run.isStreaming && (
+            <span className="flex items-center gap-1.5 text-[0.7rem] text-signal">
+              <span className="glow-pulse h-2 w-2 rounded-full bg-signal" />
+              live · {run.result.flows.length} flow{run.result.flows.length === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -384,11 +522,18 @@ function FlowRunCard({
               <GraphPlaceholder reason="paused" onDraw={() => setShowPausedGraph(true)} />
             ))}
 
-          {flows.length === 0 && (
-            <p className="text-sm text-ink-dim">
-              No flows observed for this scope in Hubble's current buffer.
-            </p>
-          )}
+          {flows.length === 0 &&
+            (run.isStreaming ? (
+              <p className="flex items-center gap-2 text-sm text-ink-dim">
+                <span className="glow-pulse h-2 w-2 rounded-full bg-signal" />
+                Following — waiting for matching flows. They appear here as they happen.
+              </p>
+            ) : (
+              <p className="text-sm text-ink-dim">
+                No {isFlowFilterEmpty(run.filter) ? '' : 'matching '}flows observed for this scope in Hubble's current
+                buffer.
+              </p>
+            ))}
 
           {flows.length > 0 && (
             <div className="flex items-center justify-end gap-2">
@@ -737,28 +882,3 @@ function AddFlowToPolicyButton({
   )
 }
 
-// Makes a table cell's source/destination text clickable, selecting the
-// matching node in the FlowsGraph above — the same isolation effect as
-// clicking the box directly, triggered from the row instead.
-function GraphNodeLink({
-  selected,
-  onClick,
-  children,
-}: {
-  selected: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Select this node in the flow graph above"
-      className={`cursor-pointer text-left underline decoration-dotted underline-offset-2 transition-colors hover:text-signal ${
-        selected ? 'text-signal font-semibold' : ''
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
