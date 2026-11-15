@@ -53,6 +53,17 @@ guardbee flows -A --from-ip 10.0.0.0/8 --verdict DROPPED
 
 The UI's **Flows** tab has the same filters (under **Filters**) plus a **Follow (live)** option, and each run card shows the filter it ran with. A followed run keeps its newest 2000 flows. **Quick** buttons set common filters in one click (Dropped, Policy drops, From the internet, From nodes, To the API server). As you type, each field autocompletes from the traffic already fetched: pods (as workload prefixes like `app/web-` and as exact names), the identity labels Hubble reported (`k8s:app=web`, `reserved:world`), ports, verdicts, and every drop reason Cilium defines.
 
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — filters</span></div>
+<img src="../images/ui-flows-filters.png" alt="Flows tab with the Policy drops and From the internet quick filters on: only dropped flows from reserved:world into webapp are fetched, and the run card shows the filter it ran with" />
+</div>
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — autocomplete</span></div>
+<img src="../images/ui-flows-autocomplete.png" alt="Typing app into the From label field offers k8s:app=prometheus and k8s:app=webapp, identity labels seen in the fetched flows" />
+</div>
+
+
 > Port-forwards to the cluster's `hubble-relay` pod (`cilium-system`) and streams via Hubble's `Observer.GetFlows` gRPC API.
 
 ---
@@ -123,6 +134,18 @@ Your work in progress is kept in the browser (localStorage), never sent to the c
 To import a policy into the Policy Editor, paste it into **⤢ Expand / Edit**. The text stays exactly as you typed or pasted it, and the editor updates whenever it parses. **💾 Save** inside that box saves the text itself. That includes a policy the visual editor can't represent, and a paste with several `---`-separated policies; those are saved as-is and open in Verdict.
 
 To keep the browser responsive, a graph with more than 150 nodes or 300 edges isn't drawn automatically. You'll see a message instead, naming the filters that narrow the sample, and **Draw anyway** draws it. The table under the graph still lists every row. When runs are stacked, only the 3 newest expanded runs draw their graphs; older runs have a **Show graph** button. The header shows the binary's version and the Cilium engine it embeds.
+
+The Verdict tab puts the scope and the candidate policy side by side, with results and graphs at full width below. Every tab also works at phone width.
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict</span></div>
+<img src="../images/ui-verdict-layout.png" alt="Verdict tab: scope on the left, the candidate policy and Run verdict on the right, and a full-width result below with 17 newly dropped flows and the flow graph" />
+</div>
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · phone width</span></div>
+<img src="../images/ui-mobile-filters.png" alt="The Flows tab at phone width, with the form and quick filters stacked in one column" />
+</div>
 
 ---
 
