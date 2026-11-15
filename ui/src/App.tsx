@@ -283,6 +283,7 @@ function AppContent() {
             policyNamespace={policyModel.namespace}
             onAppendRuleToPolicy={handleAppendRule}
             onCreatePolicy={handleCreatePolicyFromFlow}
+            onEditPolicy={handleEditLivePolicy}
           />
         </div>
         <div className={tab === 'policies' ? '' : 'hidden'}>

@@ -9,19 +9,24 @@ const flow = (over: Partial<Flow> = {}): Flow => ({
   destination: 'reserved:kube-apiserver',
   l4: 'TCP:443',
   dropReason: 'POLICY_DENIED',
+  direction: 'EGRESS',
+  decision: 'default-deny',
+  decidedBy: 'default deny: no policy rule allows it',
   ...over,
 })
 
 describe('flowsToCSV', () => {
   it('writes a header and one CRLF-terminated row per flow', () => {
     expect(flowsToCSV([flow()])).toBe(
-      'Time,Verdict,Source,Destination,L4,Drop Reason\r\n' +
-        '2026-11-10T11:44:44Z,DROPPED,testing/netshoot-mmello,reserved:kube-apiserver,TCP:443,POLICY_DENIED\r\n'
+      'Time,Verdict,Direction,Source,Destination,L4,Decided By,Drop Reason\r\n' +
+        '2026-11-10T11:44:44Z,DROPPED,EGRESS,testing/netshoot-mmello,reserved:kube-apiserver,TCP:443,default deny: no policy rule allows it,POLICY_DENIED\r\n'
     )
   })
 
-  it('leaves a missing drop reason empty', () => {
-    expect(flowsToCSV([flow({ verdict: 'FORWARDED', dropReason: undefined })])).toContain('TCP:443,\r\n')
+  it('leaves a missing drop reason, direction and attribution empty', () => {
+    const out = flowsToCSV([flow({ verdict: 'FORWARDED', dropReason: undefined, direction: undefined, decision: undefined, decidedBy: undefined })])
+    expect(out).toContain('FORWARDED,,testing/netshoot-mmello')
+    expect(out).toContain('TCP:443,,\r\n')
   })
 
   it('quotes commas, quotes and newlines', () => {
@@ -36,15 +41,15 @@ describe('flowsToCSV', () => {
   })
 
   it('exports just the header for no flows', () => {
-    expect(flowsToCSV([])).toBe('Time,Verdict,Source,Destination,L4,Drop Reason\r\n')
+    expect(flowsToCSV([])).toBe('Time,Verdict,Direction,Source,Destination,L4,Decided By,Drop Reason\r\n')
   })
 })
 
 describe('flowsToText', () => {
   it('is tab-separated and flattens tabs/newlines inside values', () => {
     const out = flowsToText([flow({ source: 'a\tb\nc' })])
-    expect(out.split('\n')[0]).toBe('Time\tVerdict\tSource\tDestination\tL4\tDrop Reason')
-    expect(out.split('\n')[1].split('\t')[2]).toBe('a b c')
+    expect(out.split('\n')[0]).toBe('Time\tVerdict\tDirection\tSource\tDestination\tL4\tDecided By\tDrop Reason')
+    expect(out.split('\n')[1].split('\t')[3]).toBe('a b c')
   })
 })
 

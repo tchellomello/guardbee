@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: Commands
-description: GuardBee's subcommands — policies, flows, verdict, ui, and version.
+description: GuardBee's subcommands — policies, flows, blame, verdict, ui, and version.
 ---
 
 # Commands
@@ -30,7 +30,7 @@ guardbee policies [-n <namespace>|-A]
 Streams real traffic from Hubble.
 
 ```
-guardbee flows [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f]
+guardbee flows [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f]
 ```
 
 | Flag | Meaning |
@@ -38,12 +38,14 @@ guardbee flows [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc
 | `-n`, `--namespace` / `-A`, `--all-namespaces` | Scope flows to one namespace or every namespace |
 | `--last N` | Ceiling on flows fetched — Hubble's ring buffer may hold fewer |
 | `-f`, `--follow` | Keep tailing new flows until Ctrl+C, instead of stopping after `--last` |
+| `--pod` | Only flows where a pod with this name prefix is the source **or** the destination, like `hubble observe --pod` |
 | `--from-pod`, `--from-label`, `--from-ip` | Only flows from that source: a pod name prefix, a label or entity (`k8s:app=web`, `reserved:world`), or an IP/CIDR |
 | `--to-pod`, `--to-service`, `--to-label`, `--to-ip`, `--to-port` | Only flows going to that destination, the same way |
 | `--verdict` | Only flows with this observed verdict: `FORWARDED`, `DROPPED`, `AUDIT`, `ERROR`, `REDIRECTED`, `TRACED`, `TRANSLATED` |
 | `--drop-reason-desc` | Only flows dropped for this reason, e.g. `POLICY_DENIED`, `POLICY_DENY` (Cilium's `flow.DropReason` names) |
+| `--type` | Only events of this Hubble type: `policy-verdict`, `drop`, `trace`, `l7`, … (hubble's own names) |
 
-All filter flags use `hubble observe`'s own names and semantics. They're repeatable: repeats of one flag are ORed, different flags ANDed. A bare pod/service name means the `-n` namespace. They're applied in Hubble's query, so `--last 50` means 50 *matching* flows. Dropped flows also print their drop reason.
+All filter flags use `hubble observe`'s own names and semantics. They're repeatable: repeats of one flag are ORed, different flags ANDed. A bare pod/service name means the `-n` namespace (with `-A`, the `default` namespace, as in hubble). One difference: hubble refuses `--pod` together with `--from-pod`/`--to-pod`/`--to-ip`; here they simply AND, so `--pod web --to-ip 10.0.0.1` is web's own traffic to that IP. They're applied in Hubble's query, so `--last 50` means 50 *matching* flows. Dropped flows also print their drop reason.
 
 ```
 guardbee flows -n myapp --verdict DROPPED --drop-reason-desc POLICY_DENIED
@@ -51,7 +53,7 @@ guardbee flows -n myapp --from-label reserved:world --to-port 443 -f
 guardbee flows -A --from-ip 10.0.0.0/8 --verdict DROPPED
 ```
 
-The UI's **Flows** tab has the same filters (under **Filters**) plus a **Follow (live)** option, and each run card shows the filter it ran with. A followed run keeps its newest 2000 flows. **Quick** buttons set common filters in one click (Dropped, Policy drops, From the internet, From nodes, To the API server). As you type, each field autocompletes from the traffic already fetched: pods (as workload prefixes like `app/web-` and as exact names), the identity labels Hubble reported (`k8s:app=web`, `reserved:world`), ports, verdicts, and every drop reason Cilium defines.
+The UI's **Flows** tab has the same filters (under **Filters**) plus a **Follow (live)** option, and each run card shows the filter it ran with. A followed run keeps its newest 2000 flows. **Quick** buttons set common filters in one click (Dropped, Policy drops, Policy verdicts, From the internet, From nodes, To the API server). Each row also shows its **Direction** and **Decided by**, the same attribution `blame` prints. As you type, each field autocompletes from the traffic already fetched: pods (as workload prefixes like `app/web-` and as exact names), the identity labels Hubble reported (`k8s:app=web`, `reserved:world`), ports, verdicts, and every drop reason Cilium defines.
 
 <div class="shot">
 <div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — filters</span></div>
@@ -68,12 +70,61 @@ The UI's **Flows** tab has the same filters (under **Filters**) plus a **Follow 
 
 ---
 
+## `blame`
+
+Which live policy allowed or denied real traffic. Nothing is simulated: this reads the attribution Cilium's own agent attaches to each Hubble `policy-verdict` event (`ingress_allowed_by`, `egress_denied_by`, …), like `hubble observe --pod X --type policy-verdict -o json | jq`, without the `jq`.
+
+```
+guardbee blame [[namespace/]<pod-name>] [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--type ...] [--last N] [-f] [--format table|json|markdown]
+```
+
+| Flag | Meaning |
+|---|---|
+| `[namespace/]<pod-name>` | Same as `--pod`: flows where that pod is the source or the destination. Without `-n`/`-A`, its namespace becomes the scope |
+| `--type` | Defaults to `policy-verdict`, the only event Cilium attributes; pass another type to see other events (with no attribution) |
+| `--format` | `table` (default), `json` (one object per line with `--follow`), or `markdown` (one-shot only) for a ticket |
+| everything else | Same as `flows` |
+
+```
+guardbee blame myapp/api
+guardbee blame -n myapp api --verdict DROPPED
+guardbee blame myapp/netshoot --to-ip 169.254.169.254 -f
+guardbee blame -A --verdict DROPPED --format markdown
+```
+
+Each line shows the verdict, the side it was taken on (`INGRESS`/`EGRESS`), and who decided:
+
+| Decided by | Meaning |
+|---|---|
+| `allowed by CNP:ns/name, CCNP:name` | The policies whose rules allowed it |
+| `denied by CNP:ns/name` | An explicit deny rule (`ingressDeny`/`egressDeny`) dropped it |
+| `denied by a deny rule, not attributed by Hubble` | Dropped as `POLICY_DENY` (a deny rule matched), but Hubble couldn't say which |
+| `default deny: no policy rule allows it` | Dropped as `POLICY_DENIED`: the endpoint is selected by some policy, but no rule allows this peer/port. The fix is an allow rule, not hunting for a deny rule |
+| `audit: would be denied by …` | Audit mode let it through; enforcement would drop it |
+| `allowed, no policy attributed by Hubble` | Allowed, but Hubble attached no policy. It doesn't prove no policy selects the endpoint, so it isn't reported as such |
+
+Kinds are Cilium's own: `CNP`, `CCNP`, or spelled out (`NetworkPolicy:ns/name`). Attribution needs Hubble's policy correlation, which is on by default (`hubble-network-policy-correlation-enabled`). It can also be missing for flows with no port.
+
+In the UI's **Flows** tab, the **Policy verdicts** quick filter and the **Either side → Pod** field give the same view. Each `✎ CNP:`/`✎ CCNP:` badge opens that live policy in the **Policy Editor**, ready to fix and run through Verdict.
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — decided by</span></div>
+<img src="../images/ui-blame-decided-by.png" alt="Flows tab filtered to postgres policy verdicts: each row shows its direction and which policy decided it, with CNP and CCNP badges that open the live policy in the Policy Editor" />
+</div>
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — default deny</span></div>
+<img src="../images/ui-blame-default-deny.png" alt="Internet traffic into webapp dropped with POLICY_DENIED, shown as default deny: no policy rule allows it" />
+</div>
+
+---
+
 ## `verdict`
 
 The engine. Diffs a candidate policy against live traffic — judged once against today's policy, once with the candidate added.
 
 ```
-guardbee verdict [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f] <candidate.yaml>
+guardbee verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f] <candidate.yaml>
 ```
 
 | Flag | Meaning |
@@ -81,7 +132,7 @@ guardbee verdict [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-de
 | `-n`, `--namespace` | Right for a CNP candidate — it can only ever affect its own namespace |
 | `-A`, `--all-namespaces` | Right for a CCNP candidate — it can span namespaces, so sampling needs to as well |
 | `--last N` / `-f`, `--follow` | Same as `flows` |
-| `--from-*`, `--to-*`, `--verdict`, `--drop-reason-desc` | Same as `flows`: judge only matching flows. `--verdict` is the flow's verdict *today*, so `--verdict DROPPED` asks which of today's drops the candidate would newly allow |
+| `--pod`, `--from-*`, `--to-*`, `--verdict`, `--drop-reason-desc`, `--type` | Same as `flows`: judge only matching flows. `--verdict` is the flow's verdict *today*, so `--verdict DROPPED` asks which of today's drops the candidate would newly allow |
 | `--show-unchanged` | Also print `UNCHANGED` rows (default: just a count) |
 | `--replace-existing` | Judge the candidate as replacing a live policy with the same kind, namespace and name, instead of adding it on top |
 | `--fail-on-dropped` | Exit `2` if any sampled flow is `NEWLY_DROPPED` |
@@ -127,7 +178,7 @@ A local web UI for the same engine — pick a namespace, build or paste a candid
 guardbee ui [--addr host:port]
 ```
 
-> Calls the exact same `computeVerdict`/`fetchFlows` functions the CLI uses — never a parallel implementation, so the UI and CLI can't disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via `go:embed` (the same pattern Argo CD's own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.
+> Calls the exact same `computeVerdict`/`fetchFlows`/`flowAttribution` functions the CLI uses — never a parallel implementation, so the UI and CLI can't disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via `go:embed` (the same pattern Argo CD's own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.
 
 Your work in progress is kept in the browser (localStorage), never sent to the cluster. The Policy Editor draft and the Verdict tab's candidate, namespace and scope auto-save, so a reload restores them. Verdict results aren't restored: they're snapshots of live traffic. **💾 Save** (Verdict candidate box or Policy Editor output) adds a named entry to **Saved policies** (header icon). From there you can reopen an entry in Verdict or the Editor, rename, duplicate or delete it, or download it as `.yaml`.
 

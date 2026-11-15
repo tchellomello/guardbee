@@ -41,14 +41,20 @@ describe('describeFlowFilter', () => {
     expect(
       describeFlowFilter({ ...EMPTY_FLOW_FILTER, fromLabel: 'reserved:world', fromIp: '10.0.0.0/8', verdict: 'DROPPED', dropReason: 'POLICY_DENIED' })
     ).toBe('from label reserved:world · from 10.0.0.0/8 · DROPPED · reason POLICY_DENIED')
+    expect(describeFlowFilter({ ...EMPTY_FLOW_FILTER, pod: 'app/web', type: 'policy-verdict' })).toBe(
+      'pod app/web · type policy-verdict'
+    )
   })
 })
 
 describe('appendFlowFilter', () => {
   it('repeats keys for multiple values', () => {
     const p = new URLSearchParams()
-    appendFlowFilter(p, { ...EMPTY_FLOW_FILTER, toPort: '443,80' })
+    appendFlowFilter(p, { ...EMPTY_FLOW_FILTER, toPort: '443,80', pod: 'web, db', type: 'policy-verdict' })
     expect(p.getAll('toPort')).toEqual(['443', '80'])
+    // ui.go's flowFilterParamsFromQuery reads --pod/--type as pod/type.
+    expect(p.getAll('pod')).toEqual(['web', 'db'])
+    expect(p.getAll('type')).toEqual(['policy-verdict'])
   })
 })
 
@@ -156,6 +162,8 @@ describe('flowSuggestions', () => {
     expect(s.fromPod).toEqual(['app/web-', 'app/web-7d9f8c6b4-x2k9p'])
     expect(s.fromLabel).toEqual(['reserved:world'])
     expect(s.toPod).toEqual(['app/db-', 'app/db-0'])
+    // --pod is either side, so it's offered both sides' workloads.
+    expect(s.pod).toEqual(['app/db-', 'app/db-0', 'app/web-', 'app/web-7d9f8c6b4-x2k9p'])
     expect(s.toLabel).toEqual(['k8s:app=db']) // identity labels Hubble reported
     expect(s.toPort).toEqual(['443', '5432']) // one each: ties sort alphabetically
     expect(s.verdict).toEqual(['FORWARDED', 'DROPPED'])

@@ -47,11 +47,13 @@ GuardBee runs locally with your own kubeconfig and read-only RBAC.
 
 ## What's here today
 
-Four subcommands — `policies`, `flows`, `verdict`, and a local `ui` — all
-read-only against the cluster. `verdict` is the actual engine: it diffs a
-candidate `CiliumNetworkPolicy`/`CiliumClusterwideNetworkPolicy` against
-today's live policy state, judging real recent Hubble flows against both,
-using Cilium's own `pkg/policy` engine. See the
+Five subcommands — `policies`, `flows`, `blame`, `verdict`, and a local
+`ui` — all read-only against the cluster. `verdict` is the actual engine:
+it diffs a candidate `CiliumNetworkPolicy`/`CiliumClusterwideNetworkPolicy`
+against today's live policy state, judging real recent Hubble flows against
+both, using Cilium's own `pkg/policy` engine. `blame` is for day-2
+debugging: for a pod or namespace, which live policy (or default deny)
+allowed or dropped each real flow, as Cilium itself attributed it. See the
 **[full command reference](https://tchellomello.github.io/guardbee/guide/commands.html)**
 and **[how verdict works](https://tchellomello.github.io/guardbee/guide/how-it-works.html)**
 for flag-by-flag detail, known v1 simplifications, and two real
@@ -73,6 +75,7 @@ regressions it caught.
 mise run build
 export KUBECONFIG=/path/to/kubeconfig
 ./guardbee verdict -n your-namespace --last 50 your-candidate.yaml
+./guardbee blame your-namespace/your-pod --verdict DROPPED
 ./guardbee ui
 ```
 

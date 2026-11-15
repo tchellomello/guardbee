@@ -5,10 +5,10 @@ _guardbee_complete() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    subcommands="policies flows verdict ui version compat"
+    subcommands="policies flows blame verdict ui version compat"
     common_flags="--kubeconfig --namespace -n --all-namespaces -A"
-    # Flow filters (flowFilter in flows.go), shared by flows and verdict.
-    filter_flags="--from-pod --from-label --from-ip --to-pod --to-service --to-label --to-ip --to-port --verdict --drop-reason-desc"
+    # Flow filters (flowFilter in flows.go), shared by flows, blame and verdict.
+    filter_flags="--pod --from-pod --from-label --from-ip --to-pod --to-service --to-label --to-ip --to-port --verdict --drop-reason-desc --type"
 
     if [[ "$COMP_CWORD" -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
@@ -21,6 +21,9 @@ _guardbee_complete() {
             ;;
         flows)
             COMPREPLY=($(compgen -W "$common_flags $filter_flags --last --follow -f" -- "$cur"))
+            ;;
+        blame)
+            COMPREPLY=($(compgen -W "$common_flags $filter_flags --last --follow -f --format" -- "$cur"))
             ;;
         verdict)
             if [[ "$cur" == -* ]]; then

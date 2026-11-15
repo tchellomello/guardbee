@@ -1,11 +1,11 @@
 import type { Flow, VerdictRow } from '../api'
 
-export const FLOW_COLUMNS = ['Time', 'Verdict', 'Source', 'Destination', 'L4', 'Drop Reason'] as const
+export const FLOW_COLUMNS = ['Time', 'Verdict', 'Direction', 'Source', 'Destination', 'L4', 'Decided By', 'Drop Reason'] as const
 
 // Raw ISO time rather than the on-screen toLocaleTimeString(): an export is
 // read by other tools, and a time-of-day string loses the date and timezone.
 function flowCells(f: Flow): string[] {
-  return [f.time, f.verdict, f.source, f.destination, f.l4, f.dropReason ?? '']
+  return [f.time, f.verdict, f.direction ?? '', f.source, f.destination, f.l4, f.decidedBy ?? '', f.dropReason ?? '']
 }
 
 // A cell that starts with = + - @ (or a control char) is executed as a
