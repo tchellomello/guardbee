@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchFlows, fetchPods, type Flow, type FlowsResponse } from '../api'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { FlowsGraph } from './FlowsGraph'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { parseNamespacePod } from '../shared/podLabels'
 import { downloadTextFile, flowsToCSV, flowsToText } from '../shared/tableExport'
+import { runsWithLiveGraphs } from '../shared/graphBudget'
+import { GraphPlaceholder } from './GraphPlaceholder'
 import { BLANK_POLICY, type EgressRule, type IngressRule, type PolicyModel, type Protocol } from '../policy'
 
 // Flows' own L4 field is a pre-formatted "TCP:8080"/"UDP:53" string (see
@@ -55,6 +57,7 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
   const [stackRuns, setStackRuns] = useState(false)
 
   const [runs, setRuns] = useState<FlowsRunItem[]>([])
+  const liveGraphRuns = useMemo(() => runsWithLiveGraphs(runs), [runs])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -213,6 +216,7 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
         <FlowRunCard
           key={run.id}
           run={run}
+          graphLive={liveGraphRuns.has(run.id)}
           runNumber={runs.length - index}
           onDuplicate={handleDuplicateToForm}
           onRemove={handleRemoveRun}
@@ -226,8 +230,15 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
   )
 }
 
+const FLOWS_GRAPH_HINTS = [
+  'pick a single namespace instead of all namespaces',
+  'lower Last',
+  'collapse or remove older runs',
+]
+
 function FlowRunCard({
   run,
+  graphLive,
   runNumber,
   onDuplicate,
   onRemove,
@@ -237,6 +248,9 @@ function FlowRunCard({
   onCreatePolicy,
 }: {
   run: FlowsRunItem
+  // False for an older stacked run past LIVE_GRAPH_RUN_LIMIT (see
+  // shared/graphBudget.ts): its graph waits behind a "Show graph" button.
+  graphLive: boolean
   runNumber: number
   onDuplicate: (run: FlowsRunItem) => void
   onRemove: (id: string) => void
@@ -247,6 +261,7 @@ function FlowRunCard({
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [showPausedGraph, setShowPausedGraph] = useState(false)
 
   const { result } = run
   const flows = result.flows
@@ -357,13 +372,17 @@ function FlowRunCard({
           ) : null}
 
           {/* Interactive Flow Graph */}
-          {flows.length > 0 && (
-            <FlowsGraph
-              flows={flows}
-              selectedNodeId={selectedGraphNode}
-              onSelectNode={setSelectedGraphNode}
-            />
-          )}
+          {flows.length > 0 &&
+            (graphLive || showPausedGraph ? (
+              <FlowsGraph
+                flows={flows}
+                selectedNodeId={selectedGraphNode}
+                onSelectNode={setSelectedGraphNode}
+                hints={FLOWS_GRAPH_HINTS}
+              />
+            ) : (
+              <GraphPlaceholder reason="paused" onDraw={() => setShowPausedGraph(true)} />
+            ))}
 
           {flows.length === 0 && (
             <p className="text-sm text-ink-dim">

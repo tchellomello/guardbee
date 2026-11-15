@@ -145,6 +145,8 @@ func (s *uiServer) handleTemplates(w http.ResponseWriter, r *http.Request) {
 // or every node's version was unparseable — the banner renders nothing in
 // that case, same as the CLI prints nothing.
 type versionResponse struct {
+	// Binary is this build's own version (version.go), shown in the UI header.
+	Binary       string   `json:"binary"`
 	Pinned       string   `json:"pinned"`
 	Detected     string   `json:"detected,omitempty"`
 	Skewed       bool     `json:"skewed"`
@@ -153,9 +155,18 @@ type versionResponse struct {
 	Unknown      bool     `json:"unknown"`
 }
 
+// handleVersion backs GET /api/version. ?client=1 skips cluster detection,
+// like `guardbee version --client`: the header shows the binary version on
+// page load, without waiting up to the detection timeout for hubble-relay.
 func (s *uiServer) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.URL.Query().Get("client") == "1" {
+		_ = json.NewEncoder(w).Encode(versionResponse{Binary: version, Pinned: pinnedCiliumVersion, Unknown: true})
+		return
+	}
 	status := detectClusterCiliumVersion(r.Context(), s.core, s.cfg)
 	resp := versionResponse{
+		Binary:       version,
 		Pinned:       pinnedCiliumVersion,
 		Detected:     status.detected,
 		Skewed:       status.state == clusterVersionSkewed,
@@ -163,8 +174,6 @@ func (s *uiServer) handleVersion(w http.ResponseWriter, r *http.Request) {
 		NodeVersions: status.nodeVersions,
 		Unknown:      status.state == clusterVersionUnknown,
 	}
-
-	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
@@ -738,8 +747,13 @@ type policyParseResponse struct {
 	// scoped deny, or an unmanaged ingress side, the editor model can't express). The
 	// frontend must not replace the user's text with a regenerated policy
 	// when this is set — see policyFitsEditorModel.
-	Lossy bool   `json:"lossy,omitempty"`
-	Error string `json:"error,omitempty"`
+	Lossy bool `json:"lossy,omitempty"`
+	// Documents is the number of policies in a multi-document paste
+	// ("---"-separated). The editor holds one policy, so more than one is
+	// always Lossy: Policy is only the first, and the frontend keeps the
+	// user's text instead of silently dropping the rest.
+	Documents int    `json:"documents,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // handlePolicyParse backs POST /api/policy/parse — the Policy Editor's
@@ -774,7 +788,26 @@ func (s *uiServer) handlePolicyParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decoded, err := decodeCandidateYAML([]byte(req.CandidateYAML), req.Namespace)
+	// A multi-document paste is judged as a whole by verdict
+	// (parseCandidateYAML), so validate it the same way here, then build the
+	// editor model from its first document only.
+	docs, err := splitYAMLDocuments([]byte(req.CandidateYAML))
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(policyParseResponse{Valid: false, Error: err.Error()})
+		return
+	}
+	if len(docs) > 1 {
+		if _, err := parseCandidateYAML(s.logger, []byte(req.CandidateYAML), req.Namespace); err != nil {
+			_ = json.NewEncoder(w).Encode(policyParseResponse{Valid: false, Error: err.Error()})
+			return
+		}
+	}
+	first := []byte(req.CandidateYAML)
+	if len(docs) > 0 {
+		first = docs[0]
+	}
+
+	decoded, err := decodeCandidateYAML(first, req.Namespace)
 	if err != nil {
 		_ = json.NewEncoder(w).Encode(policyParseResponse{
 			Valid: false,
@@ -812,6 +845,11 @@ func (s *uiServer) handlePolicyParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(policyParseResponse{Valid: true, Policy: &model, Lossy: lossy})
+	resp := policyParseResponse{Valid: true, Policy: &model, Lossy: lossy}
+	if len(docs) > 1 {
+		resp.Lossy = true
+		resp.Documents = len(docs)
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 

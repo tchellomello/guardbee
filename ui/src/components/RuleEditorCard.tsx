@@ -15,6 +15,7 @@ import {
   workloadSignature,
 } from '../shared/podLabels'
 import { useAnchoredPosition } from '../shared/useAnchoredPosition'
+import { parseCommaList, sameList } from '../shared/draftInputs'
 import type { EgressRule, EndpointSelectorRule, IngressRule, K8sServiceRef, Protocol } from '../policy'
 
 export function RuleEditorCard({
@@ -108,8 +109,7 @@ export function RuleEditorCard({
   // CIDRs
   const cidrs = isIngress ? (rule as IngressRule).fromCIDRs : (rule as EgressRule).toCIDRs
 
-  function handleCIDRChange(val: string) {
-    const parts = val.split(',').map((s) => s.trim()).filter(Boolean)
+  function handleCIDRChange(parts: string[]) {
     onUpdate(isIngress ? { ...rule, fromCIDRs: parts } : { ...rule, toCIDRs: parts })
   }
 
@@ -202,43 +202,15 @@ export function RuleEditorCard({
           </div>
         </div>
 
-        {endpoints.map((ep, idx) => {
-          const [labelKey = '', labelVal = ''] = Object.entries(ep.matchLabels)[0] || []
-          return (
-            <div key={idx} className="flex flex-wrap items-center gap-2">
-              <input
-                type="text"
-                value={labelKey}
-                placeholder="label (app)"
-                onChange={(e) => handleUpdateEndpoint(idx, e.target.value, labelVal)}
-                className="w-28 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
-              />
-              <span className="text-ink-dim font-bold">=</span>
-              <input
-                type="text"
-                value={labelVal}
-                placeholder="value (frontend)"
-                onChange={(e) => handleUpdateEndpoint(idx, labelKey, e.target.value)}
-                className="w-32 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
-              />
-              <input
-                type="text"
-                list="rule-editor-peer-namespaces"
-                value={ep.namespace || ''}
-                placeholder="namespace (optional)"
-                onChange={(e) => handleUpdateEndpoint(idx, labelKey, labelVal, e.target.value)}
-                className="w-36 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => handleRemoveEndpoint(idx)}
-                className="text-xs text-ink-dim hover:text-drop cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-          )
-        })}
+        {endpoints.map((ep, idx) => (
+          <PeerLabelRow
+            key={idx}
+            matchLabels={ep.matchLabels}
+            namespace={ep.namespace || ''}
+            onChange={(key, value, ns) => handleUpdateEndpoint(idx, key, value, ns)}
+            onRemove={() => handleRemoveEndpoint(idx)}
+          />
+        ))}
         <datalist id="rule-editor-peer-namespaces">
           {availableNamespaces.map((ns) => (
             <option key={ns} value={ns} />
@@ -335,11 +307,10 @@ export function RuleEditorCard({
           <label className="block mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
             🌐 CIDR Subnets ({isIngress ? 'fromCIDR' : 'toCIDR'})
           </label>
-          <input
-            type="text"
-            value={cidrs.join(', ')}
+          <CommaListInput
+            values={cidrs}
             placeholder="10.0.0.0/8, 192.168.1.0/24"
-            onChange={(e) => handleCIDRChange(e.target.value)}
+            onChange={handleCIDRChange}
             className="w-full border border-line bg-void px-2.5 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
           />
         </div>
@@ -877,6 +848,111 @@ function AddPeerMenu({
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// A comma-separated list field (CIDRs) that shows exactly what was typed and
+// reports the parsed list. Re-rendering it from values.join(', ') instead
+// ate the ", " separator the moment it was typed, so a second entry could
+// never be started. A change from elsewhere (e.g. "add from cluster")
+// replaces the text only when it no longer matches what's typed.
+function CommaListInput({
+  values,
+  onChange,
+  placeholder,
+  className,
+}: {
+  values: string[]
+  onChange: (values: string[]) => void
+  placeholder?: string
+  className?: string
+}) {
+  const [text, setText] = useState(() => values.join(', '))
+  const [seenValues, setSeenValues] = useState(values)
+  if (seenValues !== values) {
+    setSeenValues(values)
+    if (!sameList(parseCommaList(text), values)) setText(values.join(', '))
+  }
+  return (
+    <input
+      type="text"
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => {
+        setText(e.target.value)
+        const parsed = parseCommaList(e.target.value)
+        if (!sameList(parsed, values)) onChange(parsed)
+      }}
+      className={className}
+    />
+  )
+}
+
+// One peer endpoint's label=value (+ namespace). Keeps its own key and value
+// while typing: the model can only hold {key: value} once the key is
+// non-empty, and storing {} for an empty key used to throw the typed value
+// away (clear the key to retype it, or type the value first, and it was gone).
+function PeerLabelRow({
+  matchLabels,
+  namespace,
+  onChange,
+  onRemove,
+}: {
+  matchLabels: Record<string, string>
+  namespace: string
+  onChange: (key: string, value: string, namespace: string) => void
+  onRemove: () => void
+}) {
+  const [modelKey = '', modelValue = ''] = Object.entries(matchLabels)[0] || []
+  const [labelKey, setLabelKey] = useState(modelKey)
+  const [labelVal, setLabelVal] = useState(modelValue)
+  const [seen, setSeen] = useState(matchLabels)
+  if (seen !== matchLabels) {
+    setSeen(matchLabels)
+    // Adopt an outside change, but not the {} this row itself committed for
+    // a still-empty key.
+    const committed = labelKey.trim() ? { [labelKey.trim()]: labelVal } : {}
+    if (JSON.stringify(committed) !== JSON.stringify(matchLabels)) {
+      setLabelKey(modelKey)
+      setLabelVal(modelValue)
+    }
+  }
+
+  function update(key: string, value: string, ns: string) {
+    setLabelKey(key)
+    setLabelVal(value)
+    onChange(key.trim(), value, ns)
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="text"
+        value={labelKey}
+        placeholder="label (app)"
+        onChange={(e) => update(e.target.value, labelVal, namespace)}
+        className="w-28 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
+      />
+      <span className="text-ink-dim font-bold">=</span>
+      <input
+        type="text"
+        value={labelVal}
+        placeholder="value (frontend)"
+        onChange={(e) => update(labelKey, e.target.value, namespace)}
+        className="w-32 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
+      />
+      <input
+        type="text"
+        list="rule-editor-peer-namespaces"
+        value={namespace}
+        placeholder="namespace (optional)"
+        onChange={(e) => update(labelKey, labelVal, e.target.value)}
+        className="w-36 border border-line bg-void px-2 py-1 text-xs text-ink font-mono focus:border-signal focus:outline-none"
+      />
+      <button type="button" onClick={onRemove} className="text-xs text-ink-dim hover:text-drop cursor-pointer">
+        ✕
+      </button>
     </div>
   )
 }

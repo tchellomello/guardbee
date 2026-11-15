@@ -12,7 +12,7 @@ import { HomepageLink } from './components/HomepageLink'
 import { GitHubLink } from './components/GitHubLink'
 import { VersionBanner } from './components/VersionBanner'
 import { ThemeProvider } from './theme'
-import type { EditablePolicyModel } from './api'
+import { fetchClientVersion, type EditablePolicyModel, type VersionInfo } from './api'
 import { BLANK_POLICY, generateCiliumNetworkPolicyYAML, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 import {
   WORKSPACE_STORAGE_KEY,
@@ -212,15 +212,18 @@ function AppContent() {
       <header className="border-b border-line bg-panel/70 backdrop-blur-sm">
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5 lg:px-10">
           <div className="rise-in">
-            <div className="flex items-center gap-2.5">
-              <img src="/guardbee-logo.svg" alt="GuardBee" className="h-14 w-14 shrink-0 rounded" />
-              <h1 className="font-display text-lg font-bold tracking-[0.08em] text-ink uppercase">
-                GuardBee
-              </h1>
+            <div className="flex items-center gap-3.5">
+              <img src="/guardbee-logo.svg" alt="GuardBee" className="h-20 w-20 shrink-0 rounded" />
+              <div>
+                <h1 className="font-display text-2xl font-bold tracking-[0.08em] text-ink uppercase">
+                  GuardBee
+                </h1>
+                <p className="mt-0.5 text-xs text-ink-dim">
+                  which real flows on this cluster would a candidate policy break or newly allow?
+                </p>
+                <BuildVersion />
+              </div>
             </div>
-            <p className="mt-1 sm:pl-16.5 text-xs text-ink-dim">
-              which real flows on this cluster would a candidate policy break or newly allow?
-            </p>
           </div>
           <div className="flex items-center gap-3">
             <nav className="flex gap-1 rounded-sm border border-line bg-void/60 p-1">
@@ -291,6 +294,7 @@ function AppContent() {
             onConsumeAutoSelect={() => setAutoSelectNodeId(null)}
             onSendToVerdict={handleSendToVerdict}
             onSavePolicy={handleSaveEditorDraft}
+            onSaveRawPolicy={handleSavePolicy}
             originalLiveModel={originalLiveModel}
             onClearOriginalLiveModel={() => setOriginalLiveModel(null)}
           />
@@ -319,5 +323,23 @@ function TabButton({
     >
       {children}
     </button>
+  )
+}
+
+// The binary's own version and the Cilium engine it embeds, under the title.
+// Fetched with ?client=1 so it shows immediately, without waiting on cluster
+// detection (VersionBanner covers the cluster side).
+function BuildVersion() {
+  const [info, setInfo] = useState<VersionInfo | null>(null)
+  useEffect(() => {
+    fetchClientVersion()
+      .then(setInfo)
+      .catch(() => {})
+  }, [])
+  if (!info) return null
+  return (
+    <p className="mt-1 font-mono text-[0.65rem] text-ink-faint" title="guardbee version --client">
+      {info.binary} · cilium engine {info.pinned}
+    </p>
   )
 }

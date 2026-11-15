@@ -28,6 +28,13 @@ import { AddRuleMenu, RuleEditorCard } from './RuleEditorCard'
 import { groupPodsBySignature, useNamespacePods } from '../shared/podLabels'
 import { useAnchoredPosition } from '../shared/useAnchoredPosition'
 import {
+  duplicateLabelKeys,
+  labelsToRows,
+  rowsToLabels,
+  sameLabels,
+  type LabelRow,
+} from '../shared/draftInputs'
+import {
   ruleHasNoEffectiveSelector,
   ruleProducesNoOutput,
   type EgressRule,
@@ -619,6 +626,15 @@ function SelectedNodeEditorPanel({
   )
 }
 
+// Row ids only need to be unique for React keys, so one counter for the
+// whole module is enough (and keeps refs out of render).
+let labelRowSeq = 0
+function freshLabelRows(labels: Record<string, string>): LabelRow[] {
+  const rows = labelsToRows(labels, labelRowSeq)
+  labelRowSeq += rows.length
+  return rows
+}
+
 // Editable endpointSelector for the target workload node — the target's
 // own namespace is already known (policy.namespace), so picking a running
 // workload from the cluster needs no extra namespace input, unlike peer
@@ -638,22 +654,35 @@ function TargetLabelEditor({
   const pickerTriggerRef = useRef<HTMLButtonElement>(null)
   const pickerPos = useAnchoredPosition(pickerTriggerRef, pickerOpen)
 
+  // The rows being edited, not the model's labels object: a half-typed key,
+  // an empty new row, or a key that briefly equals another one all have to
+  // survive while typing (see shared/draftInputs.ts). The model gets
+  // rowsToLabels(rows); a change made elsewhere (cluster picker, YAML import)
+  // replaces the rows when it no longer matches them.
+  const [rows, setRows] = useState<LabelRow[]>(() => freshLabelRows(labels))
+  const [seenLabels, setSeenLabels] = useState(labels)
+  if (seenLabels !== labels) {
+    setSeenLabels(labels)
+    if (!sameLabels(rowsToLabels(rows), labels)) setRows(freshLabelRows(labels))
+  }
+  const duplicates = duplicateLabelKeys(rows)
+
+  function commit(next: LabelRow[]) {
+    setRows(next)
+    const nextLabels = rowsToLabels(next)
+    if (!sameLabels(nextLabels, labels)) onUpdate(nextLabels)
+  }
+
   function handleAddLabel() {
-    onUpdate({ ...labels, '': '' })
+    commit([...rows, { id: labelRowSeq++, key: '', value: '' }])
   }
 
-  function handleUpdateLabel(oldKey: string, newKey: string, value: string) {
-    const next: Record<string, string> = {}
-    for (const [k, v] of Object.entries(labels)) {
-      next[k === oldKey ? newKey : k] = k === oldKey ? value : v
-    }
-    onUpdate(next)
+  function handleUpdateRow(id: number, key: string, value: string) {
+    commit(rows.map((r) => (r.id === id ? { ...r, key, value } : r)))
   }
 
-  function handleRemoveLabel(key: string) {
-    const next = { ...labels }
-    delete next[key]
-    onUpdate(next)
+  function handleRemoveRow(id: number) {
+    commit(rows.filter((r) => r.id !== id))
   }
 
   return (
@@ -726,26 +755,30 @@ function TargetLabelEditor({
       </div>
 
       <div className="space-y-2">
-        {Object.entries(labels).map(([k, v], idx) => (
-          <div key={idx} className="flex items-center gap-2">
+        {rows.map((row) => (
+          <div key={row.id} className="flex items-center gap-2">
             <input
               type="text"
-              value={k}
+              value={row.key}
               placeholder="label key"
-              onChange={(e) => handleUpdateLabel(k, e.target.value, v)}
-              className="flex-1 border border-line bg-void px-2.5 py-1.5 text-xs text-ink font-mono focus:border-signal focus:outline-none"
+              aria-invalid={duplicates.has(row.key.trim()) || undefined}
+              title={duplicates.has(row.key.trim()) ? 'Duplicate key: only the first row with this key is used' : undefined}
+              onChange={(e) => handleUpdateRow(row.id, e.target.value, row.value)}
+              className={`flex-1 border bg-void px-2.5 py-1.5 text-xs text-ink font-mono focus:outline-none ${
+                duplicates.has(row.key.trim()) ? 'border-drop' : 'border-line focus:border-signal'
+              }`}
             />
             <span className="text-ink-dim font-bold">=</span>
             <input
               type="text"
-              value={v}
+              value={row.value}
               placeholder="value"
-              onChange={(e) => handleUpdateLabel(k, k, e.target.value)}
+              onChange={(e) => handleUpdateRow(row.id, row.key, e.target.value)}
               className="flex-1 border border-line bg-void px-2.5 py-1.5 text-xs text-ink font-mono focus:border-signal focus:outline-none"
             />
             <button
               type="button"
-              onClick={() => handleRemoveLabel(k)}
+              onClick={() => handleRemoveRow(row.id)}
               className="px-2 py-1 text-xs text-ink-dim hover:text-drop cursor-pointer"
               title="Remove label"
             >
@@ -753,7 +786,7 @@ function TargetLabelEditor({
             </button>
           </div>
         ))}
-        {Object.keys(labels).length === 0 && (
+        {rows.length === 0 && (
           <p className="text-xs text-ink-faint italic">
             No labels specified — matches all workloads in namespace (
             <code className="text-signal">matchLabels: &#123;&#125;</code>).
