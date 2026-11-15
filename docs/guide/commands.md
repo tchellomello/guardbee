@@ -6,7 +6,7 @@ description: GuardBee's subcommands — policies, flows, verdict, ui, and versio
 
 # Commands
 
-Every one of these except `version` is read-only against the cluster.
+All of these are read-only against the cluster.
 
 ## `policies`
 
@@ -111,11 +111,23 @@ Your work in progress is kept in the browser (localStorage), never sent to the c
 
 ## `version`
 
-Prints the version this binary was built from — never touches the cluster.
+Prints the version this binary was built from and the Cilium version its engine is pinned to. When a kubeconfig is available it also prints the Cilium version running on that cluster, read-only via hubble-relay (the same detection behind the version-skew warning), with a 5-second timeout. Without a kubeconfig, or with `--client`, it never touches the cluster.
 
 ```
 guardbee version
+guardbee dev-9435dd8
+cilium engine 1.20.4 (pinned)
+cilium cluster 1.20.4 (context: kind-guardbee-lab)
 ```
+
+| Flag | Meaning |
+|---|---|
+| `--client` | Only print this binary's own versions; don't contact the cluster |
+| `--kubeconfig` | Path to kubeconfig (default: `KUBECONFIG` env or `~/.kube/config`) |
+
+The cluster line says `unknown` when hubble-relay can't be reached or is too old to report a version, notes when the cluster differs from the pinned engine at major.minor, and lists every version when nodes disagree (a rolling upgrade).
+
+The build version itself:
 
 | Build | Output |
 |---|---|

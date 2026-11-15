@@ -43,6 +43,9 @@ _${fn}_complete() {
         ui)
             COMPREPLY=(\$(compgen -W "--kubeconfig --addr" -- "\$cur"))
             ;;
+        version)
+            COMPREPLY=(\$(compgen -W "--kubeconfig --client" -- "\$cur"))
+            ;;
     esac
 }
 complete -F _${fn}_complete ${name}
@@ -55,10 +58,11 @@ complete -c ${name} -f -n "__fish_use_subcommand" -a "policies" -d "list live Ci
 complete -c ${name} -f -n "__fish_use_subcommand" -a "flows" -d "stream recent Hubble flows for a namespace"
 complete -c ${name} -f -n "__fish_use_subcommand" -a "verdict" -d "diff a candidate policy's verdicts against real flows"
 complete -c ${name} -f -n "__fish_use_subcommand" -a "ui" -d "start a local web UI for flows/verdict"
-complete -c ${name} -f -n "__fish_use_subcommand" -a "version" -d "print the version this binary was built from"
+complete -c ${name} -f -n "__fish_use_subcommand" -a "version" -d "print binary, pinned engine and cluster Cilium versions"
 complete -c ${name} -f -n "__fish_use_subcommand" -a "compat" -d "list version-gated policy constructs, and why"
 
-complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict ui" -l kubeconfig -d "path to kubeconfig"
+complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict ui version" -l kubeconfig -d "path to kubeconfig"
+complete -c ${name} -n "__fish_seen_subcommand_from version" -l client -d "don't contact the cluster"
 complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict" -l namespace -s n -d "namespace to scope the query to"
 complete -c ${name} -n "__fish_seen_subcommand_from policies flows verdict" -l all-namespaces -s A -d "query cluster-wide instead of one namespace"
 complete -c ${name} -n "__fish_seen_subcommand_from flows verdict" -l last -d "number of flows"
@@ -79,7 +83,7 @@ _${fn}() {
     'flows:stream recent Hubble flows for a namespace'
     'verdict:diff a candidate policy'"'"'s verdicts against real flows'
     'ui:start a local web UI for flows/verdict'
-    'version:print the version this binary was built from'
+    'version:print binary, pinned engine and cluster Cilium versions'
     'compat:list version-gated policy constructs, and why'
   )
 
@@ -100,6 +104,9 @@ _${fn}() {
       ;;
     ui)
       _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--addr[address to listen on]:address:'
+      ;;
+    version)
+      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--client[don'"'"'t contact the cluster]'
       ;;
   esac
 }

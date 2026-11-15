@@ -8,7 +8,7 @@ _guardbee() {
     'flows:stream recent Hubble flows for a namespace'
     'verdict:diff a candidate policy'"'"'s verdicts against real flows'
     'ui:start a local web UI for flows/verdict'
-    'version:print the version this binary was built from'
+    'version:print binary, pinned engine and cluster Cilium versions'
     'compat:list version-gated policy constructs, and why'
   )
 
@@ -29,6 +29,9 @@ _guardbee() {
       ;;
     ui)
       _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--addr[address to listen on]:address:'
+      ;;
+    version)
+      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--client[don'"'"'t contact the cluster]'
       ;;
   esac
 }

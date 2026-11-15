@@ -58,7 +58,7 @@ COMMANDS
   flows       Stream recent Hubble flows for a namespace
   verdict     Diff a candidate policy's verdicts against real recent flows
   ui          Start a local web UI for flows/verdict (milestone 1, read-only)
-  version     Print the version this binary was built from
+  version     Print the binary's version, its pinned Cilium engine, and the cluster's Cilium version
   compat      List version-gated policy constructs GuardBee knows about, and why
 
 GLOBAL FLAGS (every command except ui)
