@@ -86,16 +86,18 @@ pages.
 
 ## Versioning
 
-GuardBee's own version tracks the Cilium version it embeds
-(`go.mod`'s `github.com/cilium/cilium`) directly — e.g. `v1.20.2` means built
-against and validated against Cilium v1.20.2's actual `pkg/policy` engine and
-CRD schema. A GuardBee-only change with no Cilium bump appends a trailing
-qualifier instead of a new Cilium version number (`v1.20.2-1`, `v1.20.2-2`, …).
-This makes compatibility legible at a glance instead of two independent
-version numbers that drift apart — see
-[#2](https://github.com/tchellomello/guardbee/issues/2) for the open problem
-of also detecting the *cluster's* real Cilium version at runtime, since the
-two can still differ from each other even with this scheme.
+Releases are tagged `v<cilium-version>-<n>`. The first part is the Cilium version whose `pkg/policy` engine and CRD schema GuardBee embeds (`go.mod`'s `github.com/cilium/cilium`). The second part counts GuardBee releases on that engine: `v1.20.4-1` is the first release built on Cilium v1.20.4, and `v1.20.4-2` the next one without a Cilium bump. A Cilium bump starts again at `-1`. You can see which Cilium a release judges with just from its tag.
+
+The engine version and your cluster's version can still differ. `guardbee version` prints both:
+
+```
+cilium engine 1.20.4 (pinned)
+cilium cluster 1.20.4 (context: my-cluster)
+```
+
+`policies`, `flows`, `verdict` and the UI also warn when the two differ at major.minor ([#2](https://github.com/tchellomello/guardbee/issues/2)).
+
+Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the `-<n>` suffix marks a pre-release, so install from the [releases page](https://github.com/tchellomello/guardbee/releases) or the [Nix flake](https://tchellomello.github.io/guardbee/guide/install.html), not `go install …@latest`.
 
 ## Roadmap
 

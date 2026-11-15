@@ -48,7 +48,10 @@ jobs:
             out="${name}-${goos}-${goarch}"
             echo "Building ${out}..."
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "-X main.version=${VERSION}" -o "$out" .
-            tar -czf "dist/${name}_${VERSION}_${goos}_${goarch}.tar.gz" "$out" README.md LICENSE
+            # completions/ is generated from globals.go and committed
+            # (mise run completions), so the release ships exactly what
+            # the repo and the Nix package install.
+            tar -czf "dist/${name}_${VERSION}_${goos}_${goarch}.tar.gz" "$out" README.md LICENSE completions
             rm "$out"
           done
           ( cd dist && sha256sum ./*.tar.gz > SHA256SUMS )
