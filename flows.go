@@ -15,6 +15,7 @@ import (
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	observerpb "github.com/cilium/cilium/api/v1/observer"
+	monitorAPI "github.com/cilium/cilium/pkg/monitor/api"
 	"github.com/spf13/pflag"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -44,12 +45,12 @@ func runFlows(args []string) {
 	fs.Uint64Var(&last, "last", 20, "number of recent flows to print")
 	fs.BoolVarP(&follow, "follow", "f", false, "keep streaming new flows until Ctrl+C, instead of stopping after --last")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: %[1]s flows [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f]
+		fmt.Fprintf(os.Stderr, `Usage: %[1]s flows [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f]
 
 Port-forwards to the cluster's hubble-relay pod (cilium-system) and streams
 real flows touching that namespace (or every namespace, with
 --all-namespaces or by omitting --namespace), via Hubble's Observer.GetFlows
-gRPC API. The --from-*/--to-*/--verdict/--drop-reason-desc flags narrow that,
+gRPC API. The --pod/--from-*/--to-*/--verdict/--drop-reason-desc/--type flags narrow that,
 with hubble observe's own names and semantics, inside Hubble itself — so
 --last N means N matching flows.
 
@@ -231,17 +232,25 @@ func streamFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Confi
 // flows a matching one. Values within one field are ORed, the fields are
 // ANDed, as in hubble observe. Shared by flows and verdict (CLI and UI), so
 // both can only ever narrow a sample the same way.
+//
+// pods is hubble's --pod: the pod on *either* side (source OR destination),
+// the workload-centric question "blame" asks. types is hubble's --type,
+// restricted to its event type names (policy-verdict, drop, trace, …);
+// "blame" defaults it to policy-verdict, the only event Hubble attaches
+// policy attribution to (see flowAttribution).
 type flowFilter struct {
+	pods                                         []string
 	fromPods, fromLabels, fromIPs                []string
 	toPods, toServices, toLabels, toIPs, toPorts []string
 	verdicts                                     []flowpb.Verdict
 	dropReasons                                  []flowpb.DropReason
+	types                                        []string
 }
 
 func (f flowFilter) empty() bool {
-	return len(f.fromPods) == 0 && len(f.fromLabels) == 0 && len(f.fromIPs) == 0 &&
+	return len(f.pods) == 0 && len(f.fromPods) == 0 && len(f.fromLabels) == 0 && len(f.fromIPs) == 0 &&
 		len(f.toPods) == 0 && len(f.toServices) == 0 && len(f.toLabels) == 0 && len(f.toIPs) == 0 &&
-		len(f.toPorts) == 0 && len(f.verdicts) == 0 && len(f.dropReasons) == 0
+		len(f.toPorts) == 0 && len(f.verdicts) == 0 && len(f.dropReasons) == 0 && len(f.types) == 0
 }
 
 // flags pairs every flag name with its values, in display order — the single
@@ -268,9 +277,10 @@ func (f flowFilter) flags() []struct {
 		flag string
 		vals []string
 	}{
+		{"pod", f.pods},
 		{"from-pod", f.fromPods}, {"from-label", f.fromLabels}, {"from-ip", f.fromIPs},
 		{"to-pod", f.toPods}, {"to-service", f.toServices}, {"to-label", f.toLabels}, {"to-ip", f.toIPs}, {"to-port", f.toPorts},
-		{"verdict", names(f.verdicts)}, {"drop-reason-desc", names(f.dropReasons)},
+		{"verdict", names(f.verdicts)}, {"drop-reason-desc", names(f.dropReasons)}, {"type", f.types},
 	}
 }
 
@@ -297,6 +307,7 @@ type flowFilterFlags struct {
 // that fetch flows (flows, verdict).
 func registerFlowFilterFlags(fs *pflag.FlagSet) *flowFilterFlags {
 	r := &flowFilterFlags{}
+	fs.StringArrayVar(&r.f.pods, "pod", nil, "only flows where a pod with this name prefix is the source OR the destination ([namespace/]<pod-name>, same defaulting as --from-pod). Repeatable")
 	fs.StringArrayVar(&r.f.fromPods, "from-pod", nil, "only flows from pods with this name prefix ([namespace/]<pod-name>; a bare name uses --namespace, or 'default' with -A, like hubble). Repeatable")
 	fs.StringArrayVar(&r.f.fromLabels, "from-label", nil, `only flows from endpoints matching this label selector (e.g. "k8s:app=web", "reserved:world"). Repeatable`)
 	fs.StringArrayVar(&r.f.fromIPs, "from-ip", nil, "only flows from this IP address or CIDR (e.g. 10.0.0.5, 10.0.0.0/8). Repeatable")
@@ -307,6 +318,7 @@ func registerFlowFilterFlags(fs *pflag.FlagSet) *flowFilterFlags {
 	fs.StringArrayVar(&r.f.toPorts, "to-port", nil, "only flows to this destination port (e.g. 443). Repeatable")
 	fs.StringArrayVar(&r.verdicts, "verdict", nil, "only flows with this verdict: "+strings.Join(verdictNames(), ", ")+". Repeatable")
 	fs.StringArrayVar(&r.dropReasons, "drop-reason-desc", nil, "only flows dropped for this reason (e.g. POLICY_DENIED, POLICY_DENY); see Cilium's flow.DropReason for the full list. Repeatable")
+	fs.StringArrayVar(&r.f.types, "type", nil, "only events of this Hubble type: "+strings.Join(eventTypeNames(), ", ")+". Repeatable")
 	return r
 }
 
@@ -322,8 +334,35 @@ func (r *flowFilterFlags) parse() (flowFilter, error) {
 	if f.dropReasons, err = parseDropReasons(r.dropReasons); err != nil {
 		return flowFilter{}, err
 	}
+	if err = validateEventTypes(f.types); err != nil {
+		return flowFilter{}, err
+	}
 	return f, nil
 }
+
+// validateEventTypes accepts Hubble's own event type names
+// (monitorAPI.MessageTypeNames, what hubble observe --type takes). Hubble
+// also takes numeric types and "type:subtype"; those aren't needed for
+// anything this tool shows, so they're rejected rather than half-supported.
+func validateEventTypes(vals []string) error {
+	for _, v := range vals {
+		if _, ok := monitorAPI.MessageTypeNames[v]; !ok {
+			return fmt.Errorf("invalid --type value %q (want one of %s)", v, strings.Join(eventTypeNames(), ", "))
+		}
+	}
+	return nil
+}
+
+func eventTypeFilters(vals []string) []*flowpb.EventTypeFilter {
+	var out []*flowpb.EventTypeFilter
+	for _, v := range vals {
+		out = append(out, &flowpb.EventTypeFilter{Type: int32(monitorAPI.MessageTypeNames[v])})
+	}
+	return out
+}
+
+// eventTypeNames lists --type's accepted values in Cilium's own order.
+func eventTypeNames() []string { return monitorAPI.AllMessageTypeNames() }
 
 func parseVerdicts(vals []string) ([]flowpb.Verdict, error) {
 	var out []flowpb.Verdict
@@ -388,19 +427,23 @@ func qualifyNames(names []string, namespace string) []string {
 // flowWhitelist builds Hubble's Whitelist for a namespace scope plus an
 // optional filter, or nil (no filter at all, matching hubble CLI's own "omit
 // --namespace" behavior) for an unfiltered cluster-wide query. Whitelist
-// entries are ORed and fields within one entry ANDed, so "touches the
-// namespace AND matches the filter" is written as
-// (from ns AND filter) OR (to ns AND filter). Pods need care on each half:
-// the namespace scope and --from-pod both live in SourcePod (and the scope
-// and --to-pod both in DestinationPod), whose values are ORed, so on the
-// half that pins a side to the namespace, that side's pod list is narrowed
-// to the --*-pod values inside the namespace instead — and the half is
-// dropped entirely when none are. If both halves drop (--from-pod and
-// --to-pod both outside the namespace), no flow can match; that's an error,
-// not an empty Whitelist, which Hubble would read as "everything".
+// entries are ORed and fields within one entry ANDed.
+//
+// Two constraints can hold on either side of a flow: the namespace scope
+// ("touches the namespace") and --pod ("this pod is the source or the
+// destination"). Each is written as one entry per choice of side — 2 entries
+// for one, 4 for both — so (from ns AND filter) OR (to ns AND filter), etc.
+// Pods need care on each entry: the side a constraint is pinned to and
+// --from-pod/--to-pod both live in SourcePod (or DestinationPod), whose
+// values are ORed, so that side's list is narrowed to the prefixes satisfying
+// both (narrowPodPrefixes) — and the entry is dropped entirely when none do.
+// If every entry drops, no flow can match; that's an error, not an empty
+// Whitelist, which Hubble would read as "everything".
+//
+// Unlike hubble observe, --pod may be combined with --from-pod/--to-pod and
+// --to-ip (hubble rejects those pairs as conflicting): every field is simply
+// ANDed, so "--pod web --to-ip 10.0.0.1" means web's own traffic to that IP.
 func flowWhitelist(namespace string, f flowFilter) ([]*flowpb.FlowFilter, error) {
-	from := qualifyNames(f.fromPods, namespace)
-	to := qualifyNames(f.toPods, namespace)
 	with := func(ff *flowpb.FlowFilter) *flowpb.FlowFilter {
 		ff.SourceLabel = f.fromLabels
 		ff.SourceIp = f.fromIPs
@@ -410,40 +453,81 @@ func flowWhitelist(namespace string, f flowFilter) ([]*flowpb.FlowFilter, error)
 		ff.DestinationPort = f.toPorts
 		ff.Verdict = f.verdicts
 		ff.DropReasonDesc = f.dropReasons
+		ff.EventType = eventTypeFilters(f.types)
 		return ff
 	}
 
-	if namespace == "" {
-		if f.empty() {
-			return nil, nil
-		}
-		return []*flowpb.FlowFilter{with(&flowpb.FlowFilter{SourcePod: from, DestinationPod: to})}, nil
+	if namespace == "" && f.empty() {
+		return nil, nil
 	}
 
-	inNamespace := func(pods []string) ([]string, bool) {
-		if len(pods) == 0 {
-			return []string{namespace + "/"}, true
-		}
-		var in []string
-		for _, p := range pods {
-			if strings.HasPrefix(p, namespace+"/") {
-				in = append(in, p)
-			}
-		}
-		return in, len(in) > 0
+	// Pod lists are intersected below, which only works on fully qualified
+	// names; with -A a bare name gets "default/", exactly what Hubble itself
+	// would read it as (see qualifyNames).
+	podScope := namespace
+	if podScope == "" {
+		podScope = "default"
+	}
+	from := qualifyNames(f.fromPods, podScope)
+	to := qualifyNames(f.toPods, podScope)
+	var eitherSide [][]string
+	if namespace != "" {
+		eitherSide = append(eitherSide, []string{namespace + "/"})
+	}
+	if len(f.pods) > 0 {
+		eitherSide = append(eitherSide, qualifyNames(f.pods, podScope))
 	}
 
 	var out []*flowpb.FlowFilter
-	if src, ok := inNamespace(from); ok {
-		out = append(out, with(&flowpb.FlowFilter{SourcePod: src, DestinationPod: to}))
-	}
-	if dst, ok := inNamespace(to); ok {
-		out = append(out, with(&flowpb.FlowFilter{SourcePod: from, DestinationPod: dst}))
+	// Bit i of sides picks where eitherSide[i] holds: 0 source, 1 destination.
+	for sides := 0; sides < 1<<len(eitherSide); sides++ {
+		src, dst, ok := from, to, true
+		for i, prefixes := range eitherSide {
+			if sides&(1<<i) == 0 {
+				src, ok = narrowPodPrefixes(src, prefixes)
+			} else {
+				dst, ok = narrowPodPrefixes(dst, prefixes)
+			}
+			if !ok {
+				break
+			}
+		}
+		if ok {
+			out = append(out, with(&flowpb.FlowFilter{SourcePod: src, DestinationPod: dst}))
+		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("--from-pod and --to-pod are both outside namespace %q, so no flow in it can match; drop one, or use --all-namespaces", namespace)
+		if len(f.pods) == 0 {
+			return nil, fmt.Errorf("--from-pod and --to-pod are both outside namespace %q, so no flow in it can match; drop one, or use --all-namespaces", namespace)
+		}
+		return nil, fmt.Errorf("--pod, --from-pod, --to-pod and the namespace scope contradict each other, so no flow can match")
 	}
 	return out, nil
+}
+
+// narrowPodPrefixes returns the pod prefixes matching both lists (each a set
+// of ORed "ns/pod-prefix" alternatives, as Hubble reads SourcePod/
+// DestinationPod), or ok=false if nothing can. An empty list means "any pod".
+// Two prefixes overlap only when one extends the other, and then the longer
+// one is the intersection.
+func narrowPodPrefixes(a, b []string) (out []string, ok bool) {
+	if len(a) == 0 {
+		return b, true
+	}
+	if len(b) == 0 {
+		return a, true
+	}
+	for _, x := range a {
+		for _, y := range b {
+			switch {
+			case strings.HasPrefix(x, y):
+				out = append(out, x)
+			case strings.HasPrefix(y, x):
+				out = append(out, y)
+			}
+		}
+	}
+	return out, len(out) > 0
 }
 
 // dialHubble finds the hubble-relay pod, port-forwards to it, and dials it

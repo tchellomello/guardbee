@@ -16,20 +16,26 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
   (cluster-wide) via the generated Cilium clientset. Pure read, proves RBAC.
 - `guardbee flows [-n <ns>|-A] [filters] [--last N] [-f]` — port-forwards to
   `hubble-relay` (`cilium-system` namespace) and streams real flows via
-  Hubble's `Observer.GetFlows` gRPC API. Filters (`--from-*`/`--to-*`/
-  `--verdict`/`--drop-reason-desc`, hubble's names) are `flowFilter` in
-  `flows.go`, shared by `verdict` and the UI, and applied in Hubble's query.
+  Hubble's `Observer.GetFlows` gRPC API. Filters (`--pod`/`--from-*`/
+  `--to-*`/`--verdict`/`--drop-reason-desc`/`--type`, hubble's names) are
+  `flowFilter` in `flows.go`, shared by `blame`, `verdict` and the UI, and
+  applied in Hubble's query.
+- `guardbee blame [[ns/]pod] [-n <ns>|-A] [filters] [--last N] [-f]` — which
+  live policy allowed or denied real flows. `flows` defaulted to
+  `--type policy-verdict`, plus the attribution Cilium's agent attached
+  (`flowAttribution` in `blame.go`, also on every UI Flows row). Read off
+  Hubble, not computed by the embedded engine — see v1 simplifications.
 - `guardbee verdict [-n <ns>|-A] [--last N] [-f] <candidate.yaml>` — the
   actual engine. Judges real recent flows twice (baseline live policy vs.
   baseline+candidate) using **Cilium's own `pkg/policy` engine** — not a
   reimplementation — and prints `NEWLY_DROPPED`/`NEWLY_ALLOWED`/`UNCHANGED`.
 - `guardbee ui [--addr host:port]` — milestone 1 web UI: a local HTTP server
-  exposing the exact same `computeVerdict`/`fetchFlows` functions the CLI
+  exposing the exact same `computeVerdict`/`fetchFlows`/`flowAttribution` functions the CLI
   calls, over JSON, for a React/TS frontend. No parallel implementation —
   UI and CLI can't disagree on a verdict for the same input, only present it
   differently.
 
-All four are read-only against the cluster, by design, in v1.
+All five are read-only against the cluster, by design, in v1.
 
 ## Architecture principle that overrides convenience
 
@@ -137,6 +143,17 @@ Consequences that follow directly from this, non-negotiably:
   namespace. Getting fewer flows than requested is expected, not a bug.
   `--follow`/`-f` is the real lever for more volume over time, not raising
   `--last`.
+- `blame`'s attribution is **Hubble's, not the embedded engine's**: it's
+  the rule labels the agent's own `pkg/policy/correlation` attached to a
+  policy-verdict event, read back exactly as that code writes them
+  (`flowAttribution`). Correlation can silently fail (no port, endpoint
+  gone, correlation disabled), so a missing attribution is shown as "not
+  attributed", never guessed: an unattributed `POLICY_DENY` is still a deny
+  rule (not default deny), an unattributed allow is not "no policy selects
+  it". Computing attribution from the engine (`epp.Lookup`'s rule metadata)
+  for flows Hubble didn't attribute is a possible follow-up, not done.
+- `--pod` may be combined with `--from-pod`/`--to-pod`/`--to-ip`, which
+  hubble observe rejects as conflicting; every field simply ANDs.
 - A TCP/UDP flow with **destination port 0** is `NOT_SIMULATED`, not judged.
   `isAllowed`'s `policy.Key` query must have a non-wildcard port (Cilium's
   own `mapState.lookup()` doc comment says so explicitly) — querying with
@@ -151,7 +168,8 @@ main.go           entry point, subcommand dispatch, --help text
 globals.go        binName (single source of truth for the binary's name — see below)
 kube.go           shared flags (--namespace/-n, --all-namespaces/-A, --kubeconfig), clientset wiring
 policies.go       `policies` subcommand
-flows.go          `flows` subcommand (hubble-relay port-forward + GetFlows) and `flowFilter`, the filter flags shared with `verdict`/the UI
+flows.go          `flows` subcommand (hubble-relay port-forward + GetFlows) and `flowFilter`, the filter flags shared with `blame`/`verdict`/the UI
+blame.go          `blame` subcommand, `flowAttribution` (Hubble's policy attribution, read the way pkg/policy/correlation writes it) and `flowOut`, the flow row shared with the UI
 verdict.go        `verdict` subcommand — the core engine (690 lines, read this first for engine changes)
 templates.go      Policy Editor "preset" templates, loaded from templates/*.yaml, not hardcoded data
 ui.go             `ui` subcommand — local HTTP/JSON API over the same verdict/flows functions

@@ -16,6 +16,7 @@ import (
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	v1 "github.com/cilium/cilium/pkg/hubble/api/v1"
 	"github.com/cilium/cilium/pkg/hubble/filters"
+	monitorAPI "github.com/cilium/cilium/pkg/monitor/api"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -179,5 +180,94 @@ func TestNewestFlows(t *testing.T) {
 
 	if got := newestFlows([]*flowpb.Flow{at(1, "a")}, 3); len(got) != 1 {
 		t.Fatalf("fewer flows than requested should all be kept, got %d", len(got))
+	}
+}
+
+// --pod (either side) and --type, against Hubble's own filters like
+// TestFlowWhitelist. The scope namespace and --pod are each either-side
+// constraints, so they combine into up to four Whitelist entries; these
+// cases pin down that the combination still means "AND".
+func TestFlowWhitelistPodAndType(t *testing.T) {
+	pv := &flowpb.CiliumEventType{Type: monitorAPI.MessageTypePolicyVerdict}
+	trace := &flowpb.CiliumEventType{Type: monitorAPI.MessageTypeTrace}
+	mk := func(srcNs, srcPod, dstNs, dstPod, dstIP string, ev *flowpb.CiliumEventType) *flowpb.Flow {
+		f := testFlow(srcNs, srcPod, dstNs, dstPod, nil, "", 443)
+		f.IP = &flowpb.IP{Destination: dstIP}
+		f.EventType = ev
+		return f
+	}
+	all := map[string]*flowpb.Flow{
+		"webEgressToIP":   mk("app", "web-1", "", "", "169.254.169.254", pv),
+		"clientToWeb":     mk("app", "client-0", "app", "web-1", "10.0.1.5", pv),
+		"webToDB":         mk("app", "web-1", "app", "db-0", "10.0.1.9", pv),
+		"apiToDB":         mk("app", "api-0", "app", "db-0", "10.0.1.9", pv),
+		"webTrace":        mk("app", "web-1", "", "", "169.254.169.254", trace),
+		"otherNsToWeb":    mk("other", "cache-0", "app", "web-1", "10.0.1.5", pv),
+		"otherNsInternal": mk("other", "a-0", "other", "web-9", "10.0.2.5", pv),
+		"defaultWeb":      mk("default", "web-2", "", "", "1.1.1.1", pv),
+	}
+	cases := []struct {
+		name      string
+		namespace string
+		filter    flowFilter
+		want      []string
+	}{
+		{"pod either side", "app", flowFilter{pods: []string{"web"}},
+			[]string{"webEgressToIP", "clientToWeb", "webToDB", "webTrace", "otherNsToWeb"}},
+		{"pod and policy-verdict type", "app", flowFilter{pods: []string{"web"}, types: []string{"policy-verdict"}},
+			[]string{"webEgressToIP", "clientToWeb", "webToDB", "otherNsToWeb"}},
+		{"trace type only", "app", flowFilter{types: []string{"trace"}}, []string{"webTrace"}},
+		// hubble rejects --pod with --to-ip; here they AND: web's own traffic to the IP.
+		{"pod and to ip", "app", flowFilter{pods: []string{"web"}, toIPs: []string{"169.254.169.254"}, types: []string{"policy-verdict"}},
+			[]string{"webEgressToIP"}},
+		{"pod and to pod", "app", flowFilter{pods: []string{"web"}, toPods: []string{"db"}}, []string{"webToDB"}},
+		{"pod and from pod", "app", flowFilter{pods: []string{"web"}, fromPods: []string{"client"}}, []string{"clientToWeb"}},
+		// The pod is in another namespace: still only flows touching app.
+		{"pod outside scope namespace", "app", flowFilter{pods: []string{"other/cache"}}, []string{"otherNsToWeb"}},
+		{"cluster-wide pod", "", flowFilter{pods: []string{"app/web"}},
+			[]string{"webEgressToIP", "clientToWeb", "webToDB", "webTrace", "otherNsToWeb"}},
+		// A bare --pod with -A means the default namespace, as Hubble reads it.
+		{"cluster-wide bare pod is default namespace", "", flowFilter{pods: []string{"web"}}, []string{"defaultWeb"}},
+	}
+	logger := slog.New(slog.DiscardHandler)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			whitelist, err := flowWhitelist(tc.namespace, tc.filter)
+			if err != nil {
+				t.Fatalf("flowWhitelist: %v", err)
+			}
+			wl, err := filters.BuildFilterList(context.Background(), whitelist, filters.DefaultFilters(logger))
+			if err != nil {
+				t.Fatalf("Hubble rejected the whitelist: %v", err)
+			}
+			want := map[string]bool{}
+			for _, n := range tc.want {
+				want[n] = true
+			}
+			for name, f := range all {
+				if got := filters.Apply(wl, nil, &v1.Event{Event: f}); got != want[name] {
+					t.Errorf("%s: matched=%v, want %v", name, got, want[name])
+				}
+			}
+		})
+	}
+
+	if _, err := flowWhitelist("app", flowFilter{pods: []string{"web"}, fromPods: []string{"x/a"}, toPods: []string{"y/b"}}); err == nil {
+		t.Error("--pod with --from-pod/--to-pod that can't all hold: want an error")
+	}
+}
+
+// --type takes hubble's event type names only.
+func TestFlowFilterFlagsParseType(t *testing.T) {
+	if _, err := (&flowFilterFlags{f: flowFilter{types: []string{"policy-verdict", "drop"}}}).parse(); err != nil {
+		t.Fatalf("valid types: %v", err)
+	}
+	for _, bad := range []string{"policy_verdict", "5", "trace:to-endpoint", ""} {
+		if _, err := (&flowFilterFlags{f: flowFilter{types: []string{bad}}}).parse(); err == nil {
+			t.Errorf("--type %q: want an error", bad)
+		}
+	}
+	if got := (flowFilter{pods: []string{"app/web"}, types: []string{"policy-verdict"}}).String(); got != "--pod app/web --type policy-verdict" {
+		t.Errorf("String() = %q", got)
 	}
 }

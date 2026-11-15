@@ -1,5 +1,5 @@
 // The flow filter form shared by the Flows and Verdict tabs — the UI side of
-// the CLI's --from-*/--to-*/--verdict/--drop-reason-desc flags (flowFilter in
+// the CLI's --pod/--from-*/--to-*/--verdict/--drop-reason-desc/--type flags (flowFilter in
 // flows.go). One component so the two tabs can only ever offer the same
 // filters, the way ui.go's flowFilterParams makes them parse the same.
 //
@@ -47,6 +47,11 @@ const QUICK_FILTERS: { label: string; title: string; set: Partial<FlowFilter> }[
     label: 'Policy drops',
     title: 'Only flows dropped by a network policy (POLICY_DENIED, POLICY_DENY)',
     set: { verdict: 'DROPPED', dropReason: 'POLICY_DENIED, POLICY_DENY' },
+  },
+  {
+    label: 'Policy verdicts',
+    title: 'Only policy-verdict events — the ones Cilium attributes to a policy (--type policy-verdict, what `blame` shows)',
+    set: { type: 'policy-verdict' },
   },
   { label: 'From the internet', title: 'Only flows from outside the cluster (reserved:world)', set: { fromLabel: 'reserved:world' } },
   { label: 'From nodes', title: 'Only flows from the node itself, e.g. kubelet probes (reserved:host)', set: { fromLabel: 'reserved:host' } },
@@ -200,7 +205,26 @@ export function FlowFilterFields({
               </select>
             </label>
             {input('dropReason', 'Drop reason', 'POLICY_DENIED', 'Why Cilium dropped it (--drop-reason-desc); pick from the list', options?.dropReasons, true)}
+            <label className="block min-w-0" title="Hubble event type (--type); only policy-verdict events say which policy decided">
+              <span className="mb-1 block text-[0.6rem] font-semibold tracking-[0.1em] text-ink-dim uppercase">Event type</span>
+              <select
+                value={filter.type}
+                onChange={(e) => onChange({ ...filter, type: e.target.value })}
+                className={inputClass(filter.type !== '')}
+              >
+                <option value="">Any</option>
+                {(options?.eventTypes ?? ['policy-verdict']).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </label>
           </>
+        )}
+        {row(
+          'Either side',
+          input('pod', 'Pod', 'ns/api-', 'This pod as the source OR the destination (--pod)')
         )}
         {row(
           'From',
@@ -223,9 +247,10 @@ export function FlowFilterFields({
 
         <p className="text-[0.7rem] leading-relaxed text-ink-faint">
           {intro} Hubble applies filters before sampling, so all <em>Last</em> flows match. Fields combine with AND;
-          commas separate alternatives. Same as the CLI's <code className="text-ink-dim">--from-*</code>,{' '}
-          <code className="text-ink-dim">--to-*</code>, <code className="text-ink-dim">--verdict</code> and{' '}
-          <code className="text-ink-dim">--drop-reason-desc</code>.
+          commas separate alternatives. Same as the CLI's <code className="text-ink-dim">--pod</code>,{' '}
+          <code className="text-ink-dim">--from-*</code>, <code className="text-ink-dim">--to-*</code>,{' '}
+          <code className="text-ink-dim">--verdict</code>, <code className="text-ink-dim">--drop-reason-desc</code> and{' '}
+          <code className="text-ink-dim">--type</code>.
         </p>
       </div>
     </details>

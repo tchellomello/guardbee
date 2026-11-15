@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -206,10 +207,17 @@ func TestFlowFilterParams(t *testing.T) {
 	if _, err := (flowFilterParams{FromPod: []string{"x/a"}, ToPod: []string{"y/b"}}).filter("app"); err == nil {
 		t.Error("both pods outside the namespace: want an error")
 	}
-	q, _ := url.ParseQuery("namespace=app&fromIp=10.0.0.0/8&dropReason=POLICY_DENIED&toPod=db")
+	if _, err := (flowFilterParams{Type: []string{"policy_verdict"}}).filter("app"); err == nil {
+		t.Error("invalid type: want an error")
+	}
+	q, _ := url.ParseQuery("namespace=app&fromIp=10.0.0.0/8&dropReason=POLICY_DENIED&toPod=db&pod=web&type=policy-verdict")
 	got := flowFilterParamsFromQuery(q)
-	if got.FromIP[0] != "10.0.0.0/8" || got.DropReason[0] != "POLICY_DENIED" || got.ToPod[0] != "db" {
+	if got.FromIP[0] != "10.0.0.0/8" || got.DropReason[0] != "POLICY_DENIED" || got.ToPod[0] != "db" || got.Pod[0] != "web" || got.Type[0] != "policy-verdict" {
 		t.Fatalf("from query: %+v", got)
+	}
+	f, err = got.filter("app")
+	if err != nil || f.pods[0] != "web" || f.types[0] != "policy-verdict" {
+		t.Fatalf("pod/type not carried into the filter: %+v, %v", f, err)
 	}
 }
 
@@ -227,6 +235,9 @@ func TestHandleFlowFilterOptions(t *testing.T) {
 	if !slices.Contains(resp.DropReasons, "POLICY_DENIED") || slices.Contains(resp.DropReasons, "DROP_REASON_UNKNOWN") {
 		t.Errorf("drop reasons missing POLICY_DENIED or include UNKNOWN (%d values)", len(resp.DropReasons))
 	}
+	if !slices.Contains(resp.EventTypes, "policy-verdict") {
+		t.Errorf("event types: %v", resp.EventTypes)
+	}
 }
 
 // Flow rows carry each endpoint's identity labels, which the filter fields'
@@ -238,5 +249,25 @@ func TestToFlowOutCarriesLabels(t *testing.T) {
 	})
 	if !slices.Equal(out.SourceLabels, []string{"reserved:world"}) || !slices.Equal(out.DestinationLabels, []string{"k8s:app=db"}) {
 		t.Fatalf("labels not passed through: %+v", out)
+	}
+}
+
+// The Flows tab's rows carry the same attribution blame prints, under the
+// JSON names the UI reads.
+func TestToFlowOutCarriesAttribution(t *testing.T) {
+	out := toFlowOut(&flowpb.Flow{
+		Verdict:          flowpb.Verdict_FORWARDED,
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		EventType:        policyVerdictEvent,
+		IngressAllowedBy: []*flowpb.Policy{cnp("app", "allow-web")},
+	})
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"direction":"INGRESS"`, `"decision":"allowed"`, `"decidedBy":"allowed by CNP:app/allow-web"`, `"allowedBy":[{"kind":"CiliumNetworkPolicy","namespace":"app","name":"allow-web"`, `"display":"CNP:app/allow-web"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("JSON missing %s:\n%s", want, b)
+		}
 	}
 }

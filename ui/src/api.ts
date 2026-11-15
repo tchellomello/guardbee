@@ -60,16 +60,39 @@ export interface VerdictResponse {
   apiServer?: string
 }
 
+// A policy Cilium attributed a flow's verdict to (blame.go's policyRef).
+// kind is Cilium's derived-from label as-is: CiliumNetworkPolicy,
+// CiliumClusterwideNetworkPolicy, NetworkPolicy or ClusterNetworkPolicy.
+export interface PolicyRef {
+  kind?: string
+  namespace?: string
+  name?: string
+  labels?: string[]
+  revision?: number
+  // How the CLI renders it ("CNP:ns/name", "CCNP:name", …).
+  display: string
+}
+
+// blame.go's decisions; absent when the flow isn't a policy decision.
+export type PolicyDecision = 'allowed' | 'denied' | 'default-deny' | 'audit'
+
 export interface Flow {
   time: string
   verdict: string
   dropReason?: string
+  // The side the verdict was taken on: INGRESS or EGRESS.
+  direction?: string
   source: string
   destination: string
   l4: string
   // Security-identity labels Hubble reports for each endpoint.
   sourceLabels?: string[]
   destinationLabels?: string[]
+  // Policy attribution (blame.go's flowAttribution), on policy-verdict events.
+  decision?: PolicyDecision
+  allowedBy?: PolicyRef[]
+  deniedBy?: PolicyRef[]
+  decidedBy?: string
 }
 
 export interface FlowsResponse {
@@ -116,6 +139,7 @@ export function fetchFlows(namespace: string, last: number, filter?: FlowFilterP
 export interface FlowFilterOptions {
   verdicts: string[]
   dropReasons: string[]
+  eventTypes: string[]
 }
 
 export function fetchFlowFilterOptions(): Promise<FlowFilterOptions> {

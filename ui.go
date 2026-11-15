@@ -24,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
@@ -235,8 +234,10 @@ type verdictRequest struct {
 // (flowFilter, flows.go), shared by every endpoint that fetches flows: the
 // verdict POST body embeds it, and the GET endpoints (EventSource can't POST)
 // read the same names from the query string. Names mirror the flags:
-// fromPod = --from-pod, verdict = --verdict, dropReason = --drop-reason-desc.
+// fromPod = --from-pod, verdict = --verdict, dropReason = --drop-reason-desc,
+// pod = --pod, type = --type.
 type flowFilterParams struct {
+	Pod        []string `json:"pod,omitempty"`
 	FromPod    []string `json:"fromPod,omitempty"`
 	FromLabel  []string `json:"fromLabel,omitempty"`
 	FromIP     []string `json:"fromIp,omitempty"`
@@ -247,13 +248,15 @@ type flowFilterParams struct {
 	ToPort     []string `json:"toPort,omitempty"`
 	Verdict    []string `json:"verdict,omitempty"`
 	DropReason []string `json:"dropReason,omitempty"`
+	Type       []string `json:"type,omitempty"`
 }
 
 func flowFilterParamsFromQuery(q url.Values) flowFilterParams {
 	return flowFilterParams{
+		Pod:     q["pod"],
 		FromPod: q["fromPod"], FromLabel: q["fromLabel"], FromIP: q["fromIp"],
 		ToPod: q["toPod"], ToService: q["toService"], ToLabel: q["toLabel"], ToIP: q["toIp"], ToPort: q["toPort"],
-		Verdict: q["verdict"], DropReason: q["dropReason"],
+		Verdict: q["verdict"], DropReason: q["dropReason"], Type: q["type"],
 	}
 }
 
@@ -274,9 +277,10 @@ func (p flowFilterParams) filter(namespace string) (flowFilter, error) {
 	}
 	r := flowFilterFlags{
 		f: flowFilter{
+			pods:     clean(p.Pod),
 			fromPods: clean(p.FromPod), fromLabels: clean(p.FromLabel), fromIPs: clean(p.FromIP),
 			toPods: clean(p.ToPod), toServices: clean(p.ToService), toLabels: clean(p.ToLabel),
-			toIPs: clean(p.ToIP), toPorts: clean(p.ToPort),
+			toIPs: clean(p.ToIP), toPorts: clean(p.ToPort), types: clean(p.Type),
 		},
 		verdicts:    clean(p.Verdict),
 		dropReasons: clean(p.DropReason),
@@ -511,50 +515,11 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// flowOut/flowsResponse are the JSON mirror of the "flows" subcommand's own
-// printed rows (see flows.go's runFlows print closure) — same fields, plus
-// DropReason (the CLI's terminal line has no room for it, but a browser
-// table column does). This is Hubble's own already-happened verdict on a
-// DROPPED flow, straight off the datapath — not this tool's simulated one —
-// so it's squarely in-bounds despite the simulator's own limits (see
-// AGENTS.md's known v1 simplifications): nothing here is being guessed.
-type flowOut struct {
-	Time        string `json:"time"`
-	Verdict     string `json:"verdict"`
-	DropReason  string `json:"dropReason,omitempty"`
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-	L4          string `json:"l4"`
-	// The endpoints' security-identity labels as Hubble reports them
-	// (k8s:app=web, reserved:world, …): what the filter fields' autocomplete
-	// offers for --from-label/--to-label, so a label seen in real traffic can
-	// be picked instead of typed.
-	SourceLabels      []string `json:"sourceLabels,omitempty"`
-	DestinationLabels []string `json:"destinationLabels,omitempty"`
-}
-
+// flowsResponse backs GET /api/flows: flowOut rows (blame.go), the same
+// shape `blame --format json` prints.
 type flowsResponse struct {
 	Namespace string    `json:"namespace"`
 	Flows     []flowOut `json:"flows"`
-}
-
-func toFlowOut(f *flowpb.Flow) flowOut {
-	out := flowOut{
-		Time:        f.GetTime().AsTime().Format(time.RFC3339),
-		Verdict:     f.GetVerdict().String(),
-		Source:      endpointString(f.GetSource()),
-		Destination: endpointString(f.GetDestination()),
-		L4:          l4String(f.GetL4()),
-
-		SourceLabels:      f.GetSource().GetLabels(),
-		DestinationLabels: f.GetDestination().GetLabels(),
-	}
-	// Only meaningful on a dropped flow — DROP_REASON_UNKNOWN on every
-	// forwarded one would just be noise in the table.
-	if reason := f.GetDropReasonDesc(); reason != flowpb.DropReason_DROP_REASON_UNKNOWN {
-		out.DropReason = reason.String()
-	}
-	return out
 }
 
 // flowsQuery reads the namespace/last/filter query parameters shared by the
@@ -630,18 +595,20 @@ func (s *uiServer) handleFlowsStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // flowFilterOptions backs GET /api/flow-filter-options: the values the UI's
-// verdict and drop-reason pickers offer, read from the pinned Cilium's own
-// flow.Verdict/flow.DropReason enums (the same lists --verdict and
-// --drop-reason-desc validate against), so the pickers can't offer a value
-// Hubble would reject or miss one it accepts.
+// verdict, drop-reason and event-type pickers offer, read from the pinned
+// Cilium's own flow.Verdict/flow.DropReason enums and monitor message type
+// names (the same lists --verdict, --drop-reason-desc and --type validate
+// against), so the pickers can't offer a value Hubble would reject or miss
+// one it accepts.
 type flowFilterOptions struct {
 	Verdicts    []string `json:"verdicts"`
 	DropReasons []string `json:"dropReasons"`
+	EventTypes  []string `json:"eventTypes"`
 }
 
 func (s *uiServer) handleFlowFilterOptions(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(flowFilterOptions{Verdicts: verdictNames(), DropReasons: dropReasonNames()})
+	_ = json.NewEncoder(w).Encode(flowFilterOptions{Verdicts: verdictNames(), DropReasons: dropReasonNames(), EventTypes: eventTypeNames()})
 }
 
 // policyOut/policiesResponse back GET /api/policies — the live

@@ -25,6 +25,8 @@ func main() {
 		runPolicies(os.Args[2:])
 	case "flows":
 		runFlows(os.Args[2:])
+	case "blame":
+		runBlame(os.Args[2:])
 	case "verdict":
 		runVerdict(os.Args[2:])
 	case "ui":
@@ -56,6 +58,7 @@ USAGE
 COMMANDS
   policies    List live CiliumNetworkPolicy/CCNP state
   flows       Stream recent Hubble flows for a namespace
+  blame       Show which live policy allowed or denied real flows (a pod or namespace)
   verdict     Diff a candidate policy's verdicts against real recent flows
   ui          Start a local web UI for flows/verdict (milestone 1, read-only)
   version     Print the binary's version, its pinned Cilium engine, and the cluster's Cilium version

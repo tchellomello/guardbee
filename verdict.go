@@ -100,7 +100,7 @@ func runVerdict(args []string) {
 	fs.StringVar(&format, "format", formatTable, "output format: table, json or markdown (json/markdown: one-shot only, not with --follow)")
 	fs.BoolVar(&replaceExisting, "replace-existing", false, "judge the candidate as REPLACING any live policy with the same kind, namespace and name, instead of being added on top of it — use for edits to an existing policy")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f] <candidate.yaml>
+		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f] <candidate.yaml>
 
 Diffs a candidate CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy against
 today's live policy state, judging real recent Hubble flows against both.
@@ -115,7 +115,7 @@ omit --namespace (or pass --all-namespaces) so flows are sampled cluster-wide
 — otherwise a regression in a namespace the CCNP also touches, but that you
 didn't pass to --namespace, would go completely unsampled and unreported.
 
---from-*/--to-*/--verdict/--drop-reason-desc judge only matching flows
+--pod/--from-*/--to-*/--verdict/--drop-reason-desc/--type judge only matching flows
 (hubble observe's names and semantics, applied in Hubble's query, so all
 --last flows match). Anything the candidate does to other traffic is then not
 sampled at all: narrow to investigate, not to sign off on a policy.

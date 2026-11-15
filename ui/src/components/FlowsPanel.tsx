@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchFlows, fetchPods, flowsQuery, type Flow, type FlowsResponse } from '../api'
+import {
+  fetchFlows,
+  fetchPods,
+  fetchPolicyForEdit,
+  flowsQuery,
+  type EditablePolicyModel,
+  type Flow,
+  type FlowsResponse,
+  type PolicyRef,
+} from '../api'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { FlowsGraph } from './FlowsGraph'
 import { classifyTrafficPeer } from './RuleEditorCard'
@@ -8,6 +17,7 @@ import { downloadTextFile, flowsToCSV, flowsToText } from '../shared/tableExport
 import { runsWithLiveGraphs } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
 import { GraphNodeLink } from './GraphNodeLink'
+import { attributionBadges, isEditablePolicyRef } from '../shared/attribution'
 import { FlowFilterFields } from './FlowFilterFields'
 import {
   describeFlowFilter,
@@ -66,9 +76,12 @@ export interface FlowsPanelProps {
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
   // Replaces the whole Policy Editor draft with a freshly generated policy.
   onCreatePolicy?: (model: PolicyModel, ruleNodeId: string) => void
+  // Opens a live policy a flow was attributed to in the Policy Editor — the
+  // same handler the Policies tab's Edit uses.
+  onEditPolicy?: (model: EditablePolicyModel) => void
 }
 
-export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreatePolicy }: FlowsPanelProps = {}) {
+export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreatePolicy, onEditPolicy }: FlowsPanelProps = {}) {
   const [namespace, setNamespace] = useState('')
   const [allNamespaces, setAllNamespaces] = useState(false)
   const [last, setLast] = useState(20)
@@ -348,6 +361,7 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
           policyNamespace={policyNamespace}
           onAppendRuleToPolicy={onAppendRuleToPolicy}
           onCreatePolicy={onCreatePolicy}
+          onEditPolicy={onEditPolicy}
         />
       ))}
     </div>
@@ -370,6 +384,7 @@ function FlowRunCard({
   policyNamespace,
   onAppendRuleToPolicy,
   onCreatePolicy,
+  onEditPolicy,
 }: {
   run: FlowsRunItem
   // False for an older stacked run past LIVE_GRAPH_RUN_LIMIT (see
@@ -382,6 +397,7 @@ function FlowRunCard({
   policyNamespace: string
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
   onCreatePolicy?: (model: PolicyModel, ruleNodeId: string) => void
+  onEditPolicy?: (model: EditablePolicyModel) => void
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -558,10 +574,10 @@ function FlowRunCard({
 
           {flows.length > 0 && (
             <div className="overflow-x-auto border border-line">
-              <table className="w-full min-w-[720px] text-left text-sm">
+              <table className="w-full min-w-[960px] text-left text-sm">
                 <thead className="border-b border-line bg-panel-raised">
                   <tr>
-                    {['Time', 'Verdict', 'Source', 'Destination', 'L4', 'Drop Reason', ''].map((h) => (
+                    {['Time', 'Verdict', 'Direction', 'Source', 'Destination', 'L4', 'Decided by', 'Drop Reason', ''].map((h) => (
                       <th key={h} className="px-3 py-2 text-[0.65rem] font-semibold tracking-[0.1em] text-ink-dim uppercase">
                         {h}
                       </th>
@@ -586,6 +602,7 @@ function FlowRunCard({
                           {f.verdict}
                         </span>
                       </td>
+                      <td className="px-3 py-2 font-mono text-[0.65rem] text-ink-dim">{f.direction ?? ''}</td>
                       <td className="px-3 py-2 font-mono text-xs text-ink">
                         <GraphNodeLink
                           selected={selectedGraphNode === srcId}
@@ -603,6 +620,9 @@ function FlowRunCard({
                         </GraphNodeLink>
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-ink">{f.l4}</td>
+                      <td className="px-3 py-2">
+                        <DecidedBy flow={f} onEditPolicy={onEditPolicy} />
+                      </td>
                       <td className="px-3 py-2 font-mono text-xs text-ink-dim">
                         {/* Hubble's own already-happened datapath verdict on
                             why a DROPPED flow was dropped — only present on
@@ -637,6 +657,76 @@ function FlowRunCard({
               </table>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const DECISION_STYLES: Record<string, string> = {
+  allowed: 'text-unchanged',
+  denied: 'text-drop',
+  'default-deny': 'text-drop',
+  audit: 'text-allow',
+}
+
+// The flow's policy attribution, as `guardbee blame` prints it (blame.go's
+// flowAttribution): which policy Cilium allowed or denied it by, each one a
+// link into the Policy Editor when it can be opened there. Empty for flows
+// that aren't a policy decision — nothing is guessed here.
+function DecidedBy({ flow, onEditPolicy }: { flow: Flow; onEditPolicy?: (model: EditablePolicyModel) => void }) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  if (!flow.decision) return null
+  const badges = attributionBadges(flow)
+  const style = DECISION_STYLES[flow.decision] ?? 'text-ink-dim'
+
+  async function open(ref: PolicyRef) {
+    if (!onEditPolicy) return
+    setBusy(ref.display)
+    setError(null)
+    try {
+      onEditPolicy(await fetchPolicyForEdit(ref.kind ?? '', ref.namespace ?? '', ref.name ?? ''))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (!badges) {
+    return (
+      <span data-decision={flow.decision} className={`font-mono text-[0.7rem] ${style}`}>
+        {flow.decidedBy}
+      </span>
+    )
+  }
+  return (
+    <div className="relative" data-decision={flow.decision}>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className={`text-[0.65rem] ${style}`}>{badges.lead}</span>
+        {badges.refs.map((ref) =>
+          onEditPolicy && isEditablePolicyRef(ref) ? (
+            <button
+              key={ref.display}
+              type="button"
+              onClick={() => open(ref)}
+              disabled={busy !== null}
+              title={`Open the live ${ref.kind} in the Policy Editor`}
+              className={`cursor-pointer border border-current/40 px-1.5 py-0.5 font-mono text-[0.65rem] hover:bg-panel-raised disabled:opacity-50 ${style}`}
+            >
+              {busy === ref.display ? '…' : `✎ ${ref.display}`}
+            </button>
+          ) : (
+            <span key={ref.display} title={ref.labels?.join('\n')} className={`border border-line px-1.5 py-0.5 font-mono text-[0.65rem] ${style}`}>
+              {ref.display}
+            </span>
+          )
+        )}
+      </div>
+      {error && (
+        <div role="alert" className="absolute left-0 top-full z-10 mt-1 w-64 border border-drop/40 bg-panel p-2 text-[0.65rem] text-drop shadow-lg">
+          {error}
         </div>
       )}
     </div>

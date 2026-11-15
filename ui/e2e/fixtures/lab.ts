@@ -4,7 +4,7 @@
 // JSON the real endpoints return (ui/src/api.ts), so a test failing here
 // means the UI broke, not the fixture.
 
-import type { Flow, PolicyListItem, VerdictResponse, VerdictRow } from '../../src/api'
+import type { Flow, PolicyListItem, PolicyRef, VerdictResponse, VerdictRow } from '../../src/api'
 
 type Endpoint = [name: string, labels: string[]]
 
@@ -16,7 +16,7 @@ export const EP: Record<'web' | 'pg' | 'prom' | 'host' | 'world', Endpoint> = {
   world: ['reserved:world', ['reserved:world']],
 }
 
-function flow(i: number, from: keyof typeof EP, to: keyof typeof EP, l4: string, verdict = 'FORWARDED', dropReason?: string): Flow {
+function flow(i: number, from: keyof typeof EP, to: keyof typeof EP, l4: string, verdict = 'FORWARDED', dropReason?: string, why: Partial<Flow> = {}): Flow {
   return {
     time: new Date(Date.UTC(2026, 10, 15, 14, 0, i)).toISOString(),
     verdict,
@@ -26,18 +26,39 @@ function flow(i: number, from: keyof typeof EP, to: keyof typeof EP, l4: string,
     destination: EP[to][0],
     destinationLabels: EP[to][1],
     l4,
+    ...why,
   }
 }
 
+// Policy attribution as blame.go's flowAttribution emits it on a
+// policy-verdict event (texts match it exactly). Flows without one stand in
+// for other event types (trace), which carry none.
+const ref = (kind: string, name: string, namespace?: string): PolicyRef => ({
+  kind,
+  name,
+  namespace,
+  display: `${{ CiliumNetworkPolicy: 'CNP:', CiliumClusterwideNetworkPolicy: 'CCNP:' }[kind] ?? kind + ':'}${namespace ? namespace + '/' : ''}${name}`,
+})
+const ALLOW_WEBAPP = ref('CiliumNetworkPolicy', 'postgres-allow-webapp', 'postgres')
+const ALLOW_METRICS = ref('NetworkPolicy', 'allow-metrics', 'postgres')
+const LOCKDOWN = ref('CiliumClusterwideNetworkPolicy', 'lockdown')
+const allowedBy = (dir: string, r: PolicyRef): Partial<Flow> => ({ direction: dir, decision: 'allowed', allowedBy: [r], decidedBy: `allowed by ${r.display}` })
+const DEFAULT_DENY: Partial<Flow> = { direction: 'INGRESS', decision: 'default-deny', decidedBy: 'default deny: no policy rule allows it' }
+
 export const FLOWS: Flow[] = [
-  flow(1, 'web', 'pg', 'TCP:5432'),
-  flow(2, 'prom', 'pg', 'TCP:9187'),
-  flow(3, 'host', 'pg', 'TCP:5432'),
-  flow(4, 'world', 'web', 'TCP:443', 'DROPPED', 'POLICY_DENIED'),
-  flow(5, 'web', 'pg', 'TCP:5432'),
-  flow(6, 'world', 'web', 'TCP:8080', 'DROPPED', 'POLICY_DENIED'),
+  flow(1, 'web', 'pg', 'TCP:5432', 'FORWARDED', undefined, allowedBy('INGRESS', ALLOW_WEBAPP)),
+  flow(2, 'prom', 'pg', 'TCP:9187', 'FORWARDED', undefined, allowedBy('INGRESS', ALLOW_METRICS)),
+  flow(3, 'host', 'pg', 'TCP:5432', 'FORWARDED', undefined, { direction: 'INGRESS', decision: 'allowed', decidedBy: 'allowed, no policy attributed by Hubble' }),
+  flow(4, 'world', 'web', 'TCP:443', 'DROPPED', 'POLICY_DENIED', DEFAULT_DENY),
+  flow(5, 'web', 'pg', 'TCP:5432', 'FORWARDED', undefined, allowedBy('INGRESS', ALLOW_WEBAPP)),
+  flow(6, 'world', 'web', 'TCP:8080', 'DROPPED', 'POLICY_DENIED', DEFAULT_DENY),
   flow(7, 'prom', 'pg', 'TCP:9187'),
-  flow(8, 'world', 'pg', 'TCP:5432', 'DROPPED', 'POLICY_DENY'),
+  flow(8, 'world', 'pg', 'TCP:5432', 'DROPPED', 'POLICY_DENY', {
+    direction: 'INGRESS',
+    decision: 'denied',
+    deniedBy: [LOCKDOWN],
+    decidedBy: `denied by ${LOCKDOWN.display}`,
+  }),
 ]
 
 // Answers a /api/flows query the way Hubble would for the fields the
@@ -56,7 +77,9 @@ export function answerFlows(url: string): Flow[] {
       any('toLabel', (v) => (f.destinationLabels ?? []).includes(v)) &&
       any('fromPod', (v) => f.source.startsWith(v)) &&
       any('toPod', (v) => f.destination.startsWith(v)) &&
-      any('toPort', (v) => f.l4.endsWith(':' + v))
+      any('toPort', (v) => f.l4.endsWith(':' + v)) &&
+      any('pod', (v) => f.source.startsWith(v) || f.destination.startsWith(v)) &&
+      any('type', (v) => (v === 'policy-verdict') === (f.decision !== undefined))
   )
 }
 

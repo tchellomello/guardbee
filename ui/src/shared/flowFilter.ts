@@ -3,12 +3,14 @@ import { parseNamespacePod } from './podLabels'
 import { selectableLabels } from './workloadException'
 
 // The flow filter shared by the Flows and Verdict tabs: the UI side of the
-// CLI's --from-*/--to-*/--verdict/--drop-reason-desc flags (flowFilter in
+// CLI's --pod/--from-*/--to-*/--verdict/--drop-reason-desc/--type flags (flowFilter in
 // flows.go). Applied in Hubble's GetFlows query, not to rows already
 // fetched, so a re-run is needed to change it — and every one of the Last
 // flows then matches.
 
 export interface FlowFilter {
+  // --pod: this pod on either side, source or destination.
+  pod: string
   fromPod: string
   fromLabel: string
   fromIp: string
@@ -20,9 +22,12 @@ export interface FlowFilter {
   // The flow's observed (Hubble) verdict and drop reason, not a simulated one.
   verdict: string
   dropReason: string
+  // --type: Hubble's event type (policy-verdict, drop, trace, …).
+  type: string
 }
 
 export const EMPTY_FLOW_FILTER: FlowFilter = {
+  pod: '',
   fromPod: '',
   fromLabel: '',
   fromIp: '',
@@ -33,6 +38,7 @@ export const EMPTY_FLOW_FILTER: FlowFilter = {
   toPort: '',
   verdict: '',
   dropReason: '',
+  type: '',
 }
 
 // The query/body parameter names ui.go's flowFilterParams reads.
@@ -68,6 +74,7 @@ export function describeFlowFilter(f: FlowFilter): string {
   const p = flowFilterParams(f)
   const list = (k: keyof FlowFilter) => p[k]?.join(', ')
   return [
+    p.pod && `pod ${list('pod')}`,
     p.fromPod && `from pod ${list('fromPod')}`,
     p.fromLabel && `from label ${list('fromLabel')}`,
     p.fromIp && `from ${list('fromIp')}`,
@@ -78,6 +85,7 @@ export function describeFlowFilter(f: FlowFilter): string {
     p.toPort && `port ${list('toPort')}`,
     p.verdict && list('verdict'),
     p.dropReason && `reason ${list('dropReason')}`,
+    p.type && `type ${list('type')}`,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -120,8 +128,10 @@ function tally() {
       const pod = parseNamespacePod(endpoint)
       if (pod) {
         const prefix = `${pod.namespace}/${workloadPodPrefix(pod.podName)}`
-        this.add(`${side}Pod`, prefix, n)
-        if (prefix !== endpoint) this.add(`${side}Pod`, endpoint, n)
+        for (const field of [`${side}Pod`, 'pod'] as const) {
+          this.add(field, prefix, n)
+          if (prefix !== endpoint) this.add(field, endpoint, n)
+        }
       } else if (endpoint.startsWith('reserved:') && !labels?.includes(endpoint)) {
         this.add(`${side}Label`, endpoint, n)
       }

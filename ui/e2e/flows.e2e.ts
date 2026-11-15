@@ -35,10 +35,10 @@ test.describe('Flows tab', () => {
     const dropped = form.getByRole('button', { name: 'Dropped', exact: true })
     await dropped.click()
     await expect(dropped).toHaveAttribute('aria-pressed', 'true')
-    await expect(form.locator('select')).toHaveValue('DROPPED')
+    await expect(form.locator('select').first()).toHaveValue('DROPPED')
     await dropped.click()
     await expect(dropped).toHaveAttribute('aria-pressed', 'false')
-    await expect(form.locator('select')).toHaveValue('')
+    await expect(form.locator('select').first()).toHaveValue('')
   })
 
   // Regression: the section's open state was derived from "a filter is set",
@@ -139,5 +139,78 @@ test.describe('Flows tab', () => {
     await page.locator('label:visible', { hasText: 'Follow (live)' }).click()
     await page.getByRole('button', { name: 'Follow flows' }).click()
     await expect(page.getByText('invalid --drop-reason-desc value "NOT_A_REASON"', { exact: false })).toBeVisible()
+  })
+
+  // What `guardbee blame` prints, per row: who Cilium says decided the flow.
+  test('shows which policy decided each flow', async ({ page }) => {
+    await openTab(page, 'Flows')
+    await visibleForm(page).locator('input').first().fill('postgres')
+    await page.getByRole('button', { name: 'Fetch flows' }).click()
+    const rows = page.locator('table:visible tbody tr')
+    await expect(rows).toHaveCount(6)
+
+    const decided = (n: number) => rows.nth(n).locator('[data-decision]')
+    await expect(decided(0)).toHaveAttribute('data-decision', 'allowed')
+    await expect(decided(0)).toContainText('allowed by')
+    await expect(decided(0).getByRole('button', { name: '✎ CNP:postgres/postgres-allow-webapp' })).toBeVisible()
+    await expect(rows.nth(0)).toContainText('INGRESS')
+    // A Kubernetes NetworkPolicy is named but can't be opened in the editor.
+    await expect(decided(1)).toContainText('NetworkPolicy:postgres/allow-metrics')
+    await expect(decided(1).getByRole('button')).toHaveCount(0)
+    // No attribution is said as such, never guessed.
+    await expect(decided(2)).toHaveText('allowed, no policy attributed by Hubble')
+    // A trace event (no policy verdict) has an empty cell.
+    await expect(rows.nth(4).locator('[data-decision]')).toHaveCount(0)
+    await expect(decided(5)).toHaveAttribute('data-decision', 'denied')
+    await expect(decided(5).getByRole('button', { name: '✎ CCNP:lockdown' })).toBeVisible()
+  })
+
+  test('default deny reads as such, not as a deny rule', async ({ page }) => {
+    await openTab(page, 'Flows')
+    await visibleForm(page).locator('input').first().fill('webapp')
+    await page.getByRole('button', { name: 'Fetch flows' }).click()
+    const dropped = page.locator('table:visible tbody tr', { hasText: 'DROPPED' })
+    await expect(dropped).toHaveCount(2)
+    for (const row of await dropped.all()) {
+      await expect(row.locator('[data-decision]')).toHaveText('default deny: no policy rule allows it')
+    }
+  })
+
+  test('a policy badge opens that live policy in the Policy Editor', async ({ page, cluster }) => {
+    await openTab(page, 'Flows')
+    await visibleForm(page).locator('input').first().fill('postgres')
+    await page.getByRole('button', { name: 'Fetch flows' }).click()
+    await page.getByRole('button', { name: '✎ CNP:postgres/postgres-allow-webapp' }).first().click()
+
+    await expect(page.getByRole('button', { name: 'Policy Editor', exact: true })).toHaveClass(/bg-signal/)
+    await expect(page.locator('pre:visible').first()).toContainText('name: postgres-allow-webapp')
+    const edit = cluster.requests.filter((r) => new URL(r.url()).pathname === '/api/policies/edit').at(-1)!
+    const q = new URL(edit.url()).searchParams
+    expect([q.get('kind'), q.get('namespace'), q.get('name')]).toEqual(['CiliumNetworkPolicy', 'postgres', 'postgres-allow-webapp'])
+  })
+
+  test('the either-side pod and event type filters reach Hubble', async ({ page, cluster }) => {
+    await openTab(page, 'Flows')
+    const form = visibleForm(page)
+    await form.locator('summary', { hasText: 'Filters' }).click()
+    await form.getByPlaceholder('ns/api-').fill('observability/prometheus-')
+    await form.getByRole('button', { name: 'Policy verdicts' }).click()
+    await expect(form.getByTitle(/Hubble event type/).locator('select')).toHaveValue('policy-verdict')
+    await page.getByRole('button', { name: 'Fetch flows' }).click()
+
+    // Prometheus's two scrapes, minus the one that's a trace event.
+    await expect(page.locator('table:visible tbody tr')).toHaveCount(1)
+    const q = cluster.flowQueries().at(-1)!
+    expect(q.getAll('pod')).toEqual(['observability/prometheus-'])
+    expect(q.getAll('type')).toEqual(['policy-verdict'])
+    await expect(page.getByText(/^only: pod observability\/prometheus- · type policy-verdict$/)).toBeVisible()
+  })
+
+  test('an unknown event type is rejected by the backend with its reason', async ({ page }) => {
+    // page.request bypasses the mocks: this is the real binary's validation.
+    await page.goto('/')
+    const res = await page.request.get('/api/flows?namespace=app&type=policy_verdict')
+    expect(res.status()).toBe(400)
+    expect(await res.text()).toContain('invalid --type value "policy_verdict"')
   })
 })
