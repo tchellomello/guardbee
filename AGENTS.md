@@ -34,7 +34,7 @@ All four are read-only against the cluster, by design, in v1.
 **The whole trust model rests on embedding Cilium's actual `pkg/policy`
 engine** (`ResolvePolicy`/`DistillPolicy`/`EndpointPolicy.Lookup`, plus the
 generated `.Parse()` conversions for CNP/CCNP), pinned to the cluster's exact
-Cilium version (`go.mod`: `github.com/cilium/cilium v1.20.2`). A verdict from
+Cilium version (`go.mod`: `github.com/cilium/cilium v1.20.4`). A verdict from
 this tool must be a verdict from Cilium's own code, never this project's
 guess at Cilium's semantics.
 

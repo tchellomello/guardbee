@@ -51,7 +51,7 @@ mise run lab-up
 ```
 
 Creates a kind cluster named `guardbee-lab`, installs Cilium
-(`v1.20.2` — matching `go.mod`'s pinned version exactly) with Hubble and
+(`v1.20.4` — matching `go.mod`'s pinned version exactly) with Hubble and
 Hubble Relay enabled, then deploys the three workloads above. Takes a
 few minutes — most of it is Cilium's own images pulling and the agent
 coming up.
@@ -71,7 +71,7 @@ Creating cluster "guardbee-lab" ...
  ✓ Joining worker nodes
 Set kubectl context to "kind-guardbee-lab"
 
-guardbee lab: installing Cilium 1.20.2 into cilium-system...
+guardbee lab: installing Cilium 1.20.4 into cilium-system...
 guardbee lab: waiting for Cilium and hubble-relay to report ready...
 guardbee lab: deploying webapp / postgres / observability workloads...
 
