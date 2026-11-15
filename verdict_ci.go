@@ -194,7 +194,7 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 	if comp.target.context != "" {
 		fmt.Fprintf(w, "- Context: `%s` (%s)\n", comp.target.context, comp.target.apiServer)
 	}
-	fmt.Fprintf(w, "- Scope: %s%s\n", namespaceLabel(comp.namespace), filterLabel(comp.dst))
+	fmt.Fprintf(w, "- Scope: %s%s\n", namespaceLabel(comp.namespace), filterLabel(comp.filter))
 	fmt.Fprintf(w, "- Flows: %d sampled, %d judged (%d unchanged, %d newly dropped, %d newly allowed), %d not simulated, %d replies skipped\n",
 		c.total, judgedFlows(c), c.unchanged, c.newlyDropped, c.newlyAllowed, c.notSimulated, c.replySkipped)
 	fmt.Fprintf(w, "- Rules: %d candidate vs %d live\n", comp.candidateRuleCount, comp.baselineRuleCount)

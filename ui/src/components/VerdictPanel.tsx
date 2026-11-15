@@ -14,19 +14,19 @@ import { WorkloadExceptionMenu } from './WorkloadExceptionMenu'
 import { SaveToWorkspace } from './SaveToWorkspace'
 import { firstPolicyName, loadVerdictForm, persistVerdictForm, type NewSavedPolicy } from '../shared/workspace'
 import {
-  appendDestinationFilter,
-  describeDestinationFilter,
-  destinationFilterParams,
-  EMPTY_DESTINATION_FILTER,
+  appendFlowFilter,
+  describeFlowFilter,
+  flowFilterParams,
+  EMPTY_FLOW_FILTER,
   filterSuggestions,
-  isDestinationFilterEmpty,
-  suggestionOptions,
-  type DestinationFilter,
-  type FilterSuggestions,
-} from '../shared/destinationFilter'
+  isFlowFilterEmpty,
+  type FlowFilter,
+} from '../shared/flowFilter'
+import { FlowFilterFields } from './FlowFilterFields'
 import type { EgressRule, IngressRule, Protocol } from '../policy'
 import { runsWithLiveGraphs } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
+import { GraphNodeLink } from './GraphNodeLink'
 
 // Visual language matches the CLI's own colorize/changeColor (colors.go):
 // red for NEWLY_DROPPED, amber for NEWLY_ALLOWED, green for UNCHANGED —
@@ -79,7 +79,7 @@ export interface VerdictRunItem {
   last: number
   showUnchanged: boolean
   candidateYAML: string
-  filter: DestinationFilter
+  filter: FlowFilter
   isStreaming: boolean
   result: VerdictResponse
   isCollapsed?: boolean
@@ -202,7 +202,7 @@ export function VerdictPanel({
     setFollow(false)
     setCandidateYAML('')
     setSavedName('')
-    setFilter(EMPTY_DESTINATION_FILTER)
+    setFilter(EMPTY_FLOW_FILTER)
   }
 
   function handleClearResults() {
@@ -271,7 +271,7 @@ export function VerdictPanel({
         showUnchanged: String(showUnchanged),
       })
       if (ns) params.set('namespace', ns)
-      appendDestinationFilter(params, filter)
+      appendFlowFilter(params, filter)
       const es = new EventSource(`/api/verdict/stream?${params}`)
       eventSourceRef.current = es
 
@@ -348,7 +348,7 @@ export function VerdictPanel({
         candidateYAML: params.candidateYAML,
         last: params.last,
         showUnchanged: params.showUnchanged,
-        ...destinationFilterParams(params.filter),
+        ...flowFilterParams(params.filter),
       })
       const newRun: VerdictRunItem = {
         ...params,
@@ -395,26 +395,24 @@ export function VerdictPanel({
 
   return (
     <>
-      {/* Left column: scope controls, then results below — the primary
-          working area. Right column: the candidate YAML + run actions,
-          sticky, mirroring the Policy Editor tab's layout (editor on the
-          left, YAML output sticky on the right) instead of the previous
-          mirror image of it. */}
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-[1fr_420px]">
-        <div className="min-w-0 space-y-6">
-          <div className="rise-in space-y-5 border border-line bg-panel p-5">
+      {/* Setup on top as two balanced panels — scope (with filters) on the
+          left, the candidate policy and its run actions on the right — and
+          the results below at full width, where the graphs need the room.
+          Stacked on narrower screens. */}
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
+          <div className="rise-in min-w-0 space-y-5 border border-line bg-panel p-5">
             <div className="flex items-center justify-between">
               <SectionLabel>Scope</SectionLabel>
             </div>
 
-            <NamespaceScope
-              namespace={namespace}
-              onNamespaceChange={setNamespace}
-              allNamespaces={allNamespaces}
-              onAllNamespacesChange={setAllNamespaces}
-            />
-
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_6.5rem_auto]">
+              <NamespaceScope
+                namespace={namespace}
+                onNamespaceChange={setNamespace}
+                allNamespaces={allNamespaces}
+                onAllNamespacesChange={setAllNamespaces}
+              />
               <Field label="Last">
                 <input
                   type="number"
@@ -424,119 +422,23 @@ export function VerdictPanel({
                   className="w-full border border-line bg-void px-3 py-2 text-sm text-ink focus:border-signal focus:outline-none"
                 />
               </Field>
-              <div className="flex flex-col justify-end gap-2 pb-2">
+              <div className="flex flex-col gap-2 sm:pt-6">
                 <CheckRow label="Show unchanged" checked={showUnchanged} onChange={setShowUnchanged} />
                 <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
+                <CheckRow label="Stack runs" checked={stackRuns} onChange={setStackRuns} />
               </div>
             </div>
 
-            <DestinationFilterFields
+            <FlowFilterFields
               filter={filter}
               onChange={setFilter}
               suggestions={filterSuggestions(runs.flatMap((r) => r.result.rows))}
-            />
-
-            <div className="h-px bg-line" />
-
-            <CheckRow
-              label="Stack runs (keep previous analyses)"
-              checked={stackRuns}
-              onChange={setStackRuns}
+              intro="Judge only matching flows; other traffic isn't judged, so use this to investigate, not to sign off. Verdict is today's: DROPPED asks which current drops the candidate would allow."
             />
           </div>
 
-          {error && (
-            <p className="rise-in border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">{error}</p>
-          )}
-
-          {workloads && (
-            <div className="rise-in space-y-3 border border-line bg-panel p-5">
-              <div className="flex items-center justify-between">
-                <SectionLabel>Selected workloads</SectionLabel>
-                <button
-                  type="button"
-                  onClick={() => setWorkloads(null)}
-                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop cursor-pointer"
-                >
-                  Dismiss
-                </button>
-              </div>
-              {!workloads.valid ? (
-                <p className="text-sm text-drop">{workloads.error}</p>
-              ) : (
-                <>
-                  <p className="text-xs text-ink-dim">
-                    {workloads.workloads.filter((w) => w.selected).length} of {workloads.workloads.length} running pods are selected by this policy's endpointSelector.
-                    Selection comes from Cilium's own engine. Run the verdict to see which observed flows it blocks.
-                  </p>
-                  <ul className="max-h-72 divide-y divide-line overflow-auto border border-line text-xs">
-                    {workloads.workloads.map((w) => (
-                      <li key={`${w.namespace}/${w.name}`} className="flex items-center justify-between gap-3 px-3 py-2">
-                        <span className="min-w-0 truncate">
-                          <span className="text-ink">{w.namespace}/{w.name}</span>
-                          <span className="ml-2 text-ink-dim">sa: {w.serviceAccount}</span>
-                        </span>
-                        <span
-                          className={`shrink-0 border px-2 py-0.5 font-display text-[0.6rem] font-bold uppercase tracking-wider ${
-                            w.selected ? 'border-drop/40 bg-drop/10 text-drop' : 'border-unchanged/40 bg-unchanged/10 text-unchanged'
-                          }`}
-                        >
-                          {w.selected ? `selected · ${[w.egress && 'egress', w.ingress && 'ingress'].filter(Boolean).join('+')}` : 'not selected'}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-          )}
-
-          {runs.length > 0 && (
-            <div className="flex items-center justify-between border-b border-line pb-3">
-              <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
-                {runs.length === 1 ? 'Analysis Result' : `Stacked Analyses (${runs.length})`}
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleClearResults}
-                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop transition-colors cursor-pointer"
-                >
-                  Clear all results
-                </button>
-              </div>
-            </div>
-          )}
-
-          {runs.length === 0 && !loading && (
-            <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
-              <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to simulate</p>
-              <p className="text-xs max-w-md mx-auto leading-relaxed">
-                Pick a namespace scope, paste your candidate CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy, and click <strong className="text-signal">Run verdict</strong> to evaluate against live cluster traffic.
-              </p>
-            </div>
-          )}
-
-          {runs.map((run, runIndex) => (
-            <RunCard
-              key={run.id}
-              run={run}
-              graphLive={liveGraphRuns.has(run.id)}
-              runNumber={runs.length - runIndex}
-              onOpenHelp={openHelp}
-              onDuplicate={handleDuplicateToForm}
-              onRemove={handleRemoveRun}
-              onToggleCollapse={handleToggleCollapse}
-              policyNamespace={policyNamespace}
-              onAppendRuleToPolicy={onAppendRuleToPolicy}
-              onAddException={(yaml) => handleAddException(run, yaml)}
-            />
-          ))}
-        </div>
-
-        {/* Candidate policy YAML & run actions */}
-        <div className="space-y-4 2xl:sticky 2xl:top-6">
-          <div className="rise-in space-y-3 border border-line bg-panel p-5">
+          {/* Candidate policy YAML & run actions */}
+          <div className="rise-in flex min-w-0 flex-col gap-3 border border-line bg-panel p-5">
             <div className="flex items-center justify-between">
               <SectionLabel>Candidate policy</SectionLabel>
               <div className="flex shrink-0 items-center gap-3 pl-3">
@@ -570,7 +472,7 @@ export function VerdictPanel({
                 you have to scroll past a wall of YAML to find (same reason
                 the Policy Editor tab puts "Test in Verdict Simulator" above
                 its YAML output rather than after it). */}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="submit"
                 disabled={loading || streaming}
@@ -623,17 +525,98 @@ export function VerdictPanel({
               required
               spellCheck={false}
               placeholder={'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ...\nspec:\n  ...'}
-              className="w-full min-h-[18rem] resize-y border border-line bg-void px-3 py-2.5 font-mono text-xs leading-relaxed text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none"
+              className="w-full min-h-[16rem] flex-1 resize-y border border-line bg-void px-3 py-2.5 font-mono text-xs leading-relaxed text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none"
             />
-            <button
-              type="button"
-              onClick={() => setExpandedEditorOpen(true)}
-              className="cursor-pointer self-start font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal"
-            >
-              ⤢ Expand / Edit
-            </button>
           </div>
         </div>
+
+        {error && (
+          <p className="rise-in border border-drop/40 bg-drop/10 px-4 py-3 text-sm text-drop">{error}</p>
+        )}
+
+        {workloads && (
+          <div className="rise-in space-y-3 border border-line bg-panel p-5">
+            <div className="flex items-center justify-between">
+              <SectionLabel>Selected workloads</SectionLabel>
+              <button
+                type="button"
+                onClick={() => setWorkloads(null)}
+                className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+            {!workloads.valid ? (
+              <p className="text-sm text-drop">{workloads.error}</p>
+            ) : (
+              <>
+                <p className="text-xs text-ink-dim">
+                  {workloads.workloads.filter((w) => w.selected).length} of {workloads.workloads.length} running pods are selected by this policy's endpointSelector.
+                  Selection comes from Cilium's own engine. Run the verdict to see which observed flows it blocks.
+                </p>
+                <ul className="max-h-72 divide-y divide-line overflow-auto border border-line text-xs">
+                  {workloads.workloads.map((w) => (
+                    <li key={`${w.namespace}/${w.name}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="min-w-0 truncate">
+                        <span className="text-ink">{w.namespace}/{w.name}</span>
+                        <span className="ml-2 text-ink-dim">sa: {w.serviceAccount}</span>
+                      </span>
+                      <span
+                        className={`shrink-0 border px-2 py-0.5 font-display text-[0.6rem] font-bold uppercase tracking-wider ${
+                          w.selected ? 'border-drop/40 bg-drop/10 text-drop' : 'border-unchanged/40 bg-unchanged/10 text-unchanged'
+                        }`}
+                      >
+                        {w.selected ? `selected · ${[w.egress && 'egress', w.ingress && 'ingress'].filter(Boolean).join('+')}` : 'not selected'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
+
+        {runs.length > 0 && (
+          <div className="flex items-center justify-between border-b border-line pb-3">
+            <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
+              {runs.length === 1 ? 'Analysis Result' : `Stacked Analyses (${runs.length})`}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleClearResults}
+                className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop transition-colors cursor-pointer"
+              >
+                Clear all results
+              </button>
+            </div>
+          </div>
+        )}
+
+        {runs.length === 0 && !loading && (
+          <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
+            <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to simulate</p>
+            <p className="text-xs max-w-md mx-auto leading-relaxed">
+              Pick a namespace scope, paste your candidate CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy, and click <strong className="text-signal">Run verdict</strong> to evaluate against live cluster traffic.
+            </p>
+          </div>
+        )}
+
+        {runs.map((run, runIndex) => (
+          <RunCard
+            key={run.id}
+            run={run}
+            graphLive={liveGraphRuns.has(run.id)}
+            runNumber={runs.length - runIndex}
+            onOpenHelp={openHelp}
+            onDuplicate={handleDuplicateToForm}
+            onRemove={handleRemoveRun}
+            onToggleCollapse={handleToggleCollapse}
+            policyNamespace={policyNamespace}
+            onAppendRuleToPolicy={onAppendRuleToPolicy}
+            onAddException={(yaml) => handleAddException(run, yaml)}
+          />
+        ))}
       </form>
 
       {/* Informative Verdict Help Modal */}
@@ -745,7 +728,7 @@ function RunCard({
     <div className="rise-in border border-line bg-panel space-y-4 p-5 shadow-sm">
       {/* Run Card Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="font-display text-xs font-bold uppercase tracking-wider text-signal">
             Run #{runNumber}
           </span>
@@ -769,12 +752,12 @@ function RunCard({
           <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
             last: {run.last}
           </span>
-          {!isDestinationFilterEmpty(run.filter) && (
+          {!isFlowFilterEmpty(run.filter) && (
             <span
-              title="Only flows to this destination were fetched and judged. Anything the candidate does to other destinations isn't in this run."
+              title="Only matching flows were fetched and judged. Anything the candidate does to other traffic isn't in this run."
               className="border border-signal/40 bg-signal/5 px-2 py-0.5 font-mono text-[0.7rem] text-signal"
             >
-              only to: {describeDestinationFilter(run.filter)}
+              only: {describeFlowFilter(run.filter)}
             </span>
           )}
         </div>
@@ -783,7 +766,7 @@ function RunCard({
             controls (no border chrome) so they don't visually compete with
             the newly-dropped/newly-allowed counts below, which are the
             actual answer this run exists to give. */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={() => onDuplicate(run)}
@@ -1016,89 +999,6 @@ function RunCard({
   )
 }
 
-// A <details> so the filter stays out of the way until wanted, but opens by
-// itself when one is set (e.g. restored after a reload): a filter that's
-// active but hidden would make a run look like it saw all traffic.
-//
-// Each field suggests destinations from the runs below (a native <datalist>:
-// type to narrow, or pick from the dropdown), so a destination seen in the
-// results can be filtered on without retyping it.
-function DestinationFilterFields({
-  filter,
-  onChange,
-  suggestions,
-}: {
-  filter: DestinationFilter
-  onChange: (f: DestinationFilter) => void
-  suggestions: FilterSuggestions
-}) {
-  const active = !isDestinationFilterEmpty(filter)
-  const hasSuggestions = Object.values(suggestions).some((s) => s.length > 0)
-  const input = (key: keyof DestinationFilter, label: string, placeholder: string) => {
-    const listId = `verdict-filter-${key}`
-    // A label selector can contain commas itself (see splitList), so only
-    // the other fields complete as a comma-separated list.
-    const options = suggestionOptions(filter[key], suggestions[key], key !== 'toLabel').slice(0, 50)
-    return (
-      <Field label={label}>
-        <input
-          value={filter[key]}
-          onChange={(e) => onChange({ ...filter, [key]: e.target.value })}
-          placeholder={placeholder}
-          spellCheck={false}
-          autoComplete="off"
-          list={options.length ? listId : undefined}
-          className="w-full border border-line bg-void px-3 py-2 font-mono text-xs text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none"
-        />
-        {options.length > 0 && (
-          <datalist id={listId}>
-            {options.map((o) => (
-              <option key={o} value={o} />
-            ))}
-          </datalist>
-        )}
-      </Field>
-    )
-  }
-  return (
-    <details open={active || undefined} className="group space-y-3">
-      <summary className="flex cursor-pointer list-none items-center justify-between text-[0.65rem] font-semibold tracking-[0.12em] text-ink-dim uppercase hover:text-ink">
-        <span>
-          <span className="inline-block transition-transform group-open:rotate-90">▸</span> Destination filter
-          {active ? <span className="ml-2 normal-case tracking-normal text-signal">{describeDestinationFilter(filter)}</span> : ' (optional)'}
-        </span>
-        {active && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault()
-              onChange(EMPTY_DESTINATION_FILTER)
-            }}
-            className="cursor-pointer font-display text-[0.65rem] font-bold tracking-wider text-ink-faint hover:text-drop"
-          >
-            Clear
-          </button>
-        )}
-      </summary>
-      <p className="text-[0.7rem] leading-relaxed text-ink-faint">
-        Judge only flows going to this destination. Hubble filters them before sampling, so all <em>Last</em> flows
-        go there. Same as the CLI's <code>--to-pod</code>/<code>--to-service</code>/<code>--to-label</code>/
-        <code>--to-port</code>. Fields combine with AND; commas separate alternatives. Flows to other destinations
-        aren't judged at all, so use this to investigate, not to sign off on a policy.{' '}
-        {hasSuggestions
-          ? 'Fields suggest destinations seen in the runs below.'
-          : 'After a run, fields suggest the destinations it saw (turn on Show unchanged to include unchanged traffic).'}
-      </p>
-      <div className="grid grid-cols-2 gap-3">
-        {input('toPod', 'To pod', '[namespace/]name-prefix')}
-        {input('toService', 'To service', '[namespace/]service')}
-        {input('toLabel', 'To label', 'k8s:app=db or reserved:kube-apiserver')}
-        {input('toPort', 'To port', '443, 5432')}
-      </div>
-    </details>
-  )
-}
-
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase w-full">
@@ -1249,28 +1149,6 @@ function AddToPolicyButton({
   )
 }
 
-function GraphNodeLink({
-  selected,
-  onClick,
-  children,
-}: {
-  selected: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Select this node in the flow graph above"
-      className={`cursor-pointer text-left underline decoration-dotted underline-offset-2 transition-colors hover:text-signal ${
-        selected ? 'text-signal font-semibold' : ''
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
 
 function CountChip({
   label,

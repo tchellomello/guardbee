@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	observerpb "github.com/cilium/cilium/api/v1/observer"
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	observerpb "github.com/cilium/cilium/api/v1/observer"
 	"github.com/spf13/pflag"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -38,29 +38,35 @@ const (
 func runFlows(args []string) {
 	fs := pflag.NewFlagSet("flows", pflag.ExitOnError)
 	flags := registerCommonFlags(fs)
-	dst := registerDestinationFlags(fs)
+	filterFlags := registerFlowFilterFlags(fs)
 	var last uint64
 	var follow bool
 	fs.Uint64Var(&last, "last", 20, "number of recent flows to print")
 	fs.BoolVarP(&follow, "follow", "f", false, "keep streaming new flows until Ctrl+C, instead of stopping after --last")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: %[1]s flows [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port ...] [--last N] [-f]
+		fmt.Fprintf(os.Stderr, `Usage: %[1]s flows [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f]
 
 Port-forwards to the cluster's hubble-relay pod (cilium-system) and streams
 real flows touching that namespace (or every namespace, with
 --all-namespaces or by omitting --namespace), via Hubble's Observer.GetFlows
-gRPC API. The --to-* flags narrow that to flows going to one destination,
-with hubble observe's own semantics.
+gRPC API. The --from-*/--to-*/--verdict/--drop-reason-desc flags narrow that,
+with hubble observe's own names and semantics, inside Hubble itself — so
+--last N means N matching flows.
 
 %[2]s
 
 Flags:
 `, binName, numberFlagHelp)
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s flows -n testing --last 50\n  %[1]s flows -n myapp --follow\n  %[1]s flows --all-namespaces --last 100\n", binName)
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s flows -n testing --last 50\n  %[1]s flows -n myapp --follow\n  %[1]s flows -n myapp --verdict DROPPED --drop-reason-desc POLICY_DENIED\n  %[1]s flows -n myapp --from-label reserved:world --to-port 443\n  %[1]s flows --all-namespaces --last 100\n", binName)
 	}
 	_ = fs.Parse(args)
 	namespace := flags.resolveNamespace()
+	filter, err := filterFlags.parse()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, binName+" flows: %v\n", err)
+		os.Exit(1)
+	}
 
 	core, _, cfg, err := newClientsets(flags.kubeconfig)
 	if err != nil {
@@ -71,19 +77,26 @@ Flags:
 
 	print := func(f *flowpb.Flow) {
 		verdict := f.GetVerdict().String()
-		fmt.Printf("%s  %s  %s -> %s  %s\n",
+		// The drop reason is what --drop-reason-desc filters on, so show it
+		// (only on drops; every forwarded flow would just say UNKNOWN).
+		reason := ""
+		if r := f.GetDropReasonDesc(); r != flowpb.DropReason_DROP_REASON_UNKNOWN {
+			reason = "  (" + r.String() + ")"
+		}
+		fmt.Printf("%s  %s  %s -> %s  %s%s\n",
 			f.GetTime().AsTime().Format(time.RFC3339),
 			colorizePadded(flowVerdictColor(verdict), verdict, 8),
 			endpointString(f.GetSource()),
 			endpointString(f.GetDestination()),
 			l4String(f.GetL4()),
+			reason,
 		)
 	}
 
 	if follow {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		count, err := streamFlows(ctx, core, cfg, namespace, *dst, last, print)
+		count, err := streamFlows(ctx, core, cfg, namespace, filter, last, print)
 		fmt.Printf("\n%d flows\n", count)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, binName+" flows: %v\n", err)
@@ -92,7 +105,7 @@ Flags:
 		return
 	}
 
-	flows, err := fetchFlows(core, cfg, namespace, *dst, last)
+	flows, err := fetchFlows(core, cfg, namespace, filter, last)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" flows: %v\n", err)
 		os.Exit(1)
@@ -108,7 +121,11 @@ Flags:
 // hubble-relay. Shared by the "flows" subcommand (prints them) and "verdict"
 // (judges them against a candidate policy). Bounded: returns once hubble-relay
 // has sent `number` flows and closed the stream.
-func fetchFlows(core kubernetes.Interface, cfg *rest.Config, namespace string, dst destinationFilter, number uint64) ([]*flowpb.Flow, error) {
+func fetchFlows(core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, number uint64) ([]*flowpb.Flow, error) {
+	whitelist, err := flowWhitelist(namespace, filter)
+	if err != nil {
+		return nil, err
+	}
 	client, closeFn, err := dialHubble(core, cfg)
 	if err != nil {
 		return nil, err
@@ -120,7 +137,7 @@ func fetchFlows(core kubernetes.Interface, cfg *rest.Config, namespace string, d
 
 	stream, err := client.GetFlows(ctx, &observerpb.GetFlowsRequest{
 		Number:    number,
-		Whitelist: flowWhitelist(namespace, dst),
+		Whitelist: whitelist,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("GetFlows: %w", err)
@@ -169,7 +186,11 @@ func newestFlows(flows []*flowpb.Flow, number uint64) []*flowpb.Flow {
 // backlog isn't trimmed to `number`: hubble-relay asks every node for
 // `number` (see newestFlows), and a stream can't tell where the backlog
 // ends and live flows begin, so up to `number` per node arrive first.
-func streamFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Config, namespace string, dst destinationFilter, number uint64, onFlow func(*flowpb.Flow)) (int, error) {
+func streamFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, number uint64, onFlow func(*flowpb.Flow)) (int, error) {
+	whitelist, err := flowWhitelist(namespace, filter)
+	if err != nil {
+		return 0, err
+	}
 	client, closeFn, err := dialHubble(core, cfg)
 	if err != nil {
 		return 0, err
@@ -179,7 +200,7 @@ func streamFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Confi
 	stream, err := client.GetFlows(ctx, &observerpb.GetFlowsRequest{
 		Number:    number,
 		Follow:    true,
-		Whitelist: flowWhitelist(namespace, dst),
+		Whitelist: whitelist,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("GetFlows: %w", err)
@@ -201,46 +222,149 @@ func streamFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Confi
 	}
 }
 
-// destinationFilter narrows which flows are fetched to those going to a
-// particular destination, using hubble CLI's own --to-pod/--to-service/
-// --to-label/--to-port names and semantics. It's applied server-side, in
-// hubble-relay's GetFlows, not to rows after judging: Hubble's buffer is one
-// small cluster-wide ring (see --last), so filtering afterwards would leave a
-// quiet destination with almost no flows to judge, whereas filtering the
-// query makes every one of the --last flows one that goes there. Values
-// within one field are ORed, the fields are ANDed, as in hubble observe.
-type destinationFilter struct {
-	pods, services, labels, ports []string
+// flowFilter narrows which flows are fetched, using hubble CLI's own flag
+// names and semantics (--from-*/--to-* peers, --verdict, --drop-reason-desc).
+// It's applied server-side, in hubble-relay's GetFlows, not to rows
+// afterwards: Hubble's buffer is one small cluster-wide ring (see --last), so
+// filtering afterwards would leave a quiet peer or a rare drop reason with
+// almost no flows, whereas filtering the query makes every one of the --last
+// flows a matching one. Values within one field are ORed, the fields are
+// ANDed, as in hubble observe. Shared by flows and verdict (CLI and UI), so
+// both can only ever narrow a sample the same way.
+type flowFilter struct {
+	fromPods, fromLabels, fromIPs                []string
+	toPods, toServices, toLabels, toIPs, toPorts []string
+	verdicts                                     []flowpb.Verdict
+	dropReasons                                  []flowpb.DropReason
 }
 
-func (d destinationFilter) empty() bool {
-	return len(d.pods) == 0 && len(d.services) == 0 && len(d.labels) == 0 && len(d.ports) == 0
+func (f flowFilter) empty() bool {
+	return len(f.fromPods) == 0 && len(f.fromLabels) == 0 && len(f.fromIPs) == 0 &&
+		len(f.toPods) == 0 && len(f.toServices) == 0 && len(f.toLabels) == 0 && len(f.toIPs) == 0 &&
+		len(f.toPorts) == 0 && len(f.verdicts) == 0 && len(f.dropReasons) == 0
+}
+
+// flags pairs every flag name with its values, in display order — the single
+// list String() and the UI's describe step both render from.
+func (f flowFilter) flags() []struct {
+	flag string
+	vals []string
+} {
+	names := func(vals any) []string {
+		var out []string
+		switch v := vals.(type) {
+		case []flowpb.Verdict:
+			for _, x := range v {
+				out = append(out, x.String())
+			}
+		case []flowpb.DropReason:
+			for _, x := range v {
+				out = append(out, x.String())
+			}
+		}
+		return out
+	}
+	return []struct {
+		flag string
+		vals []string
+	}{
+		{"from-pod", f.fromPods}, {"from-label", f.fromLabels}, {"from-ip", f.fromIPs},
+		{"to-pod", f.toPods}, {"to-service", f.toServices}, {"to-label", f.toLabels}, {"to-ip", f.toIPs}, {"to-port", f.toPorts},
+		{"verdict", names(f.verdicts)}, {"drop-reason-desc", names(f.dropReasons)},
+	}
 }
 
 // String renders the filter as the equivalent flags, for the CLI's
 // "Judging …" line, so output pasted into a ticket says what was narrowed.
-func (d destinationFilter) String() string {
+func (f flowFilter) String() string {
 	var parts []string
-	for _, f := range []struct {
-		flag string
-		vals []string
-	}{{"to-pod", d.pods}, {"to-service", d.services}, {"to-label", d.labels}, {"to-port", d.ports}} {
-		for _, v := range f.vals {
-			parts = append(parts, "--"+f.flag+" "+v)
+	for _, fl := range f.flags() {
+		for _, v := range fl.vals {
+			parts = append(parts, "--"+fl.flag+" "+v)
 		}
 	}
 	return strings.Join(parts, " ")
 }
 
-// registerDestinationFlags adds the --to-* flags to fs, for the subcommands
+// flowFilterFlags holds the raw flag values until parse() validates the
+// enum ones (--verdict, --drop-reason-desc) the way hubble does.
+type flowFilterFlags struct {
+	f                     flowFilter
+	verdicts, dropReasons []string
+}
+
+// registerFlowFilterFlags adds the filter flags to fs, for the subcommands
 // that fetch flows (flows, verdict).
-func registerDestinationFlags(fs *pflag.FlagSet) *destinationFilter {
-	d := &destinationFilter{}
-	fs.StringArrayVar(&d.pods, "to-pod", nil, "only flows to pods with this name prefix ([namespace/]<pod-name>; a bare name uses --namespace, or 'default' with -A, like hubble). Repeatable")
-	fs.StringArrayVar(&d.services, "to-service", nil, "only flows to this Service's ClusterIP ([namespace/]<svc-name> prefix, same defaulting as --to-pod). Repeatable")
-	fs.StringArrayVar(&d.labels, "to-label", nil, `only flows to endpoints matching this label selector (e.g. "k8s:app=db", "reserved:kube-apiserver"). Repeatable`)
-	fs.StringArrayVar(&d.ports, "to-port", nil, "only flows to this destination port (e.g. 443). Repeatable")
-	return d
+func registerFlowFilterFlags(fs *pflag.FlagSet) *flowFilterFlags {
+	r := &flowFilterFlags{}
+	fs.StringArrayVar(&r.f.fromPods, "from-pod", nil, "only flows from pods with this name prefix ([namespace/]<pod-name>; a bare name uses --namespace, or 'default' with -A, like hubble). Repeatable")
+	fs.StringArrayVar(&r.f.fromLabels, "from-label", nil, `only flows from endpoints matching this label selector (e.g. "k8s:app=web", "reserved:world"). Repeatable`)
+	fs.StringArrayVar(&r.f.fromIPs, "from-ip", nil, "only flows from this IP address or CIDR (e.g. 10.0.0.5, 10.0.0.0/8). Repeatable")
+	fs.StringArrayVar(&r.f.toPods, "to-pod", nil, "only flows to pods with this name prefix (same form and defaulting as --from-pod). Repeatable")
+	fs.StringArrayVar(&r.f.toServices, "to-service", nil, "only flows to this Service's ClusterIP ([namespace/]<svc-name> prefix, same defaulting as --to-pod). Repeatable")
+	fs.StringArrayVar(&r.f.toLabels, "to-label", nil, `only flows to endpoints matching this label selector (e.g. "k8s:app=db", "reserved:kube-apiserver"). Repeatable`)
+	fs.StringArrayVar(&r.f.toIPs, "to-ip", nil, "only flows to this IP address or CIDR. Repeatable")
+	fs.StringArrayVar(&r.f.toPorts, "to-port", nil, "only flows to this destination port (e.g. 443). Repeatable")
+	fs.StringArrayVar(&r.verdicts, "verdict", nil, "only flows with this verdict: "+strings.Join(verdictNames(), ", ")+". Repeatable")
+	fs.StringArrayVar(&r.dropReasons, "drop-reason-desc", nil, "only flows dropped for this reason (e.g. POLICY_DENIED, POLICY_DENY); see Cilium's flow.DropReason for the full list. Repeatable")
+	return r
+}
+
+// parse validates the enum flags and returns the filter. Names must match
+// Cilium's flow.Verdict/flow.DropReason exactly — hubble observe rejects
+// anything else the same way (hubble/cmd/observe/flows_filter.go).
+func (r *flowFilterFlags) parse() (flowFilter, error) {
+	f := r.f
+	var err error
+	if f.verdicts, err = parseVerdicts(r.verdicts); err != nil {
+		return flowFilter{}, err
+	}
+	if f.dropReasons, err = parseDropReasons(r.dropReasons); err != nil {
+		return flowFilter{}, err
+	}
+	return f, nil
+}
+
+func parseVerdicts(vals []string) ([]flowpb.Verdict, error) {
+	var out []flowpb.Verdict
+	for _, v := range vals {
+		n, ok := flowpb.Verdict_value[v]
+		if !ok || n == int32(flowpb.Verdict_VERDICT_UNKNOWN) {
+			return nil, fmt.Errorf("invalid --verdict value %q (want one of %s)", v, strings.Join(verdictNames(), ", "))
+		}
+		out = append(out, flowpb.Verdict(n))
+	}
+	return out, nil
+}
+
+func parseDropReasons(vals []string) ([]flowpb.DropReason, error) {
+	var out []flowpb.DropReason
+	for _, v := range vals {
+		n, ok := flowpb.DropReason_value[v]
+		if !ok || n == int32(flowpb.DropReason_DROP_REASON_UNKNOWN) {
+			return nil, fmt.Errorf("invalid --drop-reason-desc value %q (see Cilium's flow.DropReason, e.g. POLICY_DENIED)", v)
+		}
+		out = append(out, flowpb.DropReason(n))
+	}
+	return out, nil
+}
+
+// verdictNames/dropReasonNames list every filterable value, sorted, for help
+// text and the UI's pickers (GET /api/flow-filter-options) — taken from the
+// pinned Cilium's own enums so they can't drift from what Hubble accepts.
+func verdictNames() []string { return enumNames(flowpb.Verdict_value, "VERDICT_UNKNOWN") }
+
+func dropReasonNames() []string { return enumNames(flowpb.DropReason_value, "DROP_REASON_UNKNOWN") }
+
+func enumNames(values map[string]int32, unknown string) []string {
+	out := make([]string, 0, len(values))
+	for name := range values {
+		if name != unknown {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // qualifyNames prefixes bare pod/service names with the scope namespace.
@@ -262,45 +386,64 @@ func qualifyNames(names []string, namespace string) []string {
 }
 
 // flowWhitelist builds Hubble's Whitelist for a namespace scope plus an
-// optional destination filter, or nil (no filter at all, matching hubble
-// CLI's own "omit --namespace" behavior) for an unfiltered cluster-wide
-// query. Whitelist entries are ORed and fields within one entry ANDed, so
-// "touches the namespace AND goes to X" has to be written as
-// (from ns AND to X) OR (to ns AND to X). The second half needs care for
-// --to-pod: both it and the namespace scope live in DestinationPod, whose
-// values are ORed, so it's narrowed to the --to-pod values inside the
-// namespace instead (dropped entirely when none are; then only the first
-// half can match anything).
-func flowWhitelist(namespace string, dst destinationFilter) []*flowpb.FlowFilter {
-	pods := qualifyNames(dst.pods, namespace)
-	withDst := func(ff *flowpb.FlowFilter) *flowpb.FlowFilter {
-		ff.DestinationService = qualifyNames(dst.services, namespace)
-		ff.DestinationLabel = dst.labels
-		ff.DestinationPort = dst.ports
+// optional filter, or nil (no filter at all, matching hubble CLI's own "omit
+// --namespace" behavior) for an unfiltered cluster-wide query. Whitelist
+// entries are ORed and fields within one entry ANDed, so "touches the
+// namespace AND matches the filter" is written as
+// (from ns AND filter) OR (to ns AND filter). Pods need care on each half:
+// the namespace scope and --from-pod both live in SourcePod (and the scope
+// and --to-pod both in DestinationPod), whose values are ORed, so on the
+// half that pins a side to the namespace, that side's pod list is narrowed
+// to the --*-pod values inside the namespace instead — and the half is
+// dropped entirely when none are. If both halves drop (--from-pod and
+// --to-pod both outside the namespace), no flow can match; that's an error,
+// not an empty Whitelist, which Hubble would read as "everything".
+func flowWhitelist(namespace string, f flowFilter) ([]*flowpb.FlowFilter, error) {
+	from := qualifyNames(f.fromPods, namespace)
+	to := qualifyNames(f.toPods, namespace)
+	with := func(ff *flowpb.FlowFilter) *flowpb.FlowFilter {
+		ff.SourceLabel = f.fromLabels
+		ff.SourceIp = f.fromIPs
+		ff.DestinationService = qualifyNames(f.toServices, namespace)
+		ff.DestinationLabel = f.toLabels
+		ff.DestinationIp = f.toIPs
+		ff.DestinationPort = f.toPorts
+		ff.Verdict = f.verdicts
+		ff.DropReasonDesc = f.dropReasons
 		return ff
 	}
 
 	if namespace == "" {
-		if dst.empty() {
-			return nil
+		if f.empty() {
+			return nil, nil
 		}
-		return []*flowpb.FlowFilter{withDst(&flowpb.FlowFilter{DestinationPod: pods})}
+		return []*flowpb.FlowFilter{with(&flowpb.FlowFilter{SourcePod: from, DestinationPod: to})}, nil
 	}
 
-	out := []*flowpb.FlowFilter{withDst(&flowpb.FlowFilter{SourcePod: []string{namespace + "/"}, DestinationPod: pods})}
-	toNamespace := []string{namespace + "/"}
-	if len(pods) > 0 {
-		toNamespace = nil
+	inNamespace := func(pods []string) ([]string, bool) {
+		if len(pods) == 0 {
+			return []string{namespace + "/"}, true
+		}
+		var in []string
 		for _, p := range pods {
 			if strings.HasPrefix(p, namespace+"/") {
-				toNamespace = append(toNamespace, p)
+				in = append(in, p)
 			}
 		}
-		if len(toNamespace) == 0 {
-			return out
-		}
+		return in, len(in) > 0
 	}
-	return append(out, withDst(&flowpb.FlowFilter{DestinationPod: toNamespace}))
+
+	var out []*flowpb.FlowFilter
+	if src, ok := inNamespace(from); ok {
+		out = append(out, with(&flowpb.FlowFilter{SourcePod: src, DestinationPod: to}))
+	}
+	if dst, ok := inNamespace(to); ok {
+		out = append(out, with(&flowpb.FlowFilter{SourcePod: from, DestinationPod: dst}))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("--from-pod and --to-pod are both outside namespace %q, so no flow in it can match; drop one, or use --all-namespaces", namespace)
+	}
+	return out, nil
 }
 
 // dialHubble finds the hubble-relay pod, port-forwards to it, and dials it

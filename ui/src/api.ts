@@ -4,17 +4,15 @@
 // there's no shared schema generation for a project this size yet.
 
 import type { EgressRule, IngressRule, PolicyModel } from './policy'
+import type { FlowFilterParams } from './shared/flowFilter'
 
-export interface VerdictRequest {
+// The flow filter (shared/flowFilter.ts, ui.go's flowFilterParams) rides
+// along as the same top-level keys the CLI flags use: toPod, fromIp, verdict…
+export interface VerdictRequest extends FlowFilterParams {
   namespace: string // "" = all namespaces
   candidateYAML: string
   last: number
   showUnchanged: boolean
-  // Destination filter, see shared/destinationFilter.ts and ui.go's verdictRequest.
-  toPod?: string[]
-  toService?: string[]
-  toLabel?: string[]
-  toPort?: string[]
 }
 
 export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'UNCHANGED'
@@ -69,6 +67,9 @@ export interface Flow {
   source: string
   destination: string
   l4: string
+  // Security-identity labels Hubble reports for each endpoint.
+  sourceLabels?: string[]
+  destinationLabels?: string[]
 }
 
 export interface FlowsResponse {
@@ -96,10 +97,29 @@ export function runVerdict(req: VerdictRequest): Promise<VerdictResponse> {
   }).then((res) => parseErrorOrJSON<VerdictResponse>(res))
 }
 
-export function fetchFlows(namespace: string, last: number): Promise<FlowsResponse> {
+// Query string shared by the one-shot and streaming flows endpoints.
+export function flowsQuery(namespace: string, last: number, filter?: FlowFilterParams): URLSearchParams {
   const params = new URLSearchParams({ last: String(last) })
   if (namespace) params.set('namespace', namespace)
-  return fetch(`/api/flows?${params}`).then((res) => parseErrorOrJSON<FlowsResponse>(res))
+  for (const [key, vals] of Object.entries(filter ?? {})) {
+    for (const v of vals ?? []) params.append(key, v)
+  }
+  return params
+}
+
+export function fetchFlows(namespace: string, last: number, filter?: FlowFilterParams): Promise<FlowsResponse> {
+  return fetch(`/api/flows?${flowsQuery(namespace, last, filter)}`).then((res) => parseErrorOrJSON<FlowsResponse>(res))
+}
+
+// GET /api/flow-filter-options: every value --verdict/--drop-reason-desc
+// accept, from the pinned Cilium's own enums.
+export interface FlowFilterOptions {
+  verdicts: string[]
+  dropReasons: string[]
+}
+
+export function fetchFlowFilterOptions(): Promise<FlowFilterOptions> {
+  return fetch('/api/flow-filter-options').then((res) => parseErrorOrJSON<FlowFilterOptions>(res))
 }
 
 export function fetchNamespaces(): Promise<NamespacesResponse> {

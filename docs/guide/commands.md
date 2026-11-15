@@ -30,7 +30,7 @@ guardbee policies [-n <namespace>|-A]
 Streams real traffic from Hubble.
 
 ```
-guardbee flows [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port ...] [--last N] [-f]
+guardbee flows [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f]
 ```
 
 | Flag | Meaning |
@@ -38,7 +38,20 @@ guardbee flows [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port .
 | `-n`, `--namespace` / `-A`, `--all-namespaces` | Scope flows to one namespace or every namespace |
 | `--last N` | Ceiling on flows fetched — Hubble's ring buffer may hold fewer |
 | `-f`, `--follow` | Keep tailing new flows until Ctrl+C, instead of stopping after `--last` |
-| `--to-pod`, `--to-service`, `--to-label`, `--to-port` | Only flows going to that destination, with `hubble observe`'s own semantics. Repeatable; repeats of one flag are ORed, different flags ANDed. A bare pod/service name means the `-n` namespace |
+| `--from-pod`, `--from-label`, `--from-ip` | Only flows from that source: a pod name prefix, a label or entity (`k8s:app=web`, `reserved:world`), or an IP/CIDR |
+| `--to-pod`, `--to-service`, `--to-label`, `--to-ip`, `--to-port` | Only flows going to that destination, the same way |
+| `--verdict` | Only flows with this observed verdict: `FORWARDED`, `DROPPED`, `AUDIT`, `ERROR`, `REDIRECTED`, `TRACED`, `TRANSLATED` |
+| `--drop-reason-desc` | Only flows dropped for this reason, e.g. `POLICY_DENIED`, `POLICY_DENY` (Cilium's `flow.DropReason` names) |
+
+All filter flags use `hubble observe`'s own names and semantics. They're repeatable: repeats of one flag are ORed, different flags ANDed. A bare pod/service name means the `-n` namespace. They're applied in Hubble's query, so `--last 50` means 50 *matching* flows. Dropped flows also print their drop reason.
+
+```
+guardbee flows -n myapp --verdict DROPPED --drop-reason-desc POLICY_DENIED
+guardbee flows -n myapp --from-label reserved:world --to-port 443 -f
+guardbee flows -A --from-ip 10.0.0.0/8 --verdict DROPPED
+```
+
+The UI's **Flows** tab has the same filters (under **Filters**) plus a **Follow (live)** option, and each run card shows the filter it ran with. A followed run keeps its newest 2000 flows. **Quick** buttons set common filters in one click (Dropped, Policy drops, From the internet, From nodes, To the API server). As you type, each field autocompletes from the traffic already fetched: pods (as workload prefixes like `app/web-` and as exact names), the identity labels Hubble reported (`k8s:app=web`, `reserved:world`), ports, verdicts, and every drop reason Cilium defines.
 
 > Port-forwards to the cluster's `hubble-relay` pod (`cilium-system`) and streams via Hubble's `Observer.GetFlows` gRPC API.
 
@@ -49,7 +62,7 @@ guardbee flows [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port .
 The engine. Diffs a candidate policy against live traffic — judged once against today's policy, once with the candidate added.
 
 ```
-guardbee verdict [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port ...] [--last N] [-f] <candidate.yaml>
+guardbee verdict [-n <namespace>|-A] [--from-*|--to-*|--verdict|--drop-reason-desc ...] [--last N] [-f] <candidate.yaml>
 ```
 
 | Flag | Meaning |
@@ -57,7 +70,7 @@ guardbee verdict [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port
 | `-n`, `--namespace` | Right for a CNP candidate — it can only ever affect its own namespace |
 | `-A`, `--all-namespaces` | Right for a CCNP candidate — it can span namespaces, so sampling needs to as well |
 | `--last N` / `-f`, `--follow` | Same as `flows` |
-| `--to-pod`, `--to-service`, `--to-label`, `--to-port` | Same as `flows`: judge only flows going to that destination |
+| `--from-*`, `--to-*`, `--verdict`, `--drop-reason-desc` | Same as `flows`: judge only matching flows. `--verdict` is the flow's verdict *today*, so `--verdict DROPPED` asks which of today's drops the candidate would newly allow |
 | `--show-unchanged` | Also print `UNCHANGED` rows (default: just a count) |
 | `--replace-existing` | Judge the candidate as replacing a live policy with the same kind, namespace and name, instead of adding it on top |
 | `--fail-on-dropped` | Exit `2` if any sampled flow is `NEWLY_DROPPED` |
@@ -68,7 +81,7 @@ guardbee verdict [-n <namespace>|-A] [--to-pod|--to-service|--to-label|--to-port
 
 `<candidate.yaml>` may hold several `---`-separated policies, like a file for `kubectl apply -f`; they're judged together as one candidate. In the UI, a row's **Allow / Deny** button uses this: it shows the affected workload's detected identity labels, and appends a separate exception policy scoped to the labels you pick (with `enableDefaultDeny` off for that direction, so it never default-denies anything on its own). Then it re-runs the verdict.
 
-The `--to-*` filters are applied in Hubble's query, not to the results, so all `--last` flows go to that destination instead of a quiet destination getting a handful of the cluster-wide buffer. For example, `guardbee verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 candidate.yaml`. The UI's **Destination filter** (under Scope) does the same, and each run card shows the filter it ran with. Its fields suggest destinations seen in earlier runs: workload pod prefixes, Services, labels and ports, most-seen first. Flows to other destinations aren't judged at all, so a filtered run is for investigating one path, not for signing off on a policy.
+The filters are applied in Hubble's query, not to the results, so all `--last` flows match instead of a quiet destination getting a handful of the cluster-wide buffer. For example, `guardbee verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 candidate.yaml`. The UI's **Filters** section (under Scope, the same component as the Flows tab's) does the same, and each run card shows the filter it ran with. Its fields suggest values seen in earlier runs: workload pod prefixes, entities, Services, labels and ports, most-seen first. Traffic the filter leaves out isn't judged at all, so a filtered run is for investigating one path, not for signing off on a policy.
 
 ### Editing an existing policy
 

@@ -24,6 +24,7 @@ func testFlow(srcNs, srcPod, dstNs, dstPod string, dstLabels []string, dstSvc st
 		Source:      &flowpb.Endpoint{Namespace: srcNs, PodName: srcPod},
 		Destination: &flowpb.Endpoint{Namespace: dstNs, PodName: dstPod, Labels: dstLabels},
 		L4:          &flowpb.Layer4{Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: port}}},
+		Verdict:     flowpb.Verdict_FORWARDED,
 	}
 	if dstSvc != "" {
 		f.DestinationService = &flowpb.Service{Name: dstSvc, Namespace: dstNs}
@@ -33,41 +34,76 @@ func testFlow(srcNs, srcPod, dstNs, dstPod string, dstLabels []string, dstSvc st
 
 func TestFlowWhitelist(t *testing.T) {
 	appToDB := testFlow("app", "web-1", "app", "db-0", []string{"k8s:app=db"}, "db", 5432)
+	appToDB.Source.Labels = []string{"k8s:app=web"}
+	appToDB.IP = &flowpb.IP{Source: "10.0.1.5", Destination: "10.0.1.9"}
 	appToAPIServer := testFlow("app", "web-1", "", "", []string{"reserved:kube-apiserver"}, "", 443)
+	appToAPIServer.IP = &flowpb.IP{Source: "10.0.1.5", Destination: "172.18.0.3"}
 	appToOtherNs := testFlow("app", "web-1", "other", "cache-0", []string{"k8s:app=cache"}, "cache", 6379)
+	appToOtherNs.Verdict = flowpb.Verdict_DROPPED
+	appToOtherNs.DropReasonDesc = flowpb.DropReason_POLICY_DENIED
 	otherToApp := testFlow("other", "cache-0", "app", "db-0", []string{"k8s:app=db"}, "db", 5432)
 	otherToOther := testFlow("other", "a-0", "other", "cache-0", []string{"k8s:app=cache"}, "cache", 6379)
+	worldToApp := testFlow("", "", "app", "web-1", []string{"k8s:app=web"}, "", 8080)
+	worldToApp.Source.Labels = []string{"reserved:world"}
+	worldToApp.IP = &flowpb.IP{Source: "203.0.113.7", Destination: "10.0.1.5"}
+	worldToApp.Verdict = flowpb.Verdict_DROPPED
+	worldToApp.DropReasonDesc = flowpb.DropReason_POLICY_DENY
 
 	all := map[string]*flowpb.Flow{
 		"appToDB": appToDB, "appToAPIServer": appToAPIServer, "appToOtherNs": appToOtherNs,
-		"otherToApp": otherToApp, "otherToOther": otherToOther,
+		"otherToApp": otherToApp, "otherToOther": otherToOther, "worldToApp": worldToApp,
 	}
 
 	cases := []struct {
 		name      string
 		namespace string
-		dst       destinationFilter
+		filter    flowFilter
 		want      []string
 	}{
-		{"namespace only", "app", destinationFilter{}, []string{"appToDB", "appToAPIServer", "appToOtherNs", "otherToApp"}},
-		{"bare pod qualified with scope namespace", "app", destinationFilter{pods: []string{"db"}}, []string{"appToDB", "otherToApp"}},
+		{"namespace only", "app", flowFilter{}, []string{"appToDB", "appToAPIServer", "appToOtherNs", "otherToApp", "worldToApp"}},
+		{"bare pod qualified with scope namespace", "app", flowFilter{toPods: []string{"db"}}, []string{"appToDB", "otherToApp"}},
 		// The --to-pod is outside the scope namespace, so only flows *from*
 		// the namespace can match; the "to namespace" half is dropped
 		// rather than ORed into a filter that would match any pod in app.
-		{"pod in another namespace", "app", destinationFilter{pods: []string{"other/cache"}}, []string{"appToOtherNs"}},
-		{"label", "app", destinationFilter{labels: []string{"reserved:kube-apiserver"}}, []string{"appToAPIServer"}},
-		{"service", "app", destinationFilter{services: []string{"db"}}, []string{"appToDB", "otherToApp"}},
-		{"port", "app", destinationFilter{ports: []string{"6379"}}, []string{"appToOtherNs"}},
-		{"fields AND together", "app", destinationFilter{labels: []string{"k8s:app=db"}, ports: []string{"443"}}, nil},
-		{"values OR together", "app", destinationFilter{ports: []string{"443", "6379"}}, []string{"appToAPIServer", "appToOtherNs"}},
-		{"all namespaces unfiltered", "", destinationFilter{}, []string{"appToDB", "appToAPIServer", "appToOtherNs", "otherToApp", "otherToOther"}},
-		{"all namespaces with label", "", destinationFilter{labels: []string{"k8s:app=cache"}}, []string{"appToOtherNs", "otherToOther"}},
+		{"pod in another namespace", "app", flowFilter{toPods: []string{"other/cache"}}, []string{"appToOtherNs"}},
+		{"label", "app", flowFilter{toLabels: []string{"reserved:kube-apiserver"}}, []string{"appToAPIServer"}},
+		{"service", "app", flowFilter{toServices: []string{"db"}}, []string{"appToDB", "otherToApp"}},
+		{"port", "app", flowFilter{toPorts: []string{"6379"}}, []string{"appToOtherNs"}},
+		{"fields AND together", "app", flowFilter{toLabels: []string{"k8s:app=db"}, toPorts: []string{"443"}}, nil},
+		{"values OR together", "app", flowFilter{toPorts: []string{"443", "6379"}}, []string{"appToAPIServer", "appToOtherNs"}},
+		{"all namespaces unfiltered", "", flowFilter{}, []string{"appToDB", "appToAPIServer", "appToOtherNs", "otherToApp", "otherToOther", "worldToApp"}},
+		{"all namespaces with label", "", flowFilter{toLabels: []string{"k8s:app=cache"}}, []string{"appToOtherNs", "otherToOther"}},
+
+		// Source side, mirroring the destination cases above.
+		{"from pod in the namespace", "app", flowFilter{fromPods: []string{"web"}}, []string{"appToDB", "appToAPIServer", "appToOtherNs"}},
+		// --from-pod outside the namespace: only the "to namespace" half
+		// can match, so it's flows from that pod into app.
+		{"from pod in another namespace", "app", flowFilter{fromPods: []string{"other/cache"}}, []string{"otherToApp"}},
+		{"from pod and to pod", "app", flowFilter{fromPods: []string{"web"}, toPods: []string{"db"}}, []string{"appToDB"}},
+		{"from entity", "app", flowFilter{fromLabels: []string{"reserved:world"}}, []string{"worldToApp"}},
+		{"from label", "app", flowFilter{fromLabels: []string{"k8s:app=web"}}, []string{"appToDB"}},
+
+		// IPs and CIDRs, as hubble's own --from-ip/--to-ip accept.
+		{"to ip exact", "app", flowFilter{toIPs: []string{"172.18.0.3"}}, []string{"appToAPIServer"}},
+		{"from cidr", "app", flowFilter{fromIPs: []string{"203.0.113.0/24"}}, []string{"worldToApp"}},
+		{"to cidr", "", flowFilter{toIPs: []string{"10.0.0.0/8"}}, []string{"appToDB", "worldToApp"}},
+
+		// Verdict and drop reason, the observed (Hubble) verdict.
+		{"dropped only", "app", flowFilter{verdicts: []flowpb.Verdict{flowpb.Verdict_DROPPED}}, []string{"appToOtherNs", "worldToApp"}},
+		{"forwarded only", "app", flowFilter{verdicts: []flowpb.Verdict{flowpb.Verdict_FORWARDED}}, []string{"appToDB", "appToAPIServer", "otherToApp"}},
+		{"drop reason", "app", flowFilter{dropReasons: []flowpb.DropReason{flowpb.DropReason_POLICY_DENIED}}, []string{"appToOtherNs"}},
+		{"drop reasons OR together", "app", flowFilter{dropReasons: []flowpb.DropReason{flowpb.DropReason_POLICY_DENIED, flowpb.DropReason_POLICY_DENY}}, []string{"appToOtherNs", "worldToApp"}},
+		{"dropped from world", "app", flowFilter{verdicts: []flowpb.Verdict{flowpb.Verdict_DROPPED}, fromLabels: []string{"reserved:world"}}, []string{"worldToApp"}},
 	}
 
 	logger := slog.New(slog.DiscardHandler)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wl, err := filters.BuildFilterList(context.Background(), flowWhitelist(tc.namespace, tc.dst), filters.DefaultFilters(logger))
+			whitelist, err := flowWhitelist(tc.namespace, tc.filter)
+			if err != nil {
+				t.Fatalf("flowWhitelist: %v", err)
+			}
+			wl, err := filters.BuildFilterList(context.Background(), whitelist, filters.DefaultFilters(logger))
 			if err != nil {
 				t.Fatalf("Hubble rejected the whitelist: %v", err)
 			}
@@ -81,6 +117,43 @@ func TestFlowWhitelist(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Both pods outside the namespace leave no half of the whitelist that can
+// match. That must be an error: an empty Whitelist means "every flow" to
+// Hubble, the opposite of what was asked.
+func TestFlowWhitelistBothPodsOutsideNamespace(t *testing.T) {
+	_, err := flowWhitelist("app", flowFilter{fromPods: []string{"other/a"}, toPods: []string{"other/b"}})
+	if err == nil {
+		t.Fatal("want an error, got a whitelist")
+	}
+}
+
+// --verdict/--drop-reason-desc accept exactly Cilium's enum names, like
+// hubble observe; anything else (including the UNKNOWN placeholders and
+// lowercase) is rejected rather than silently matching nothing.
+func TestFlowFilterFlagsParse(t *testing.T) {
+	ok := flowFilterFlags{verdicts: []string{"DROPPED", "AUDIT"}, dropReasons: []string{"POLICY_DENIED"}}
+	f, err := ok.parse()
+	if err != nil {
+		t.Fatalf("valid values: %v", err)
+	}
+	if len(f.verdicts) != 2 || f.dropReasons[0] != flowpb.DropReason_POLICY_DENIED {
+		t.Fatalf("parsed %+v", f)
+	}
+	for _, bad := range []flowFilterFlags{
+		{verdicts: []string{"dropped"}},
+		{verdicts: []string{"VERDICT_UNKNOWN"}},
+		{dropReasons: []string{"NOT_A_REASON"}},
+		{dropReasons: []string{"DROP_REASON_UNKNOWN"}},
+	} {
+		if _, err := bad.parse(); err == nil {
+			t.Errorf("%+v: want an error", bad)
+		}
+	}
+	if got := (flowFilter{verdicts: []flowpb.Verdict{flowpb.Verdict_DROPPED}, fromIPs: []string{"10.0.0.0/8"}}).String(); got != "--from-ip 10.0.0.0/8 --verdict DROPPED" {
+		t.Errorf("String() = %q", got)
 	}
 }
 

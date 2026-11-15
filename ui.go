@@ -19,6 +19,7 @@ import (
 	iofs "io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -98,6 +99,8 @@ Flags:
 	mux.HandleFunc("POST /api/verdict", srv.handleVerdict)
 	mux.HandleFunc("GET /api/verdict/stream", srv.handleVerdictStream)
 	mux.HandleFunc("GET /api/flows", srv.handleFlows)
+	mux.HandleFunc("GET /api/flows/stream", srv.handleFlowsStream)
+	mux.HandleFunc("GET /api/flow-filter-options", srv.handleFlowFilterOptions)
 	mux.HandleFunc("GET /api/namespaces", srv.handleNamespaces)
 	mux.HandleFunc("GET /api/pods", srv.handlePods)
 	mux.HandleFunc("GET /api/policies", srv.handlePolicies)
@@ -225,18 +228,41 @@ type verdictRequest struct {
 	CandidateYAML string `json:"candidateYAML"`
 	Last          uint64 `json:"last"`
 	ShowUnchanged bool   `json:"showUnchanged"`
-	// ToPod/ToService/ToLabel/ToPort mirror the verdict subcommand's
-	// --to-pod/--to-service/--to-label/--to-port (see destinationFilter).
-	ToPod     []string `json:"toPod,omitempty"`
-	ToService []string `json:"toService,omitempty"`
-	ToLabel   []string `json:"toLabel,omitempty"`
-	ToPort    []string `json:"toPort,omitempty"`
+	flowFilterParams
 }
 
-// newDestinationFilter builds a destinationFilter from form values, dropping
-// blanks: an empty form field means "no filter", whereas Hubble rejects an
-// empty pod/service name outright.
-func newDestinationFilter(pods, services, labels, ports []string) destinationFilter {
+// flowFilterParams is the web form's version of the flow filter flags
+// (flowFilter, flows.go), shared by every endpoint that fetches flows: the
+// verdict POST body embeds it, and the GET endpoints (EventSource can't POST)
+// read the same names from the query string. Names mirror the flags:
+// fromPod = --from-pod, verdict = --verdict, dropReason = --drop-reason-desc.
+type flowFilterParams struct {
+	FromPod    []string `json:"fromPod,omitempty"`
+	FromLabel  []string `json:"fromLabel,omitempty"`
+	FromIP     []string `json:"fromIp,omitempty"`
+	ToPod      []string `json:"toPod,omitempty"`
+	ToService  []string `json:"toService,omitempty"`
+	ToLabel    []string `json:"toLabel,omitempty"`
+	ToIP       []string `json:"toIp,omitempty"`
+	ToPort     []string `json:"toPort,omitempty"`
+	Verdict    []string `json:"verdict,omitempty"`
+	DropReason []string `json:"dropReason,omitempty"`
+}
+
+func flowFilterParamsFromQuery(q url.Values) flowFilterParams {
+	return flowFilterParams{
+		FromPod: q["fromPod"], FromLabel: q["fromLabel"], FromIP: q["fromIp"],
+		ToPod: q["toPod"], ToService: q["toService"], ToLabel: q["toLabel"], ToIP: q["toIp"], ToPort: q["toPort"],
+		Verdict: q["verdict"], DropReason: q["dropReason"],
+	}
+}
+
+// filter turns form values into a flowFilter, the same validation the CLI's
+// flags get: blanks are dropped (an empty form field means "no filter",
+// whereas Hubble rejects an empty pod name outright), enum names are checked
+// like hubble does, and a combination that can't match anything in the
+// namespace is reported now, as a 400, rather than from inside the fetch.
+func (p flowFilterParams) filter(namespace string) (flowFilter, error) {
 	clean := func(vals []string) []string {
 		var out []string
 		for _, v := range vals {
@@ -246,7 +272,23 @@ func newDestinationFilter(pods, services, labels, ports []string) destinationFil
 		}
 		return out
 	}
-	return destinationFilter{pods: clean(pods), services: clean(services), labels: clean(labels), ports: clean(ports)}
+	r := flowFilterFlags{
+		f: flowFilter{
+			fromPods: clean(p.FromPod), fromLabels: clean(p.FromLabel), fromIPs: clean(p.FromIP),
+			toPods: clean(p.ToPod), toServices: clean(p.ToService), toLabels: clean(p.ToLabel),
+			toIPs: clean(p.ToIP), toPorts: clean(p.ToPort),
+		},
+		verdicts:    clean(p.Verdict),
+		dropReasons: clean(p.DropReason),
+	}
+	f, err := r.parse()
+	if err != nil {
+		return flowFilter{}, err
+	}
+	if _, err := flowWhitelist(namespace, f); err != nil {
+		return flowFilter{}, err
+	}
+	return f, nil
 }
 
 // verdictCountsOut/verdictRowOut/verdictResponse are JSON-friendly mirrors
@@ -315,8 +357,12 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dst := newDestinationFilter(req.ToPod, req.ToService, req.ToLabel, req.ToPort)
-	comp, err := computeVerdict(s.logger, s.core, s.cilium, s.cfg, req.Namespace, dst, candidateRules, req.Last, req.ShowUnchanged)
+	filter, err := req.flowFilterParams.filter(req.Namespace)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	comp, err := computeVerdict(s.logger, s.core, s.cilium, s.cfg, req.Namespace, filter, candidateRules, req.Last, req.ShowUnchanged)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("computing verdict: %v", err), http.StatusInternalServerError)
 		return
@@ -392,7 +438,11 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	namespace := q.Get("namespace")
 	candidateYAML := q.Get("candidateYAML")
 	showUnchanged := q.Get("showUnchanged") == "true"
-	dst := newDestinationFilter(q["toPod"], q["toService"], q["toLabel"], q["toPort"])
+	filter, err := flowFilterParamsFromQuery(q).filter(namespace)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	last := uint64(50)
 	if v := q.Get("last"); v != "" {
 		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
@@ -437,7 +487,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: %s\n\n", first)
 		flusher.Flush()
 	}
-	_, streamErr := streamFlows(r.Context(), s.core, s.cfg, namespace, dst, last, func(f *flowpb.Flow) {
+	_, streamErr := streamFlows(r.Context(), s.core, s.cfg, namespace, filter, last, func(f *flowpb.Flow) {
 		row := judgeFlow(s.logger, baseline, candidate, f, counts, showUnchanged)
 		event := verdictStreamEvent{Counts: toCountsOut(counts)}
 		if row != nil {
@@ -475,6 +525,12 @@ type flowOut struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 	L4          string `json:"l4"`
+	// The endpoints' security-identity labels as Hubble reports them
+	// (k8s:app=web, reserved:world, …): what the filter fields' autocomplete
+	// offers for --from-label/--to-label, so a label seen in real traffic can
+	// be picked instead of typed.
+	SourceLabels      []string `json:"sourceLabels,omitempty"`
+	DestinationLabels []string `json:"destinationLabels,omitempty"`
 }
 
 type flowsResponse struct {
@@ -482,16 +538,47 @@ type flowsResponse struct {
 	Flows     []flowOut `json:"flows"`
 }
 
-func (s *uiServer) handleFlows(w http.ResponseWriter, r *http.Request) {
-	namespace := r.URL.Query().Get("namespace")
-	last := uint64(50)
-	if v := r.URL.Query().Get("last"); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+func toFlowOut(f *flowpb.Flow) flowOut {
+	out := flowOut{
+		Time:        f.GetTime().AsTime().Format(time.RFC3339),
+		Verdict:     f.GetVerdict().String(),
+		Source:      endpointString(f.GetSource()),
+		Destination: endpointString(f.GetDestination()),
+		L4:          l4String(f.GetL4()),
+
+		SourceLabels:      f.GetSource().GetLabels(),
+		DestinationLabels: f.GetDestination().GetLabels(),
+	}
+	// Only meaningful on a dropped flow — DROP_REASON_UNKNOWN on every
+	// forwarded one would just be noise in the table.
+	if reason := f.GetDropReasonDesc(); reason != flowpb.DropReason_DROP_REASON_UNKNOWN {
+		out.DropReason = reason.String()
+	}
+	return out
+}
+
+// flowsQuery reads the namespace/last/filter query parameters shared by the
+// one-shot and streaming flows endpoints.
+func flowsQuery(q url.Values) (namespace string, last uint64, filter flowFilter, err error) {
+	namespace = q.Get("namespace")
+	last = 50
+	if v := q.Get("last"); v != "" {
+		if n, perr := strconv.ParseUint(v, 10, 64); perr == nil {
 			last = n
 		}
 	}
+	filter, err = flowFilterParamsFromQuery(q).filter(namespace)
+	return namespace, last, filter, err
+}
 
-	flows, err := fetchFlows(s.core, s.cfg, namespace, destinationFilter{}, last)
+func (s *uiServer) handleFlows(w http.ResponseWriter, r *http.Request) {
+	namespace, last, filter, err := flowsQuery(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	flows, err := fetchFlows(s.core, s.cfg, namespace, filter, last)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("tapping flows: %v", err), http.StatusInternalServerError)
 		return
@@ -499,23 +586,62 @@ func (s *uiServer) handleFlows(w http.ResponseWriter, r *http.Request) {
 
 	resp := flowsResponse{Namespace: namespace, Flows: make([]flowOut, len(flows))}
 	for i, f := range flows {
-		out := flowOut{
-			Time:        f.GetTime().AsTime().Format(time.RFC3339),
-			Verdict:     f.GetVerdict().String(),
-			Source:      endpointString(f.GetSource()),
-			Destination: endpointString(f.GetDestination()),
-			L4:          l4String(f.GetL4()),
-		}
-		// Only meaningful on a dropped flow — DROP_REASON_UNKNOWN on every
-		// forwarded one would just be noise in the table.
-		if reason := f.GetDropReasonDesc(); reason != flowpb.DropReason_DROP_REASON_UNKNOWN {
-			out.DropReason = reason.String()
-		}
-		resp.Flows[i] = out
+		resp.Flows[i] = toFlowOut(f)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleFlowsStream is `guardbee flows --follow` for the browser: the same
+// streamFlows the CLI uses, one Server-Sent Event per flow, until the client
+// disconnects — the Flows tab's counterpart to handleVerdictStream.
+func (s *uiServer) handleFlowsStream(w http.ResponseWriter, r *http.Request) {
+	namespace, last, filter, err := flowsQuery(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported by this response writer", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	_, streamErr := streamFlows(r.Context(), s.core, s.cfg, namespace, filter, last, func(f *flowpb.Flow) {
+		data, err := json.Marshal(toFlowOut(f))
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	})
+	// Same as handleVerdictStream: a disconnect is the normal end; anything
+	// else can only be logged, the SSE response is already committed.
+	if streamErr != nil && r.Context().Err() == nil {
+		s.logger.Error("flows stream ended with an error", "error", streamErr)
+	}
+}
+
+// flowFilterOptions backs GET /api/flow-filter-options: the values the UI's
+// verdict and drop-reason pickers offer, read from the pinned Cilium's own
+// flow.Verdict/flow.DropReason enums (the same lists --verdict and
+// --drop-reason-desc validate against), so the pickers can't offer a value
+// Hubble would reject or miss one it accepts.
+type flowFilterOptions struct {
+	Verdicts    []string `json:"verdicts"`
+	DropReasons []string `json:"dropReasons"`
+}
+
+func (s *uiServer) handleFlowFilterOptions(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(flowFilterOptions{Verdicts: verdictNames(), DropReasons: dropReasonNames()})
 }
 
 // policyOut/policiesResponse back GET /api/policies — the live
@@ -852,4 +978,3 @@ func (s *uiServer) handlePolicyParse(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
-
