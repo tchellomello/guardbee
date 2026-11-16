@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,6 +41,7 @@ func runFlows(args []string) {
 	fs := pflag.NewFlagSet("flows", pflag.ExitOnError)
 	flags := registerCommonFlags(fs)
 	filterFlags := registerFlowFilterFlags(fs)
+	registerHubbleAddrFlag(fs)
 	var last uint64
 	var follow bool
 	fs.Uint64Var(&last, "last", 20, "number of recent flows to print")
@@ -62,6 +64,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s flows -n testing --last 50\n  %[1]s flows -n myapp --follow\n  %[1]s flows -n myapp --verdict DROPPED --drop-reason-desc POLICY_DENIED\n  %[1]s flows -n myapp --from-label reserved:world --to-port 443\n  %[1]s flows --all-namespaces --last 100\n", binName)
 	}
 	_ = fs.Parse(args)
+	checkHubbleAddr("flows")
 	namespace := flags.resolveNamespace()
 	filter, err := filterFlags.parse()
 	if err != nil {
@@ -530,10 +533,49 @@ func narrowPodPrefixes(a, b []string) (out []string, ok bool) {
 	return out, len(out) > 0
 }
 
+// hubbleAddr is --hubble-addr: a host:port to dial hubble-relay at directly.
+// A package-level setting rather than a parameter because dialHubble is
+// reached through fetchFlows, streamFlows and the cluster-version check, and
+// threading one address through all of them (and the UI's handlers) would
+// touch every call site for a value that never changes within a process.
+var hubbleAddr string
+
+// registerHubbleAddrFlag adds --hubble-addr to a subcommand that talks to
+// hubble-relay (flows, blame, verdict).
+func registerHubbleAddrFlag(fs *pflag.FlagSet) {
+	fs.StringVar(&hubbleAddr, "hubble-addr", "", "dial hubble-relay at this host:port (plaintext gRPC) instead of port-forwarding to its pod, e.g. hubble-relay.cilium-system.svc:80 from an in-cluster runner; skips the pods and pods/portforward RBAC the port-forward needs")
+}
+
+// checkHubbleAddr exits on a --hubble-addr that isn't host:port, instead of
+// letting gRPC's lazy dial fail later with a less obvious error.
+func checkHubbleAddr(cmd string) {
+	if err := validateHubbleAddr(hubbleAddr); err != nil {
+		fmt.Fprintf(os.Stderr, "%s %s: %v\n", binName, cmd, err)
+		os.Exit(1)
+	}
+}
+
+func validateHubbleAddr(addr string) error {
+	if addr == "" {
+		return nil
+	}
+	if _, port, err := net.SplitHostPort(addr); err != nil || port == "" {
+		return fmt.Errorf("--hubble-addr must be host:port, got %q", addr)
+	}
+	return nil
+}
+
 // dialHubble finds the hubble-relay pod, port-forwards to it, and dials it
-// over gRPC. The returned close function tears down both the gRPC connection
-// and the port-forward.
+// over gRPC — or, with --hubble-addr, dials that address as-is. The returned
+// close function tears down both the gRPC connection and the port-forward.
 func dialHubble(core kubernetes.Interface, cfg *rest.Config) (observerpb.ObserverClient, func(), error) {
+	if hubbleAddr != "" {
+		conn, err := grpc.NewClient(hubbleAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return nil, nil, fmt.Errorf("dialing hubble-relay at %s: %w", hubbleAddr, err)
+		}
+		return observerpb.NewObserverClient(conn), func() { conn.Close() }, nil
+	}
 	podName, err := findHubbleRelayPod(core)
 	if err != nil {
 		return nil, nil, fmt.Errorf("finding hubble-relay pod: %w", err)
