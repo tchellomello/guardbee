@@ -35,7 +35,15 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
   UI and CLI can't disagree on a verdict for the same input, only present it
   differently.
 
-All five are read-only against the cluster, by design, in v1.
+All five are read-only against the cluster by default. The UI's explicit
+`--enable-probes --probe-image <image:tag-or-digest>` opt-in is the exception:
+bounded TCP/UDP connectivity tests in Verdict append a restricted ephemeral
+container to an existing Pod. UDP emission alone never proves reachability.
+They never change workload labels, apply a candidate, or delete/restart Pods.
+Terminated entries remain until normal Pod replacement. See
+`docs/guide/tcp-probes.md` and the separate `kubernetes/probes-rbac.yaml`.
+Probe simulation must withhold conclusions for unverified agent-side semantics
+or incomplete capture; do not replace Cilium's engine with a custom matcher.
 
 ## Architecture principle that overrides convenience
 

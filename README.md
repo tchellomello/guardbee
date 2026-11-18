@@ -42,13 +42,16 @@ embedded directly, not reimplemented). The result is a verdict: which real
 flows would newly break, which would newly be allowed, and which stay
 unchanged — before you merge, not after.
 
-No in-cluster agent, no persisted flow store, no new cluster footprint:
-GuardBee runs locally with your own kubeconfig and read-only RBAC.
+No in-cluster agent or persisted flow store: GuardBee runs locally with your
+own kubeconfig and read-only RBAC by default. Explicitly enabled TCP/UDP connectivity tests
+are the exception: they append retained ephemeral-container entries to Pods
+and require optional additional RBAC.
 
 ## What's here today
 
 Five subcommands — `policies`, `flows`, `blame`, `verdict`, and a local
-`ui` — all read-only against the cluster. `verdict` is the actual engine:
+`ui` — all read-only against the cluster by default. Only the UI's explicitly
+enabled connectivity endpoint mutates Pods (see below). `verdict` is the actual engine:
 it diffs a candidate `CiliumNetworkPolicy`/`CiliumClusterwideNetworkPolicy`
 against today's live policy state, judging real recent Hubble flows against
 both, using Cilium's own `pkg/policy` engine. `blame` is for day-2
@@ -125,3 +128,26 @@ changes to the verdict engine (`verdict.go`).
 ## License
 
 [Apache License 2.0](LICENSE).
+## Optional active connectivity tests
+
+The UI's default remains read-only. `guardbee ui --enable-probes --probe-image
+<repository:tag-or-digest>` explicitly enables a
+cluster-mutating TCP/UDP test using a restricted ephemeral container in a selected
+running Pod. It requires numeric-loopback serving and additional optional RBAC.
+Each terminated ephemeral entry is immutable and remains until the Pod is
+replaced; GuardBee never removes/restarts the Pod. Cancellation stops capture
+but does not kill an injected container; the image's `timeout` bounds
+its command runtime. Hostnames resolve inside the Pod; flow attribution is best-effort, not
+proof that a packet came from the probe. CIDR-group identity injection is
+unverified and FQDN/L7 proxy semantics are not reproduced, so those policies
+suppress probe simulation instead of producing a reassuring verdict.
+Authentication, named ports, agent-resolved services, Kubernetes NetworkPolicy
+inventory, and incomplete/lost capture likewise withhold probe predictions.
+Candidate decisions use the shared real Cilium engine; `UNCHANGED` can be still
+denied, so verdict JSON explicitly includes `baselineAllowed`/`candidateAllowed`.
+UDP requires Python 3 and sends one fixed `guardbee-connectivity-probe`
+marker, never an arbitrary payload. Confirm this unexpected application payload
+and selected operator-owned target before sending. UDP `generated` means only
+that `sendto` returned, not reachability or policy allowance; unresolved captured
+endpoints are not simulated. The legacy TCP API is retained.
+See [connectivity safety, image requirements, and API](docs/guide/tcp-probes.md).

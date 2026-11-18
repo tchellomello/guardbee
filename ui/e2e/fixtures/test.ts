@@ -30,6 +30,7 @@ export const test = base.extend<{ cluster: Cluster }>({
         record(r.request())
         return r.fulfill({ json: { namespaces: NAMESPACES } })
       })
+      await page.route('**/api/probes/capabilities', (r) => r.fulfill({ json: { enabled: false } }))
       await page.route('**/api/pods?*', (r) => {
         record(r.request())
         const ns = new URL(r.request().url()).searchParams.get('namespace') ?? ''

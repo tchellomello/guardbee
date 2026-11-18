@@ -113,6 +113,7 @@ export function firstPolicyName(yaml: string): string | null {
 }
 
 export interface VerdictFormState {
+  replaceExisting: boolean
   namespace: string
   allNamespaces: boolean
   last: number
@@ -125,6 +126,7 @@ export interface VerdictFormState {
 }
 
 export const EMPTY_VERDICT_FORM: VerdictFormState = {
+  replaceExisting: true,
   namespace: '',
   allNamespaces: false,
   last: 50,

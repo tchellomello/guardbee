@@ -35,6 +35,12 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch"]
+  # Connectivity simulation must establish whether the baseline includes
+  # Kubernetes NetworkPolicies it cannot model. A denied inventory read is
+  # inconclusive, never evidence that none exist. No policy writes are needed.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

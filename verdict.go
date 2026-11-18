@@ -303,7 +303,7 @@ type verdictComputation struct {
 	flowsSampled                          int
 	counts                                *verdictCounts
 	rows                                  []*verdictRow
-	rowCounts                             []int // seen-Nx count, same index as rows
+	rowCounts                             []int    // seen-Nx count, same index as rows
 	skippedPolicies                       []string // live baseline policies the engine could not load, see fetchBaselineRules
 	// CLI only: wall clock of the whole run, set by runVerdict (0 = not
 	// measured). The UI times its runs browser-side instead, so its clock
@@ -323,7 +323,11 @@ type verdictComputation struct {
 // engine lifecycle to manage themselves, namely the "ui" subcommand's HTTP
 // API (see ui.go).
 func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, filter flowFilter, candidateRules api.Rules, last uint64, showUnchanged bool) (*verdictComputation, error) {
-	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(logger, cilium, namespace, candidateRules)
+	return computeVerdictWithMode(logger, core, cilium, cfg, namespace, filter, candidateRules, last, showUnchanged, false)
+}
+
+func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, filter flowFilter, candidateRules api.Rules, last uint64, showUnchanged, replaceExisting bool) (*verdictComputation, error) {
+	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, candidateRules, replaceExisting)
 	if err != nil {
 		return nil, err
 	}
@@ -366,6 +370,13 @@ func buildVerdictEnginesWith(logger *slog.Logger, cilium ciliumclient.Interface,
 	if err != nil {
 		return 0, nil, nil, nil, nil, fmt.Errorf("fetching baseline policy: %w", err)
 	}
+	return buildVerdictEnginesFromRules(logger, baselineRules, skipped, candidateRules, replaceExisting)
+}
+
+// Probes inspect one bounded, context-owned full policy inventory for
+// unverified semantics before constructing engines. Share this exact core
+// with buildVerdictEnginesWith, without re-listing and bypassing those checks.
+func buildVerdictEnginesFromRules(logger *slog.Logger, baselineRules api.Rules, skipped []string, candidateRules api.Rules, replaceExisting bool) (baselineRuleCount int, skippedOut, replaced []string, baseline, candidate *verdictEngine, err error) {
 
 	baseline, err = newVerdictEngine(logger, baselineRules, identity.IdentityMap{})
 	if err != nil {
@@ -376,6 +387,12 @@ func buildVerdictEnginesWith(logger *slog.Logger, cilium ciliumclient.Interface,
 	if replaceExisting {
 		candidateBase, replaced = replaceSameNamePolicies(baselineRules, candidateRules)
 	}
+	logger.Debug("building verdict engines",
+		"baselineRules", len(baselineRules),
+		"candidateRules", len(candidateRules),
+		"replaceExisting", replaceExisting,
+		"replaced", replaced,
+	)
 	candidate, err = newVerdictEngine(logger, append(append(api.Rules{}, candidateBase...), candidateRules...), identity.IdentityMap{})
 	if err != nil {
 		baseline.close(logger)
@@ -494,10 +511,13 @@ func filterLabel(d flowFilter) string {
 // rows across multiple flows (e.g. a kubelet probe firing repeatedly) can be
 // deduplicated and shown once with a count.
 type verdictRow struct {
-	change   string
-	src, dst string
-	proto    string
-	port     uint16
+	// UNCHANGED can mean allowed in both engines or denied in both. Preserve
+	// their actual combined decisions rather than guessing from the delta.
+	baselineAllowed, candidateAllowed *bool
+	change                            string
+	src, dst                          string
+	proto                             string
+	port                              uint16
 	// side says which half of the verdict actually flipped between
 	// baseline and candidate: "ingress" (destination's policy), "egress"
 	// (source's policy), "both", or "" for UNCHANGED. It's read straight off
@@ -531,7 +551,13 @@ func serviceString(s *flowpb.Service) string {
 }
 
 func (r *verdictRow) key() string {
-	return fmt.Sprintf("%s|%s|%s|%s:%d", r.change, r.src, r.dst, r.proto, r.port)
+	key := fmt.Sprintf("%s|%s|%s|%s:%d", r.change, r.src, r.dst, r.proto, r.port)
+	// Rendered endpoint names need not uniquely identify a security identity
+	// across a sample. Never merge unchanged-allowed with unchanged-denied.
+	if r.baselineAllowed != nil && r.candidateAllowed != nil {
+		key += fmt.Sprintf("|%t:%t", *r.baselineAllowed, *r.candidateAllowed)
+	}
+	return key
 }
 
 // line renders this row, appending a "(seen Nx in this sample)" suffix when
@@ -674,6 +700,7 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		side = "egress"
 	}
 	return &verdictRow{
+		baselineAllowed: &baseAllow, candidateAllowed: &candAllow,
 		change: change, src: endpointString(src), dst: endpointString(dst), proto: proto, port: key.DestPort,
 		side: side, srcLabels: src.GetLabels(), dstLabels: dst.GetLabels(),
 		dstService: serviceString(f.GetDestinationService()),
@@ -1065,10 +1092,14 @@ type verdictOwner struct {
 	id identity.NumericIdentity
 }
 
-func (o verdictOwner) GetID() uint64                                              { return uint64(o.id) }
+func (o verdictOwner) GetID() uint64                                               { return uint64(o.id) }
 func (verdictOwner) GetIngressNamedPort(name string, proto u8proto.U8proto) uint16 { return 0 }
-func (verdictOwner) PolicyDebug(msg string, attrs ...any)                         {}
-func (verdictOwner) IsHost() bool                                                  { return false }
+func (o verdictOwner) PolicyDebug(msg string, attrs ...any) {
+	if debugLogging {
+		slog.Default().Debug(msg, append([]any{"endpointID", uint64(o.id)}, attrs...)...)
+	}
+}
+func (verdictOwner) IsHost() bool                                { return false }
 func (verdictOwner) PreviousMapStateSizes() policy.MapStateSizes                   { return policy.MapStateSizes{} }
 func (verdictOwner) RegenerateIfAlive(_ *regeneration.ExternalRegenerationMetadata) <-chan bool {
 	return nil
@@ -1138,6 +1169,7 @@ func (e *verdictEngine) addIdentities(logger *slog.Logger, newIDs identity.Ident
 	e.repo.GetSelectorCache().UpdateIdentities(added, nil, wg)
 	wg.Wait()
 	e.repo.UpdateIdentities(added, nil)
+	logger.Debug("registered new flow identities in verdict engine", "added", len(added), "totalKnown", len(e.identities))
 
 	for nid, epp := range e.cache {
 		epp.Detach(logger)

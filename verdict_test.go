@@ -309,6 +309,15 @@ func TestJudgeFlowShowUnchanged(t *testing.T) {
 	if row.change != "UNCHANGED" {
 		t.Fatalf("expected change=UNCHANGED, got %q", row.change)
 	}
+	if row.baselineAllowed == nil || row.candidateAllowed == nil || !*row.baselineAllowed || !*row.candidateAllowed {
+		t.Fatalf("unchanged default-allow decisions lost: %+v", row)
+	}
+	denied := *row
+	f := false
+	denied.baselineAllowed, denied.candidateAllowed = &f, &f
+	if denied.key() == row.key() {
+		t.Fatal("unchanged denied and allowed rows must not deduplicate")
+	}
 	if counts.unchanged != 2 {
 		t.Fatalf("expected the UNCHANGED tally to increment again on the second call, got %d", counts.unchanged)
 	}
@@ -549,7 +558,6 @@ func TestCompatEndpoint(t *testing.T) {
 		}
 	}
 }
-
 
 // A multi-document candidate (base policy + the narrow per-workload
 // exception the UI's verdict-row Allow button appends) must be judged as one
