@@ -33,7 +33,7 @@ _guardbee_complete() {
             fi
             ;;
         ui)
-            COMPREPLY=($(compgen -W "--kubeconfig --addr" -- "$cur"))
+            COMPREPLY=($(compgen -W "--kubeconfig --addr --enable-probes --probe-image" -- "$cur"))
             ;;
         version)
             COMPREPLY=($(compgen -W "--kubeconfig --client" -- "$cur"))

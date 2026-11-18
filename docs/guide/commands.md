@@ -6,7 +6,8 @@ description: GuardBee's subcommands — policies, flows, blame, verdict, ui, and
 
 # Commands
 
-All of these are read-only against the cluster.
+All of these are read-only against the cluster by default. Explicitly opted-in
+UI TCP probes append ephemeral containers; see [TCP probes](tcp-probes.html).
 
 ## `policies`
 
@@ -175,7 +176,7 @@ A pass only covers flows that were in Hubble's buffer at run time. Use `--min-fl
 A local web UI for the same engine — pick a namespace, build or paste a candidate, see the verdict as a graph.
 
 ```
-guardbee ui [--addr host:port]
+guardbee ui [--addr host:port] [--enable-probes --probe-image repository@sha256:digest]
 ```
 
 > Calls the exact same `computeVerdict`/`fetchFlows`/`flowAttribution` functions the CLI uses — never a parallel implementation, so the UI and CLI can't disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via `go:embed` (the same pattern Argo CD's own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.

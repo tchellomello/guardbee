@@ -42,13 +42,16 @@ embedded directly, not reimplemented). The result is a verdict: which real
 flows would newly break, which would newly be allowed, and which stay
 unchanged — before you merge, not after.
 
-No in-cluster agent, no persisted flow store, no new cluster footprint:
-GuardBee runs locally with your own kubeconfig and read-only RBAC.
+No in-cluster agent or persisted flow store: GuardBee runs locally with your
+own kubeconfig and read-only RBAC by default. Explicitly enabled TCP probes
+are the exception: they append retained ephemeral-container entries to Pods
+and require optional additional RBAC.
 
 ## What's here today
 
 Five subcommands — `policies`, `flows`, `blame`, `verdict`, and a local
-`ui` — all read-only against the cluster. `verdict` is the actual engine:
+`ui` — all read-only against the cluster by default. Only the UI's explicitly
+enabled TCP probe endpoint mutates Pods (see below). `verdict` is the actual engine:
 it diffs a candidate `CiliumNetworkPolicy`/`CiliumClusterwideNetworkPolicy`
 against today's live policy state, judging real recent Hubble flows against
 both, using Cilium's own `pkg/policy` engine. `blame` is for day-2
@@ -125,3 +128,17 @@ changes to the verdict engine (`verdict.go`).
 ## License
 
 [Apache License 2.0](LICENSE).
+## Optional active TCP probes
+
+The UI's default remains read-only. `guardbee ui --enable-probes --probe-image
+<operator-approved repository@sha256:digest>` explicitly enables a
+cluster-mutating TCP probe using a restricted ephemeral container in a selected
+running Pod. It requires numeric-loopback serving and additional optional RBAC.
+Each terminated ephemeral entry is immutable and remains until the Pod is
+replaced; GuardBee never removes/restarts the Pod. Cancellation stops capture
+but does not kill an injected container; the approved image's `timeout` bounds
+its command runtime. Hostnames resolve inside the Pod; flow attribution is best-effort, not
+proof that a packet came from the probe. CIDR-group identity injection is
+unverified and FQDN/L7 proxy semantics are not reproduced, so those policies
+suppress probe simulation instead of producing a reassuring verdict.
+See [TCP probe safety, image requirements, and API](docs/guide/tcp-probes.md).

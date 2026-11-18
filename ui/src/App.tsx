@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CompatButton } from './components/CompatButton'
 import { CompatModal } from './components/CompatModal'
 import { FlowsPanel } from './components/FlowsPanel'
+import { TCPProbePanel } from './components/TCPProbePanel'
 import { PoliciesPanel } from './components/PoliciesPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
 import { VerdictPanel, type VerdictLoad } from './components/VerdictPanel'
@@ -27,7 +28,7 @@ import {
   type SavedPolicy,
 } from './shared/workspace'
 
-type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
+type Tab = 'verdict' | 'flows' | 'policies' | 'editor' | 'probe'
 
 // Draft persistence — the in-progress Policy Editor draft used to live only
 // in React state, so switching browser tabs or an accidental reload threw
@@ -241,6 +242,9 @@ function AppContent() {
               <TabButton active={tab === 'editor'} onClick={() => setTab('editor')}>
                 Policy Editor
               </TabButton>
+              <TabButton active={tab === 'probe'} onClick={() => setTab('probe')}>
+                TCP Probe
+              </TabButton>
             </nav>
             <WorkspaceButton count={savedPolicies.length} onClick={() => setWorkspaceOpen(true)} />
             <CompatButton onClick={() => setCompatModalOpen(true)} />
@@ -266,7 +270,7 @@ function AppContent() {
       <VersionBanner />
 
       <main className="px-6 py-8 lg:px-10">
-        {/* All three panels stay mounted and are only hidden via CSS, not
+        {/* Panels stay mounted and are only hidden via CSS, not
             unmounted — switching tabs used to throw away in-progress work
             (a half-built policy in the editor, stacked verdict/flow runs)
             because each panel's state lives in local useState. */}
@@ -288,6 +292,9 @@ function AppContent() {
         </div>
         <div className={tab === 'policies' ? '' : 'hidden'}>
           <PoliciesPanel onEditPolicy={handleEditLivePolicy} />
+        </div>
+        <div className={tab === 'probe' ? '' : 'hidden'}>
+          <TCPProbePanel active={tab === 'probe'} />
         </div>
         <div className={tab === 'editor' ? '' : 'hidden'}>
           <PolicyEditorPanel

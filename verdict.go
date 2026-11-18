@@ -330,6 +330,13 @@ func buildVerdictEnginesWith(logger *slog.Logger, cilium ciliumclient.Interface,
 	if err != nil {
 		return 0, nil, nil, nil, nil, fmt.Errorf("fetching baseline policy: %w", err)
 	}
+	return buildVerdictEnginesFromRules(logger, baselineRules, skipped, candidateRules, replaceExisting)
+}
+
+// Probes inspect one bounded, context-owned full policy inventory for
+// unverified semantics before constructing engines. Share this exact core
+// with buildVerdictEnginesWith, without re-listing and bypassing those checks.
+func buildVerdictEnginesFromRules(logger *slog.Logger, baselineRules api.Rules, skipped []string, candidateRules api.Rules, replaceExisting bool) (baselineRuleCount int, skippedOut, replaced []string, baseline, candidate *verdictEngine, err error) {
 
 	baseline, err = newVerdictEngine(logger, baselineRules, identity.IdentityMap{})
 	if err != nil {

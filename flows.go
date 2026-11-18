@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -534,12 +535,16 @@ func narrowPodPrefixes(a, b []string) (out []string, ok bool) {
 // over gRPC. The returned close function tears down both the gRPC connection
 // and the port-forward.
 func dialHubble(core kubernetes.Interface, cfg *rest.Config) (observerpb.ObserverClient, func(), error) {
-	podName, err := findHubbleRelayPod(core)
+	return dialHubbleContext(context.Background(), core, cfg)
+}
+
+func dialHubbleContext(ctx context.Context, core kubernetes.Interface, cfg *rest.Config) (observerpb.ObserverClient, func(), error) {
+	podName, err := findHubbleRelayPodContext(ctx, core)
 	if err != nil {
 		return nil, nil, fmt.Errorf("finding hubble-relay pod: %w", err)
 	}
 
-	localPort, stopFwd, err := startPortForward(core, cfg, podName)
+	localPort, stopFwd, err := startPortForwardContext(ctx, core, cfg, podName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("port-forwarding to %s: %w", podName, err)
 	}
@@ -557,7 +562,11 @@ func dialHubble(core kubernetes.Interface, cfg *rest.Config) (observerpb.Observe
 }
 
 func findHubbleRelayPod(core kubernetes.Interface) (string, error) {
-	pods, err := core.CoreV1().Pods(hubbleNamespace).List(context.Background(), metav1.ListOptions{LabelSelector: hubbleLabel})
+	return findHubbleRelayPodContext(context.Background(), core)
+}
+
+func findHubbleRelayPodContext(ctx context.Context, core kubernetes.Interface) (string, error) {
+	pods, err := core.CoreV1().Pods(hubbleNamespace).List(ctx, metav1.ListOptions{LabelSelector: hubbleLabel})
 	if err != nil {
 		return "", err
 	}
@@ -572,6 +581,10 @@ func findHubbleRelayPod(core kubernetes.Interface) (string, error) {
 // startPortForward opens a local port tunneled to the hubble-relay pod's grpc port
 // and returns the local port plus a function to tear the tunnel down.
 func startPortForward(core kubernetes.Interface, cfg *rest.Config, podName string) (int, func(), error) {
+	return startPortForwardContext(context.Background(), core, cfg, podName)
+}
+
+func startPortForwardContext(ctx context.Context, core kubernetes.Interface, cfg *rest.Config, podName string) (int, func(), error) {
 	req := core.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Namespace(hubbleNamespace).
@@ -582,13 +595,15 @@ func startPortForward(core kubernetes.Interface, cfg *rest.Config, podName strin
 	if err != nil {
 		return 0, nil, err
 	}
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, &url.URL{
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport, Timeout: 10 * time.Second}, http.MethodPost, &url.URL{
 		Scheme: "https",
 		Path:   req.URL().Path,
 		Host:   req.URL().Host,
 	})
 
 	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(func() { close(stopCh) }) }
 	readyCh := make(chan struct{})
 	fw, err := portforward.New(dialer, []string{fmt.Sprintf("0:%d", hubbleRemotePort)}, stopCh, readyCh, io.Discard, os.Stderr)
 	if err != nil {
@@ -601,16 +616,20 @@ func startPortForward(core kubernetes.Interface, cfg *rest.Config, podName strin
 	select {
 	case <-readyCh:
 	case err := <-errCh:
+		stop()
 		return 0, nil, err
+	case <-ctx.Done():
+		stop()
+		return 0, nil, ctx.Err()
 	}
 
 	ports, err := fw.GetPorts()
 	if err != nil || len(ports) == 0 {
-		close(stopCh)
+		stop()
 		return 0, nil, fmt.Errorf("could not determine forwarded local port: %w", err)
 	}
 
-	return int(ports[0].Local), func() { close(stopCh) }, nil
+	return int(ports[0].Local), stop, nil
 }
 
 // endpointString renders an identifiable label for a flow endpoint. Pods

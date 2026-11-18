@@ -17,7 +17,9 @@ repo):
 
 <div class="guarantee" markdown="1">
 
-Nothing GuardBee does writes to the cluster.
+Default GuardBee commands do not write to the cluster. The optional TCP probe
+backend is a deliberate exception, disabled unless explicitly enabled with an
+operator-approved digest-pinned image and additional RBAC.
 
 </div>
 
@@ -33,6 +35,23 @@ export KUBECONFIG=/path/to/kubeconfig
 ./guardbee verdict -n your-namespace --last 50 your-candidate.yaml
 ./guardbee ui
 ```
+
+### Optional TCP probes
+
+```sh
+./guardbee ui --addr 127.0.0.1:4747 --enable-probes \
+  --probe-image 'YOUR_APPROVED_REGISTRY/probe@sha256:YOUR_APPROVED_64_HEX_DIGEST'
+```
+
+Replace the placeholder with an approved image containing compatible `timeout`
+and `nc`. Read [TCP probe safety and image requirements](tcp-probes.html) first.
+`kubernetes/probes-rbac.yaml` provides a separately reviewed namespace-scoped
+optional grant, not part of the default read-only RBAC. Each probe adds an
+immutable ephemeral entry to an existing running Pod; it cannot be removed or
+restarted, and remains until that Pod is replaced. GuardBee never deletes or
+restarts Pods. Writes require numeric-loopback binding, same-origin JSON POST,
+and explicit per-request UI confirmation; no arbitrary command or shell API
+is exposed. An nc failure is not itself a policy deny.
 
 > Most of `examples/*.yaml` are real catches, not made-up fixtures — but a
 > real catch only means something on the cluster it came from. Run one as

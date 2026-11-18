@@ -30,6 +30,7 @@ export const test = base.extend<{ cluster: Cluster }>({
         record(r.request())
         return r.fulfill({ json: { namespaces: NAMESPACES } })
       })
+      await page.route('**/api/probes/capabilities', (r) => r.fulfill({ json: { enabled: false } }))
       await page.route('**/api/pods?*', (r) => {
         record(r.request())
         const ns = new URL(r.request().url()).searchParams.get('namespace') ?? ''
@@ -101,7 +102,7 @@ export { expect }
 
 // Tabs stay mounted (CSS-hidden) when not shown, so every locator in a tab
 // must be scoped to what's visible.
-export async function openTab(page: Page, name: 'Verdict' | 'Flows' | 'Policies' | 'Policy Editor') {
+export async function openTab(page: Page, name: 'Verdict' | 'Flows' | 'Policies' | 'Policy Editor' | 'TCP Probe') {
   await page.goto('/')
   await page.getByRole('button', { name, exact: true }).click()
 }

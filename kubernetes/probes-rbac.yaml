@@ -1,0 +1,32 @@
+# Optional, namespace-scoped ADDITION to the read-only kubernetes/rbac.yaml.
+# Review and replace app before applying yourself. GuardBee does not apply it.
+# No exec, Pod create/delete, patch, or general Pod update permissions.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: guardbee-tcp-probes
+  namespace: app
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/ephemeralcontainers"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: guardbee-tcp-probes
+  namespace: app
+subjects:
+  - kind: ServiceAccount
+    name: guardbee
+    namespace: guardbee
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: guardbee-tcp-probes

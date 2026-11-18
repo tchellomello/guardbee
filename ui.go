@@ -41,6 +41,10 @@ func runUI(args []string) {
 	// not once at server startup. Registering those flags here would accept
 	// them silently without them doing anything.
 	var kubeconfig, addr, templatesDir string
+	var enableProbes bool
+	var probeImage string
+	fs.BoolVar(&enableProbes, "enable-probes", false, "opt in to TCP probes that append ephemeral containers to running Pods")
+	fs.StringVar(&probeImage, "probe-image", "", "operator-approved timeout/nc image pinned with @sha256:<64 hex digest> (required with --enable-probes)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	fs.StringVar(&addr, "addr", "127.0.0.1:4747", "address to listen on")
 	fs.StringVar(&templatesDir, "templates-dir", "", "directory of generic/ingress/egress CiliumNetworkPolicy YAML presets (default: built-in templates/)")
@@ -50,7 +54,7 @@ func runUI(args []string) {
 Starts a local web UI at the given address: the same flows/verdict
 capability as the "flows" and "verdict" subcommands, in a browser instead of
 a terminal. Uses the same kubeconfig-based cluster access as every other
-subcommand — no new cluster footprint, no remote hosting, no auth (that's a
+subcommand — read-only by default, no remote hosting, no auth (that's a
 stated future direction once this is proven locally, not this milestone).
 Namespace scope (one namespace, or all) is chosen per-request in the
 browser, not as a flag here.
@@ -61,12 +65,26 @@ CiliumNetworkPolicy YAML under generic/, ingress/, egress/ subdirectories —
 --templates-dir points at an external one; omitted, the binary's own
 built-in defaults are used.
 
+TCP probes are disabled unless --enable-probes and an approved digest-pinned
+--probe-image are supplied. This opt-in appends immutable ephemeral containers
+to running Pods, requires additional RBAC, and permits numeric-loopback
+serving only. The approved image must contain timeout and nc; see the TCP
+probe guide for security requirements and limitations.
+
 Flags:
 `, binName)
 		fs.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s ui\n  %[1]s ui --addr 127.0.0.1:9000\n  %[1]s ui --templates-dir ./my-presets\n", binName)
 	}
 	_ = fs.Parse(args)
+	probes, err := newProbeBackend(enableProbes, probeImage)
+	if err == nil && enableProbes {
+		err = validateProbeListenAddr(addr)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, binName+" ui: %v\n", err)
+		os.Exit(1)
+	}
 
 	core, cilium, cfg, err := newClientsets(kubeconfig)
 	if err != nil {
@@ -86,7 +104,7 @@ Flags:
 
 	target := resolveKubeTarget(kubeconfig, cfg)
 	fmt.Printf("%s ui: using kubeconfig context %q (%s)\n", binName, target.context, target.apiServer)
-	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, target: target, logger: logger, templates: templates}
+	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, target: target, logger: logger, templates: templates, probes: probes}
 
 	static, err := iofs.Sub(uiAssets, "ui/dist")
 	if err != nil {
@@ -95,6 +113,9 @@ Flags:
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/probes/capabilities", srv.handleProbeCapabilities)
+	mux.HandleFunc("GET /api/probes/pods", srv.handleProbePods)
+	mux.HandleFunc("POST /api/probes/tcp", srv.handleTCPProbe)
 	mux.HandleFunc("POST /api/verdict", srv.handleVerdict)
 	mux.HandleFunc("GET /api/verdict/stream", srv.handleVerdictStream)
 	mux.HandleFunc("GET /api/flows", srv.handleFlows)
@@ -124,6 +145,7 @@ Flags:
 // subcommand, just long-lived instead of built-and-discarded per CLI
 // invocation.
 type uiServer struct {
+	probes    *probeBackend
 	core      kubernetes.Interface
 	cilium    ciliumclient.Interface
 	cfg       *rest.Config

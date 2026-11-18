@@ -104,6 +104,53 @@ export interface NamespacesResponse {
   namespaces: string[]
 }
 
+export interface ProbePod {
+  name: string
+  uid: string
+}
+
+export interface TCPProbeRequest {
+  namespace: string
+  pod: string
+  uid: string
+  host: string
+  port: number
+  candidateYAML?: string
+}
+
+export interface TCPProbeResponse {
+  namespace: string
+  pod: string
+  host: string
+  port: number
+  outcome: 'connected' | 'failed' | 'inconclusive'
+  message: string
+  containerName?: string
+  flows: Flow[]
+  simulation?: VerdictResponse
+  warnings: string[]
+}
+
+export function fetchProbeCapabilities(): Promise<{ enabled: boolean }> {
+  return fetch('/api/probes/capabilities').then((res) => parseErrorOrJSON<{ enabled: boolean }>(res))
+}
+
+// Unlike /api/pods (label suggestions), this inventory contains only running
+// probe-eligible Pods and their UID, so replacement cannot target a namesake.
+export function fetchProbePods(namespace: string): Promise<{ pods: ProbePod[] }> {
+  return fetch(`/api/probes/pods?${new URLSearchParams({ namespace })}`).then((res) =>
+    parseErrorOrJSON<{ pods: ProbePod[] }>(res)
+  )
+}
+
+export function runTCPProbe(req: TCPProbeRequest): Promise<TCPProbeResponse> {
+  return fetch('/api/probes/tcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  }).then((res) => parseErrorOrJSON<TCPProbeResponse>(res))
+}
+
 async function parseErrorOrJSON<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text()
@@ -354,4 +401,3 @@ export interface CompatResponse {
 export function fetchCompat(): Promise<CompatResponse> {
   return fetch('/api/compat').then((res) => parseErrorOrJSON<CompatResponse>(res))
 }
-
