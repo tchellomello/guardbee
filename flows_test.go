@@ -271,3 +271,34 @@ func TestFlowFilterFlagsParseType(t *testing.T) {
 		t.Errorf("String() = %q", got)
 	}
 }
+
+func TestValidateHubbleAddr(t *testing.T) {
+	for _, ok := range []string{"", "127.0.0.1:4245", "hubble-relay.cilium-system.svc:80", "[::1]:4245"} {
+		if err := validateHubbleAddr(ok); err != nil {
+			t.Errorf("%q should be accepted: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"hubble-relay", "127.0.0.1:", "http://hubble-relay:80", ":"} {
+		if err := validateHubbleAddr(bad); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}
+
+// With --hubble-addr set, dialHubble must not look for the relay pod or open
+// a port-forward at all — that is the whole point of the flag (no pods or
+// pods/portforward RBAC). Nil clients would panic on the port-forward path.
+func TestDialHubbleDirectAddrSkipsPortForward(t *testing.T) {
+	old := hubbleAddr
+	hubbleAddr = "127.0.0.1:4245"
+	defer func() { hubbleAddr = old }()
+
+	client, closeFn, err := dialHubble(nil, nil)
+	if err != nil {
+		t.Fatalf("dialHubble with --hubble-addr: %v", err)
+	}
+	if client == nil {
+		t.Fatal("want a client")
+	}
+	closeFn()
+}

@@ -86,21 +86,24 @@ func runVerdict(args []string) {
 	fs := pflag.NewFlagSet("verdict", pflag.ExitOnError)
 	flags := registerCommonFlags(fs)
 	filterFlags := registerFlowFilterFlags(fs)
+	registerHubbleAddrFlag(fs)
 	var last uint64
 	var follow bool
 	var showUnchanged bool
 	fs.Uint64Var(&last, "last", 50, "number of recent flows to sample")
 	fs.BoolVarP(&follow, "follow", "f", false, "keep judging new flows until Ctrl+C, instead of stopping after --last")
 	fs.BoolVar(&showUnchanged, "show-unchanged", false, "also print UNCHANGED rows (deduplicated and grouped last), not just what changed")
-	var failOnDropped, replaceExisting bool
+	var failOnDropped, failOnAllowed, replaceExisting, perPolicy bool
 	var minFlows int
 	var format string
 	fs.BoolVar(&failOnDropped, "fail-on-dropped", false, fmt.Sprintf("exit %d if any sampled flow is NEWLY_DROPPED (for CI)", exitVerdictDropped))
+	fs.BoolVar(&failOnAllowed, "fail-on-allowed", false, fmt.Sprintf("exit %d if any sampled flow is NEWLY_ALLOWED (for CI; a dropped flow outranks it)", exitVerdictAllowed))
 	fs.IntVar(&minFlows, "min-flows", 0, fmt.Sprintf("exit %d if fewer than this many flows were actually judged (replies and not-simulated flows don't count); 0 disables", exitVerdictTooFewFlows))
 	fs.StringVar(&format, "format", formatTable, "output format: table, json or markdown (json/markdown: one-shot only, not with --follow)")
 	fs.BoolVar(&replaceExisting, "replace-existing", false, "judge the candidate as REPLACING any live policy with the same kind, namespace and name, instead of being added on top of it — use for edits to an existing policy")
+	fs.BoolVar(&perPolicy, "per-policy", false, "judge each CNP/CCNP document on its own instead of all together as one candidate: one section per policy, overall exit code = the worst of them (one-shot only)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f] <candidate.yaml>
+		fmt.Fprintf(os.Stderr, `Usage: %[1]s verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f] <candidate.yaml>... | -
 
 Diffs a candidate CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy against
 today's live policy state, judging real recent Hubble flows against both.
@@ -128,25 +131,34 @@ policy first, which is what applying the candidate would really do; without
 it, rules an edit removes or narrows still allow traffic and the regression
 is not reported.
 
-For CI: --fail-on-dropped exits %[3]d on any NEWLY_DROPPED flow, --min-flows N
-exits %[4]d when fewer than N flows were judged (so an empty sample can't read
-as a pass), and --format json|markdown prints a machine-readable result or a
-PR-comment summary. Errors always exit 1; a dropped flow outranks a thin sample.
+For CI: --fail-on-dropped exits %[3]d on any NEWLY_DROPPED flow, --fail-on-allowed
+exits %[5]d on any NEWLY_ALLOWED flow, --min-flows N exits %[4]d when fewer than N
+flows were judged (so an empty sample can't read as a pass), and
+--format json|markdown prints a machine-readable result or a PR-comment
+summary. Errors always exit 1; a finding outranks a thin sample, and a dropped
+flow outranks a newly allowed one.
+
+A candidate file may hold several documents (e.g. rendered kustomize output):
+documents that are not a CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy are
+skipped with a warning on stderr. Pass several files, or "-" to read stdin.
+By default every policy is judged together as one candidate; --per-policy
+judges each on its own (one section per policy) and exits with the worst
+result: a dropped flow, then a newly allowed one, then too few flows.
 
 %[2]s
 
 Flags:
-`, binName, numberFlagHelp, exitVerdictDropped, exitVerdictTooFewFlows)
+`, binName, numberFlagHelp, exitVerdictDropped, exitVerdictTooFewFlows, exitVerdictAllowed)
 		fs.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s verdict -n myapp examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --last 200 examples/myapp-wrong-port.yaml\n  %[1]s verdict -n myapp --follow examples/myapp-merge-ready.yaml\n  %[1]s verdict --all-namespaces examples/ccnp-coredns-merge-ready.yaml\n  %[1]s verdict -n myapp --show-unchanged examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --replace-existing --fail-on-dropped --min-flows 20 --format markdown examples/myapp-merge-ready.yaml\n", binName)
 	}
 	_ = fs.Parse(args)
+	checkHubbleAddr("verdict")
 	namespace := flags.resolveNamespace()
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, binName+" verdict: usage: "+binName+" verdict [-n <namespace>|-A] [--last N] [-f] <candidate.yaml>")
+		fmt.Fprintln(os.Stderr, binName+" verdict: usage: "+binName+" verdict [-n <namespace>|-A] [--last N] [-f] <candidate.yaml>... | -")
 		os.Exit(1)
 	}
-	candidatePath := fs.Arg(0)
 	if !validVerdictFormat(format) {
 		fmt.Fprintf(os.Stderr, "%s verdict: --format must be %s, %s or %s, got %q\n", binName, formatTable, formatJSON, formatMarkdown, format)
 		os.Exit(1)
@@ -160,8 +172,8 @@ Flags:
 		fmt.Fprintf(os.Stderr, "%s verdict: %v\n", binName, err)
 		os.Exit(1)
 	}
-	if follow && (format != formatTable || failOnDropped || minFlows > 0) {
-		fmt.Fprintf(os.Stderr, "%s verdict: --format json|markdown, --fail-on-dropped and --min-flows need a one-shot run, not --follow\n", binName)
+	if follow && (format != formatTable || failOnDropped || failOnAllowed || minFlows > 0 || perPolicy) {
+		fmt.Fprintf(os.Stderr, "%s verdict: --format json|markdown, --fail-on-dropped, --fail-on-allowed, --min-flows and --per-policy need a one-shot run, not --follow\n", binName)
 		os.Exit(1)
 	}
 
@@ -179,31 +191,30 @@ Flags:
 	warnOnVersionSkew(core, cfg)
 	target := resolveKubeTarget(flags.kubeconfig, cfg)
 
-	candidateRules, err := parseCandidateFile(logger, candidatePath, namespace)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, binName+" verdict: parsing candidate %s: %v\n", candidatePath, err)
-		os.Exit(1)
-	}
-
-	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, candidateRules, replaceExisting)
+	docs, sources, err := loadCandidateDocs(logger, fs.Args(), os.Stdin, namespace)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
 	}
-	warnSkippedBaseline(skipped)
-	defer baseline.close(logger)
-	defer candidate.close(logger)
-	if format == formatTable {
+	groups := groupCandidates(docs, sources, perPolicy)
+
+	if follow {
+		g := groups[0] // --per-policy is rejected with --follow, so there is exactly one
+		baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, g.rules, replaceExisting)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
+			os.Exit(1)
+		}
+		warnSkippedBaseline(skipped)
+		defer baseline.close(logger)
+		defer candidate.close(logger)
 		for _, r := range replaced {
 			fmt.Printf("Replacing live %s with the candidate (--replace-existing).\n", r)
 		}
-	}
 
-	counts := &verdictCounts{}
-
-	if follow {
+		counts := &verdictCounts{}
 		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s — streaming flows live, Ctrl+C to stop.\n\n",
-			len(candidateRules), candidatePath, baselineRuleCount, namespaceLabel(namespace), contextLabel(target), filterLabel(filter))
+			len(g.rules), g.label, baselineRuleCount, namespaceLabel(namespace), contextLabel(target), filterLabel(filter))
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
@@ -221,36 +232,61 @@ Flags:
 		return
 	}
 
-	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, filter, last, showUnchanged)
+	runs, err := judgeCandidateGroups(logger, cilium, core, cfg, namespace, filter, last, showUnchanged, replaceExisting, groups, failOnDropped, failOnAllowed, minFlows, start, target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
 	}
-	comp.candidateRuleCount = len(candidateRules)
-	comp.baselineRuleCount = baselineRuleCount
-	comp.skippedPolicies = skipped
-	comp.elapsed = time.Since(start)
-	comp.target = target
+	codes := make([]int, len(runs))
+	for i, r := range runs {
+		codes[i] = r.code
+	}
+	code := worstExitCode(codes)
 
-	code := verdictExitCode(comp.counts, failOnDropped, minFlows)
-	switch format {
-	case formatJSON:
-		if err := writeVerdictJSON(os.Stdout, comp, candidatePath, replaced, minFlows, code); err != nil {
+	// One merged candidate prints exactly as it always has; --per-policy
+	// gets its own shape (a section per policy) even for a single policy, so
+	// a pipeline parsing the output sees a shape that depends on the flag,
+	// never on how many policies a file happened to hold.
+	switch {
+	case perPolicy && format == formatJSON:
+		if err := writeMultiVerdictJSON(os.Stdout, runs, minFlows, code); err != nil {
 			fmt.Fprintf(os.Stderr, binName+" verdict: writing JSON: %v\n", err)
 			os.Exit(1)
 		}
-	case formatMarkdown:
-		writeVerdictMarkdown(os.Stdout, comp, candidatePath, replaced, minFlows, code)
-	default:
-		printVerdictComputation(comp, candidatePath)
-		if code == exitVerdictTooFewFlows {
-			fmt.Printf("\nOnly %d flow(s) judged, fewer than --min-flows %d: not enough evidence to call this a pass.\n", judgedFlows(comp.counts), minFlows)
+	case perPolicy && format == formatMarkdown:
+		writeMultiVerdictMarkdown(os.Stdout, runs, minFlows, code)
+	case perPolicy:
+		for i, r := range runs {
+			if i > 0 {
+				fmt.Println()
+			}
+			fmt.Println(colorize(ansiBold, "== "+r.label+" =="))
+			printVerdictRun(r, minFlows)
 		}
+		fmt.Printf("\nOverall: %s (exit %d)\n", verdictResult(code), code)
+	case format == formatJSON:
+		if err := writeVerdictJSON(os.Stdout, runs[0].comp, runs[0].label, runs[0].replaced, minFlows, code); err != nil {
+			fmt.Fprintf(os.Stderr, binName+" verdict: writing JSON: %v\n", err)
+			os.Exit(1)
+		}
+	case format == formatMarkdown:
+		writeVerdictMarkdown(os.Stdout, runs[0].comp, runs[0].label, runs[0].replaced, minFlows, code)
+	default:
+		printVerdictRun(runs[0], minFlows)
 	}
 	if code != 0 {
-		baseline.close(logger)
-		candidate.close(logger)
 		os.Exit(code)
+	}
+}
+
+// printVerdictRun is the table output of one judged candidate group.
+func printVerdictRun(r groupRun, minFlows int) {
+	for _, p := range r.replaced {
+		fmt.Printf("Replacing live %s with the candidate (--replace-existing).\n", p)
+	}
+	printVerdictComputation(r.comp, r.label)
+	if r.code == exitVerdictTooFewFlows {
+		fmt.Printf("\nOnly %d flow(s) judged, fewer than --min-flows %d: not enough evidence to call this a pass.\n", judgedFlows(r.comp.counts), minFlows)
 	}
 }
 
@@ -369,7 +405,13 @@ func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, cor
 	if err != nil {
 		return nil, fmt.Errorf("tapping flows: %w", err)
 	}
+	return judgeFetchedFlows(logger, baseline, candidate, flows, namespace, filter, last, showUnchanged), nil
+}
 
+// judgeFetchedFlows is judgeFlowBatch minus the fetch, so a run judging
+// several candidates (--per-policy) samples Hubble once and every candidate
+// sees the very same flows.
+func judgeFetchedFlows(logger *slog.Logger, baseline, candidate *verdictEngine, flows []*flowpb.Flow, namespace string, filter flowFilter, last uint64, showUnchanged bool) *verdictComputation {
 	counts := &verdictCounts{}
 	order := make([]string, 0, len(flows))
 	rowsByKey := map[string]*verdictRow{}
@@ -404,7 +446,7 @@ func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, cor
 			comp.rowCounts = append(comp.rowCounts, seen[k])
 		}
 	}
-	return comp, nil
+	return comp
 }
 
 // printVerdictComputation renders a verdictComputation exactly as the CLI's
@@ -768,15 +810,7 @@ func identitiesFromFlows(flows []*flowpb.Flow) identity.IdentityMap {
 // parseCandidateFile reads a local CiliumNetworkPolicy or
 // CiliumClusterwideNetworkPolicy YAML file and converts it to Cilium's
 // native api.Rules via the same Parse() the real agent uses.
-func parseCandidateFile(logger *slog.Logger, path, defaultNamespace string) (api.Rules, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return parseCandidateYAML(logger, raw, defaultNamespace)
-}
-
-// parseCandidateYAML is parseCandidateFile's core: parses a
+// parseCandidateYAML parses a
 // CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy from in-memory YAML
 // bytes via the same Parse() the real agent uses. Usable directly against
 // pasted/uploaded YAML (the "ui" subcommand's web form, see ui.go) without
@@ -790,31 +824,83 @@ func parseCandidateFile(logger *slog.Logger, path, defaultNamespace string) (api
 // combine them — allows union across policies, a deny beats any allow —
 // rather than this tool merging them by hand.
 func parseCandidateYAML(logger *slog.Logger, raw []byte, defaultNamespace string) (api.Rules, error) {
+	docs, _, err := parseCandidateDocs(logger, raw, defaultNamespace, false)
+	return flattenCandidateRules(docs), err
+}
+
+// candidateDoc is one parsed CNP/CCNP document of a candidate file: the
+// identity --per-policy reports it under, and the rules Cilium's own Parse()
+// produced for it.
+type candidateDoc struct {
+	kind, name, namespace string
+	rules                 api.Rules
+	source                string // the file (or "stdin") it came from; set by the CLI loader
+}
+
+// display is the policy as a reader names it: "CiliumNetworkPolicy ns/name",
+// or "CiliumClusterwideNetworkPolicy name" for a cluster-scoped one.
+func (d candidateDoc) display() string {
+	if d.namespace == "" {
+		return d.kind + " " + d.name
+	}
+	return d.kind + " " + d.namespace + "/" + d.name
+}
+
+func flattenCandidateRules(docs []candidateDoc) api.Rules {
+	var rules api.Rules
+	for _, d := range docs {
+		rules = append(rules, d.rules...)
+	}
+	return rules
+}
+
+// parseCandidateDocs does parseCandidateYAML's work, keeping each document's
+// rules apart. With skipNonPolicy, documents whose kind is not a CNP/CCNP
+// are left out and described in skipped ("kind name") instead of failing the
+// run; a file with no policy at all still fails, so a wrong path can't read
+// as an empty pass.
+func parseCandidateDocs(logger *slog.Logger, raw []byte, defaultNamespace string, skipNonPolicy bool) (policies []candidateDoc, skipped []string, err error) {
 	docs, err := splitYAMLDocuments(raw)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(docs) == 0 {
 		// Nothing but whitespace/comments — let decodeCandidateYAML produce
 		// the same "unsupported kind" error a single empty document always did.
 		docs = [][]byte{raw}
 	}
-	var rules api.Rules
 	for i, doc := range docs {
+		if skipNonPolicy {
+			var meta struct {
+				Kind     string `json:"kind"`
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+			}
+			// A document that doesn't even unmarshal falls through to
+			// decodeCandidateYAML, which reports the real error.
+			if yaml.Unmarshal(doc, &meta) == nil && meta.Kind != policyKindCNP && meta.Kind != policyKindCCNP {
+				skipped = append(skipped, strings.TrimSpace(meta.Kind+" "+meta.Metadata.Name))
+				continue
+			}
+		}
 		decoded, err := decodeCandidateYAML(doc, defaultNamespace)
+		var docRules api.Rules
 		if err == nil {
-			var docRules api.Rules
 			docRules, err = decoded.parse(logger)
-			rules = append(rules, docRules...)
 		}
 		if err != nil {
 			if len(docs) > 1 {
-				return nil, fmt.Errorf("document %d: %w", i+1, err)
+				return nil, nil, fmt.Errorf("document %d: %w", i+1, err)
 			}
-			return nil, err
+			return nil, nil, err
 		}
+		policies = append(policies, candidateDoc{kind: decoded.kind, name: decoded.name, namespace: decoded.namespace, rules: docRules})
 	}
-	return rules, nil
+	if skipNonPolicy && len(policies) == 0 {
+		return nil, nil, fmt.Errorf("no CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy document found (skipped: %s)", strings.Join(skipped, ", "))
+	}
+	return policies, skipped, nil
 }
 
 // splitYAMLDocuments splits a multi-document YAML stream on "---",
@@ -863,6 +949,11 @@ type decodedCandidate struct {
 	parse func(logger *slog.Logger) (api.Rules, error)
 }
 
+const (
+	policyKindCNP  = "CiliumNetworkPolicy"
+	policyKindCCNP = "CiliumClusterwideNetworkPolicy"
+)
+
 func decodeCandidateYAML(raw []byte, defaultNamespace string) (*decodedCandidate, error) {
 	var kindOnly struct {
 		Kind string `json:"kind"`
@@ -881,7 +972,7 @@ func decodeCandidateYAML(raw []byte, defaultNamespace string) (*decodedCandidate
 	}
 
 	switch kindOnly.Kind {
-	case "CiliumNetworkPolicy":
+	case policyKindCNP:
 		var cnp ciliumv2.CiliumNetworkPolicy
 		if err := yaml.Unmarshal(raw, &cnp); err != nil {
 			return nil, err
@@ -918,7 +1009,7 @@ func decodeCandidateYAML(raw []byte, defaultNamespace string) (*decodedCandidate
 			rule:      firstRuleSpec(cnp.Spec, cnp.Specs),
 			parse:     func(logger *slog.Logger) (api.Rules, error) { return cnp.Parse(logger, "") },
 		}, nil
-	case "CiliumClusterwideNetworkPolicy":
+	case policyKindCCNP:
 		var ccnp ciliumv2.CiliumClusterwideNetworkPolicy
 		if err := yaml.Unmarshal(raw, &ccnp); err != nil {
 			return nil, err

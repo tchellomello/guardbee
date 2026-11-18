@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -157,19 +159,24 @@ func TestVerdictExitCode(t *testing.T) {
 		name          string
 		counts        verdictCounts
 		failOnDropped bool
+		failOnAllowed bool
 		minFlows      int
 		want          int
 	}{
-		{"plain run never fails", verdictCounts{newlyDropped: 3}, false, 0, 0},
-		{"dropped with gate", verdictCounts{newlyDropped: 1, unchanged: 40}, true, 0, exitVerdictDropped},
-		{"clean with gate", verdictCounts{unchanged: 40}, true, 0, 0},
-		{"too few judged", verdictCounts{unchanged: 3, replySkipped: 50}, false, 10, exitVerdictTooFewFlows},
-		{"replies and not-simulated don't count", verdictCounts{unchanged: 9, replySkipped: 30, notSimulated: 30}, true, 10, exitVerdictTooFewFlows},
-		{"enough judged", verdictCounts{unchanged: 8, newlyAllowed: 2}, true, 10, 0},
-		{"dropped outranks thin sample", verdictCounts{newlyDropped: 1}, true, 10, exitVerdictDropped},
+		{"plain run never fails", verdictCounts{newlyDropped: 3}, false, false, 0, 0},
+		{"dropped with gate", verdictCounts{newlyDropped: 1, unchanged: 40}, true, false, 0, exitVerdictDropped},
+		{"clean with gate", verdictCounts{unchanged: 40}, true, false, 0, 0},
+		{"too few judged", verdictCounts{unchanged: 3, replySkipped: 50}, false, false, 10, exitVerdictTooFewFlows},
+		{"replies and not-simulated don't count", verdictCounts{unchanged: 9, replySkipped: 30, notSimulated: 30}, true, false, 10, exitVerdictTooFewFlows},
+		{"enough judged", verdictCounts{unchanged: 8, newlyAllowed: 2}, true, false, 10, 0},
+		{"dropped outranks thin sample", verdictCounts{newlyDropped: 1}, true, false, 10, exitVerdictDropped},
+		{"allowed with gate", verdictCounts{newlyAllowed: 1, unchanged: 40}, false, true, 0, exitVerdictAllowed},
+		{"allowed without gate", verdictCounts{newlyAllowed: 1, unchanged: 40}, true, false, 0, 0},
+		{"dropped outranks allowed", verdictCounts{newlyDropped: 1, newlyAllowed: 1}, true, true, 0, exitVerdictDropped},
+		{"allowed outranks thin sample", verdictCounts{newlyAllowed: 1}, false, true, 10, exitVerdictAllowed},
 	}
 	for _, c := range cases {
-		if got := verdictExitCode(&c.counts, c.failOnDropped, c.minFlows); got != c.want {
+		if got := verdictExitCode(&c.counts, c.failOnDropped, c.failOnAllowed, c.minFlows); got != c.want {
 			t.Errorf("%s: want %d, got %d", c.name, c.want, got)
 		}
 	}
@@ -253,5 +260,202 @@ func TestWriteVerdictMarkdown(t *testing.T) {
 	writeVerdictMarkdown(&buf, comp, "web.yaml", nil, 10, exitVerdictTooFewFlows)
 	if !strings.Contains(buf.String(), "**INCONCLUSIVE**: only 2 flow(s) judged, 10 required") {
 		t.Errorf("insufficient-flows status missing:\n%s", buf.String())
+	}
+}
+
+const unrelatedConfigMap = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings
+data:
+  key: value
+`
+
+// A rendered kustomize file has bystander documents next to the policies:
+// the CLI skips them and judges the policies, while the shared parser (the
+// UI's path) still rejects an unsupported kind.
+func TestParseCandidateDocsSkipsNonPolicyDocuments(t *testing.T) {
+	logger := slog.Default()
+	raw := []byte(liveWebPolicy + "---\n" + unrelatedConfigMap + "---\n" + liveOtherPolicy)
+
+	docs, skipped, err := parseCandidateDocs(logger, raw, "", true)
+	if err != nil {
+		t.Fatalf("parseCandidateDocs: %v", err)
+	}
+	rules := flattenCandidateRules(docs)
+	if len(docs) != 2 || docs[0].display() != "CiliumNetworkPolicy alpha/web" {
+		t.Errorf("want the two policies in file order, got %d docs, first %q", len(docs), docs[0].display())
+	}
+	want, err := parseCandidateYAML(logger, []byte(liveWebPolicy+"---\n"+liveOtherPolicy), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != len(want) || len(rules) == 0 {
+		t.Errorf("want the %d rules of the two policies, got %d", len(want), len(rules))
+	}
+	if len(skipped) != 1 || skipped[0] != "ConfigMap settings" {
+		t.Errorf("skipped = %v, want [ConfigMap settings]", skipped)
+	}
+
+	if _, err := parseCandidateYAML(logger, raw, ""); err == nil {
+		t.Error("parseCandidateYAML must keep rejecting an unsupported kind (the UI's behaviour)")
+	}
+}
+
+func TestParseCandidateDocsNoPolicyIsAnError(t *testing.T) {
+	_, _, err := parseCandidateDocs(slog.Default(), []byte(unrelatedConfigMap), "", true)
+	if err == nil || !strings.Contains(err.Error(), "no CiliumNetworkPolicy") {
+		t.Errorf("a file without any policy must fail, not read as an empty pass: %v", err)
+	}
+}
+
+// A document that IS a policy but is malformed must fail the run: skipping
+// is for bystanders, never for a policy the author meant to ship.
+func TestParseCandidateDocsStillRejectsBrokenPolicy(t *testing.T) {
+	raw := unrelatedConfigMap + "---\nkind: CiliumNetworkPolicy\nspec: [not, a, map]\n"
+	if _, _, err := parseCandidateDocs(slog.Default(), []byte(raw), "alpha", true); err == nil {
+		t.Error("a malformed CiliumNetworkPolicy document must fail the run, not be skipped")
+	}
+}
+
+func TestWorstExitCode(t *testing.T) {
+	cases := []struct {
+		name  string
+		codes []int
+		want  int
+	}{
+		{"none", nil, 0},
+		{"all pass", []int{0, 0}, 0},
+		{"dropped outranks allowed even though 4 > 2", []int{exitVerdictAllowed, exitVerdictDropped}, exitVerdictDropped},
+		{"allowed outranks thin sample", []int{exitVerdictTooFewFlows, exitVerdictAllowed, 0}, exitVerdictAllowed},
+		{"thin sample outranks pass", []int{0, exitVerdictTooFewFlows}, exitVerdictTooFewFlows},
+	}
+	for _, c := range cases {
+		if got := worstExitCode(c.codes); got != c.want {
+			t.Errorf("%s: want %d, got %d", c.name, c.want, got)
+		}
+	}
+}
+
+const secondCandidatePolicy = `apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cache
+  namespace: alpha
+spec:
+  endpointSelector:
+    matchLabels:
+      app: cache
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: client
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+`
+
+// Two policies and one unrelated document, spread over a file and stdin,
+// come out as two policies; the loader reports every source and skips the
+// bystander.
+func TestLoadCandidateDocsFilesAndStdin(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "rendered.yaml")
+	if err := os.WriteFile(file, []byte(narrowedWebCandidate+"---\n"+unrelatedConfigMap), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docs, sources, err := loadCandidateDocs(slog.Default(), []string{file, "-"}, strings.NewReader(secondCandidatePolicy), "alpha")
+	if err != nil {
+		t.Fatalf("loadCandidateDocs: %v", err)
+	}
+	if len(docs) != 2 || docs[0].display() != "CiliumNetworkPolicy alpha/web" || docs[1].display() != "CiliumNetworkPolicy alpha/cache" {
+		t.Fatalf("want web then cache, got %+v", docs)
+	}
+	if docs[0].source != file || docs[1].source != "stdin" || len(sources) != 2 {
+		t.Errorf("sources wrong: %q %q %v", docs[0].source, docs[1].source, sources)
+	}
+
+	merged := groupCandidates(docs, sources, false)
+	if len(merged) != 1 || len(merged[0].rules) != len(flattenCandidateRules(docs)) {
+		t.Errorf("default must stay one merged candidate, got %d groups", len(merged))
+	}
+	per := groupCandidates(docs, sources, true)
+	if len(per) != 2 || per[0].label != "CiliumNetworkPolicy alpha/web ("+file+")" || per[1].label != "CiliumNetworkPolicy alpha/cache (stdin)" {
+		t.Errorf("per-policy groups wrong: %+v", per)
+	}
+
+	if _, _, err := loadCandidateDocs(slog.Default(), []string{filepath.Join(dir, "missing.yaml")}, strings.NewReader(""), ""); err == nil {
+		t.Error("a missing file must be an error")
+	}
+}
+
+// The acceptance case: a file with two policies and one unrelated document
+// judged per policy gives one result each, and the overall code is the worst.
+// Here the narrowed "web" edit drops a sampled flow while "cache" changes
+// nothing that was sampled.
+func TestJudgeGroupPerPolicyWorstExitCode(t *testing.T) {
+	logger := slog.Default()
+	cs := fake.NewSimpleClientset(liveCNP(t, liveWebPolicy), liveCNP(t, liveOtherPolicy))
+
+	docs, _, err := parseCandidateDocs(logger, []byte(narrowedWebCandidate+"---\n"+unrelatedConfigMap+"---\n"+secondCandidatePolicy), "alpha", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range docs {
+		docs[i].source = "rendered.yaml"
+	}
+	groups := groupCandidates(docs, []string{"rendered.yaml"}, true)
+	if len(groups) != 2 {
+		t.Fatalf("want 2 policies (ConfigMap skipped), got %d", len(groups))
+	}
+
+	ep := func(id uint32, pod, app string) *flowpb.Endpoint {
+		return &flowpb.Endpoint{Identity: id, PodName: pod, Namespace: "alpha",
+			Labels: []string{"k8s:app=" + app, "k8s:io.kubernetes.pod.namespace=alpha"}}
+	}
+	client, web := ep(1100, "client-1", "client"), ep(1200, "web-1", "web")
+	flows := []*flowpb.Flow{{Source: client, Destination: web, L4: &flowpb.Layer4{
+		Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 81}},
+	}}}
+
+	var runs []groupRun
+	for _, g := range groups {
+		run, err := judgeGroup(logger, cs, "alpha", flowFilter{}, 50, false, true, g, flows, true, false, 0, time.Now(), kubeTarget{})
+		if err != nil {
+			t.Fatalf("judgeGroup(%s): %v", g.label, err)
+		}
+		runs = append(runs, *run)
+	}
+	if runs[0].code != exitVerdictDropped || runs[0].comp.counts.newlyDropped != 1 {
+		t.Errorf("web edit: want exit %d with 1 newly dropped, got exit %d counts %+v", exitVerdictDropped, runs[0].code, runs[0].comp.counts)
+	}
+	if runs[1].code != 0 {
+		t.Errorf("cache policy changes nothing sampled: want exit 0, got %d", runs[1].code)
+	}
+	if got := worstExitCode([]int{runs[0].code, runs[1].code}); got != exitVerdictDropped {
+		t.Errorf("overall: want %d, got %d", exitVerdictDropped, got)
+	}
+
+	var jsonBuf, mdBuf bytes.Buffer
+	if err := writeMultiVerdictJSON(&jsonBuf, runs, 0, exitVerdictDropped); err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Policies []map[string]any `json:"policies"`
+		Result   string           `json:"result"`
+		ExitCode int              `json:"exitCode"`
+	}
+	if err := json.Unmarshal(jsonBuf.Bytes(), &out); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, jsonBuf.String())
+	}
+	if len(out.Policies) != 2 || out.Result != "dropped" || out.ExitCode != exitVerdictDropped || out.Policies[1]["exitCode"].(float64) != 0 {
+		t.Errorf("multi JSON wrong: %+v", out)
+	}
+	writeMultiVerdictMarkdown(&mdBuf, runs, 0, exitVerdictDropped)
+	for _, want := range []string{"## GuardBee verdict: 2 policies, overall **DROPPED**", "### GuardBee verdict: `CiliumNetworkPolicy alpha/web (rendered.yaml)`", "### GuardBee verdict: `CiliumNetworkPolicy alpha/cache (rendered.yaml)`"} {
+		if !strings.Contains(mdBuf.String(), want) {
+			t.Errorf("multi markdown missing %q:\n%s", want, mdBuf.String())
+		}
 	}
 }

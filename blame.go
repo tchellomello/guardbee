@@ -283,6 +283,7 @@ func runBlame(args []string) {
 	fs := pflag.NewFlagSet("blame", pflag.ExitOnError)
 	flags := registerCommonFlags(fs)
 	filterFlags := registerFlowFilterFlags(fs)
+	registerHubbleAddrFlag(fs)
 	var last uint64
 	var follow bool
 	var format string
@@ -314,6 +315,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s blame myapp/api\n  %[1]s blame -n myapp api --verdict DROPPED\n  %[1]s blame myapp/netshoot --to-ip 169.254.169.254 --follow\n  %[1]s blame -n myapp --last 100 --format markdown\n  %[1]s blame -A --verdict DROPPED --drop-reason-desc POLICY_DENIED\n", binName)
 	}
 	_ = fs.Parse(args)
+	checkHubbleAddr("blame")
 	filter, err := filterFlags.parse()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" blame: %v\n", err)
