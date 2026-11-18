@@ -45,6 +45,7 @@ guardbee flows [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reaso
 | `--verdict` | Only flows with this observed verdict: `FORWARDED`, `DROPPED`, `AUDIT`, `ERROR`, `REDIRECTED`, `TRACED`, `TRANSLATED` |
 | `--drop-reason-desc` | Only flows dropped for this reason, e.g. `POLICY_DENIED`, `POLICY_DENY` (Cilium's `flow.DropReason` names) |
 | `--type` | Only events of this Hubble type: `policy-verdict`, `drop`, `trace`, `l7`, … (hubble's own names) |
+| `--hubble-addr host:port` | Dial hubble-relay at this address instead of port-forwarding to its pod. Plaintext gRPC, like the port-forward. Also on `blame` and `verdict` |
 
 All filter flags use `hubble observe`'s own names and semantics. They're repeatable: repeats of one flag are ORed, different flags ANDed. A bare pod/service name means the `-n` namespace (with `-A`, the `default` namespace, as in hubble). One difference: hubble refuses `--pod` together with `--from-pod`/`--to-pod`/`--to-ip`; here they simply AND, so `--pod web --to-ip 10.0.0.1` is web's own traffic to that IP. They're applied in Hubble's query, so `--last 50` means 50 *matching* flows. Dropped flows also print their drop reason.
 
@@ -67,7 +68,7 @@ The UI's **Flows** tab has the same filters (under **Filters**) plus a **Follow 
 </div>
 
 
-> Port-forwards to the cluster's `hubble-relay` pod (`cilium-system`) and streams via Hubble's `Observer.GetFlows` gRPC API.
+> Port-forwards to the cluster's `hubble-relay` pod (`cilium-system`) and streams via Hubble's `Observer.GetFlows` gRPC API. With `--hubble-addr` it dials the address you give instead, which needs no `pods` or `pods/portforward` RBAC. That suits an in-cluster CI runner reaching the `hubble-relay` Service directly, e.g. `--hubble-addr hubble-relay.cilium-system.svc:80`.
 
 ---
 
@@ -125,7 +126,7 @@ In the UI's **Flows** tab, the **Policy verdicts** quick filter and the **Either
 The engine. Diffs a candidate policy against live traffic — judged once against today's policy, once with the candidate added.
 
 ```
-guardbee verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f] <candidate.yaml>
+guardbee verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f] <candidate.yaml>... | -
 ```
 
 | Flag | Meaning |
@@ -137,18 +138,30 @@ guardbee verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-rea
 | `--show-unchanged` | Also print `UNCHANGED` rows (default: just a count) |
 | `--replace-existing` | Judge the candidate as replacing a live policy with the same kind, namespace and name, instead of adding it on top |
 | `--fail-on-dropped` | Exit `2` if any sampled flow is `NEWLY_DROPPED` |
+| `--per-policy` | Judge each CNP/CCNP document on its own: one section per policy and an overall exit code that is the worst of them. One-shot only |
+| `--fail-on-allowed` | Exit `4` if any sampled flow is `NEWLY_ALLOWED` (a dropped flow outranks it) |
 | `--min-flows N` | Exit `3` if fewer than N flows were judged (replies and not-simulated flows don't count) |
 | `--format table\|json\|markdown` | Output format; `json` and `markdown` are one-shot only |
 
 > Output is three buckets: `NEWLY_DROPPED` and `NEWLY_ALLOWED` (each with a one-line plain-English reason), and `UNCHANGED`. See [how verdict works](how-it-works.html) for the engine mechanics.
 
-`<candidate.yaml>` may hold several `---`-separated policies, like a file for `kubectl apply -f`; they're judged together as one candidate. In the UI, a row's **Allow / Deny** button uses this: it shows the affected workload's detected identity labels, and appends a separate exception policy scoped to the labels you pick (with `enableDefaultDeny` off for that direction, so it never default-denies anything on its own). Then it re-runs the verdict.
+`<candidate.yaml>` may hold several `---`-separated policies, like a file for `kubectl apply -f`; they're judged together as one candidate. On the CLI, documents of any other kind (a ConfigMap or Deployment in rendered kustomize output) are skipped with a warning on stderr; a file with no policy at all is an error. Pass several files, or `-` to read stdin. A CiliumNetworkPolicy without `metadata.namespace` (kustomize adds it later) can't be placed from the file alone, so pass `-n`. In the UI, a row's **Allow / Deny** button uses this: it shows the affected workload's detected identity labels, and appends a separate exception policy scoped to the labels you pick (with `enableDefaultDeny` off for that direction, so it never default-denies anything on its own). Then it re-runs the verdict.
 
 The filters are applied in Hubble's query, not to the results, so all `--last` flows match instead of a quiet destination getting a handful of the cluster-wide buffer. For example, `guardbee verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 candidate.yaml`. The UI's **Filters** section (under Scope, the same component as the Flows tab's) does the same, and each run card shows the filter it ran with. Its fields suggest values seen in earlier runs: workload pod prefixes, entities, Services, labels and ports, most-seen first. Traffic the filter leaves out isn't judged at all, so a filtered run is for investigating one path, not for signing off on a policy.
 
 ### Editing an existing policy
 
 By default the candidate is added on top of the live policy set, including a live policy with the same name. When the candidate is an edit of a live policy, pass `--replace-existing`: the live copy is left out of the candidate side, which is what applying the edit does. Without it, rules the edit removes or narrows still allow traffic, and the regression is not reported. Matching uses the policy labels Cilium's own parser attaches (kind, namespace, name), so a same-name policy in another namespace is never replaced.
+
+### Several policies in one run
+
+By default every policy document is one merged candidate. For a rendered file with several independent policies, `--per-policy` judges each on its own against the same sampled flows (Hubble is sampled once), prints a section per policy, and exits with the worst result across them, ranked dropped (`2`), then newly allowed (`4`), then too few flows (`3`), then pass:
+
+```
+kustomize build overlays/prod | guardbee verdict -n myapp --per-policy --replace-existing --fail-on-dropped --min-flows 20 -
+```
+
+`--format json` then prints `{"policies": [...], "result", "exitCode"}`, each entry the same object a single run prints, and `--format markdown` prints an overall line followed by one section per policy. The shape follows the flag, not the number of policies, so a pipeline parsing it never has to guess. Documents that aren't policies are skipped with a warning.
 
 ### CI mode
 
@@ -163,9 +176,10 @@ guardbee verdict -n myapp --replace-existing --fail-on-dropped --min-flows 20 --
 | `0` | No gate tripped |
 | `1` | Error (cluster, Hubble or candidate) |
 | `2` | `--fail-on-dropped`: at least one sampled flow is `NEWLY_DROPPED` |
-| `3` | `--min-flows`: too few flows judged to call it a pass (a dropped flow outranks this) |
+| `3` | `--min-flows`: too few flows judged to call it a pass (a dropped or newly allowed flow outranks this) |
+| `4` | `--fail-on-allowed`: at least one sampled flow is `NEWLY_ALLOWED` (a dropped flow outranks this) |
 
-`--format json` prints the same object as the UI's `POST /api/verdict`, plus `candidate`, `replacedPolicies`, `judgedFlows`, `minFlows`, `result` (`pass`, `dropped` or `insufficient-flows`) and `exitCode`. `--format markdown` prints a summary ready to post as a PR comment: a status line, the counts, a table of changed rows, and unchanged rows in a collapsed section.
+`--format json` prints the same object as the UI's `POST /api/verdict`, plus `candidate`, `replacedPolicies`, `judgedFlows`, `minFlows`, `result` (`pass`, `dropped`, `allowed` or `insufficient-flows`) and `exitCode`. `--format markdown` prints a summary ready to post as a PR comment: a status line, the counts, a table of changed rows, and unchanged rows in a collapsed section.
 
 A pass only covers flows that were in Hubble's buffer at run time. Use `--min-flows` so a quiet namespace reads as inconclusive, not clean.
 

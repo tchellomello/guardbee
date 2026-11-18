@@ -4,13 +4,18 @@ package main
 // needs on top of the interactive output.
 //
 //   - Exit codes a pipeline can gate on: --fail-on-dropped exits
-//     exitVerdictDropped when any sampled flow is NEWLY_DROPPED, and
+//     exitVerdictDropped when any sampled flow is NEWLY_DROPPED,
+//     --fail-on-allowed exits exitVerdictAllowed on any NEWLY_ALLOWED, and
 //     --min-flows exits exitVerdictTooFewFlows when too few flows were
 //     actually judged — so "nothing was sampled" can never read as a pass.
 //     Errors keep exiting 1.
 //   - --format json|markdown: the same verdictComputation the table is
 //     printed from, rendered as JSON (a superset of the "ui" subcommand's
 //     /api/verdict response) or as a PR-comment-ready markdown summary.
+//   - Several candidate files (or "-" for stdin), and --per-policy to judge
+//     each CNP/CCNP document on its own: one section per policy, and an
+//     overall exit code that is the worst of them (worstExitCode). Without
+//     --per-policy every document is one merged candidate, as always.
 //   - --replace-existing: drop a live policy of the same kind/namespace/name
 //     as a candidate document from the baseline+candidate side, which is
 //     what applying the candidate would actually do. Without it the
@@ -22,17 +27,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
+	flowpb "github.com/cilium/cilium/api/v1/flow"
 	k8sConst "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/policy/api"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
 	exitVerdictDropped     = 2
 	exitVerdictTooFewFlows = 3
+	exitVerdictAllowed     = 4
 )
 
 const (
@@ -51,11 +64,15 @@ func judgedFlows(c *verdictCounts) int {
 	return c.unchanged + c.newlyDropped + c.newlyAllowed
 }
 
-// verdictExitCode is the CI gate. A real regression outranks a thin sample:
-// a NEWLY_DROPPED row is a finding even if few flows were judged.
-func verdictExitCode(c *verdictCounts, failOnDropped bool, minFlows int) int {
+// verdictExitCode is the CI gate. A real finding outranks a thin sample:
+// a NEWLY_DROPPED or NEWLY_ALLOWED row is a finding even if few flows were
+// judged. Dropped outranks allowed — breaking traffic is the worse news.
+func verdictExitCode(c *verdictCounts, failOnDropped, failOnAllowed bool, minFlows int) int {
 	if failOnDropped && c.newlyDropped > 0 {
 		return exitVerdictDropped
+	}
+	if failOnAllowed && c.newlyAllowed > 0 {
+		return exitVerdictAllowed
 	}
 	if minFlows > 0 && judgedFlows(c) < minFlows {
 		return exitVerdictTooFewFlows
@@ -67,6 +84,8 @@ func verdictResult(code int) string {
 	switch code {
 	case exitVerdictDropped:
 		return "dropped"
+	case exitVerdictAllowed:
+		return "allowed"
 	case exitVerdictTooFewFlows:
 		return "insufficient-flows"
 	default:
@@ -155,10 +174,8 @@ type cliVerdictOutput struct {
 	DurationMs       int64    `json:"durationMs"`
 }
 
-func writeVerdictJSON(w io.Writer, comp *verdictComputation, candidatePath string, replaced []string, minFlows, code int) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(cliVerdictOutput{
+func newCLIVerdictOutput(comp *verdictComputation, candidatePath string, replaced []string, minFlows, code int) cliVerdictOutput {
+	return cliVerdictOutput{
 		verdictResponse:  toVerdictResponse(comp),
 		Candidate:        candidatePath,
 		ReplacedPolicies: replaced,
@@ -167,7 +184,13 @@ func writeVerdictJSON(w io.Writer, comp *verdictComputation, candidatePath strin
 		Result:           verdictResult(code),
 		ExitCode:         code,
 		DurationMs:       comp.elapsed.Milliseconds(),
-	})
+	}
+}
+
+func writeVerdictJSON(w io.Writer, comp *verdictComputation, candidatePath string, replaced []string, minFlows, code int) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(newCLIVerdictOutput(comp, candidatePath, replaced, minFlows, code))
 }
 
 // mdCell keeps a value from breaking a markdown table row.
@@ -181,6 +204,8 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 	switch code {
 	case exitVerdictDropped:
 		status = fmt.Sprintf("**FAIL**: %d sampled flow(s) would break", c.newlyDropped)
+	case exitVerdictAllowed:
+		status = fmt.Sprintf("**FAIL**: %d sampled flow(s) would be newly allowed", c.newlyAllowed)
 	case exitVerdictTooFewFlows:
 		status = fmt.Sprintf("**INCONCLUSIVE**: only %d flow(s) judged, %d required", judgedFlows(c), minFlows)
 	default:
@@ -233,4 +258,159 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 		fmt.Fprintln(w, "\n</details>")
 	}
 	fmt.Fprintln(w, "\n_Judged against the flows in Hubble's buffer at run time: a flow that did not occur recently is not covered._")
+}
+
+// worstExitCode is the overall result of several judged policies. Not a
+// numeric max: a dropped flow (2) is worse than a newly allowed one (4), and
+// both outrank a thin sample (3), the same order verdictExitCode applies
+// within one policy.
+func worstExitCode(codes []int) int {
+	rank := func(c int) int {
+		switch c {
+		case exitVerdictDropped:
+			return 3
+		case exitVerdictAllowed:
+			return 2
+		case exitVerdictTooFewFlows:
+			return 1
+		}
+		return 0
+	}
+	worst := 0
+	for _, c := range codes {
+		if rank(c) > rank(worst) {
+			worst = c
+		}
+	}
+	return worst
+}
+
+// candidateGroup is one candidate to judge: every rule that goes in together.
+type candidateGroup struct {
+	label string
+	rules api.Rules
+}
+
+// loadCandidateDocs reads the verdict command's candidate arguments: file
+// paths, or "-" for stdin. Documents of other kinds are skipped with a
+// warning; a source that holds no policy at all is an error. Each doc is
+// returned with the source it came from.
+func loadCandidateDocs(logger *slog.Logger, args []string, stdin io.Reader, defaultNamespace string) (docs []candidateDoc, sources []string, err error) {
+	for _, arg := range args {
+		var raw []byte
+		name := arg
+		if arg == "-" {
+			name = "stdin"
+			raw, err = io.ReadAll(stdin)
+		} else {
+			raw, err = os.ReadFile(arg)
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading candidate %s: %w", name, err)
+		}
+		// Only the CLI skips non-policy documents: a file here is often
+		// rendered kustomize/helm output with Deployments and ConfigMaps next
+		// to the policies. The UI's editor keeps rejecting an unsupported
+		// kind, since there a non-policy document is a mistake, not a
+		// bystander.
+		parsed, skipped, err := parseCandidateDocs(logger, raw, defaultNamespace, true)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing candidate %s: %w", name, err)
+		}
+		for _, s := range skipped {
+			fmt.Fprintf(os.Stderr, "%s verdict: skipping non-policy document in %s: %s\n", binName, name, s)
+		}
+		docs = append(docs, parsed...)
+		sources = append(sources, name)
+		for i := len(docs) - len(parsed); i < len(docs); i++ {
+			docs[i].source = name
+		}
+	}
+	return docs, sources, nil
+}
+
+// groupCandidates turns the parsed documents into what gets judged: one
+// merged candidate (the default, so a candidate can ship with its exception
+// policies and be combined by Cilium's own engine), or with perPolicy one
+// candidate per document.
+func groupCandidates(docs []candidateDoc, sources []string, perPolicy bool) []candidateGroup {
+	if !perPolicy {
+		return []candidateGroup{{label: strings.Join(sources, ", "), rules: flattenCandidateRules(docs)}}
+	}
+	groups := make([]candidateGroup, len(docs))
+	for i, d := range docs {
+		groups[i] = candidateGroup{label: fmt.Sprintf("%s (%s)", d.display(), d.source), rules: d.rules}
+	}
+	return groups
+}
+
+// groupRun is one candidate group's judged result.
+type groupRun struct {
+	label    string
+	comp     *verdictComputation
+	replaced []string
+	code     int
+}
+
+// judgeCandidateGroups samples Hubble once and judges every group against
+// the same flows, each with its own baseline+candidate engines.
+func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, groups []candidateGroup, failOnDropped, failOnAllowed bool, minFlows int, start time.Time, target kubeTarget) ([]groupRun, error) {
+	flows, err := fetchFlows(core, cfg, namespace, filter, last)
+	if err != nil {
+		return nil, fmt.Errorf("tapping flows: %w", err)
+	}
+	var runs []groupRun
+	for _, g := range groups {
+		run, err := judgeGroup(logger, cilium, namespace, filter, last, showUnchanged, replaceExisting, g, flows, failOnDropped, failOnAllowed, minFlows, start, target)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, *run)
+	}
+	return runs, nil
+}
+
+func judgeGroup(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, g candidateGroup, flows []*flowpb.Flow, failOnDropped, failOnAllowed bool, minFlows int, start time.Time, target kubeTarget) (*groupRun, error) {
+	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, g.rules, replaceExisting)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", g.label, err)
+	}
+	defer baseline.close(logger)
+	defer candidate.close(logger)
+	warnSkippedBaseline(skipped)
+
+	comp := judgeFetchedFlows(logger, baseline, candidate, flows, namespace, filter, last, showUnchanged)
+	comp.candidateRuleCount = len(g.rules)
+	comp.baselineRuleCount = baselineRuleCount
+	comp.skippedPolicies = skipped
+	comp.elapsed = time.Since(start)
+	comp.target = target
+	return &groupRun{label: g.label, comp: comp, replaced: replaced, code: verdictExitCode(comp.counts, failOnDropped, failOnAllowed, minFlows)}, nil
+}
+
+// cliMultiOutput is --format json when more than one policy was judged.
+type cliMultiOutput struct {
+	Policies []cliVerdictOutput `json:"policies"`
+	Result   string             `json:"result"`
+	ExitCode int                `json:"exitCode"`
+}
+
+func writeMultiVerdictJSON(w io.Writer, runs []groupRun, minFlows, overall int) error {
+	out := cliMultiOutput{Result: verdictResult(overall), ExitCode: overall}
+	for _, r := range runs {
+		out.Policies = append(out.Policies, newCLIVerdictOutput(r.comp, r.label, r.replaced, minFlows, r.code))
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+func writeMultiVerdictMarkdown(w io.Writer, runs []groupRun, minFlows, overall int) {
+	fmt.Fprintf(w, "## GuardBee verdict: %d policies, overall **%s**\n\n", len(runs), strings.ToUpper(verdictResult(overall)))
+	for i, r := range runs {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		writeVerdictMarkdown(w, r.comp, r.label, r.replaced, minFlows, r.code)
+	}
 }
