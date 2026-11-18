@@ -43,8 +43,8 @@ func runUI(args []string) {
 	var kubeconfig, addr, templatesDir string
 	var enableProbes bool
 	var probeImage string
-	fs.BoolVar(&enableProbes, "enable-probes", false, "opt in to TCP probes that append ephemeral containers to running Pods")
-	fs.StringVar(&probeImage, "probe-image", "", "operator-approved timeout/nc image pinned with @sha256:<64 hex digest> (required with --enable-probes)")
+	fs.BoolVar(&enableProbes, "enable-probes", false, "opt in to TCP/UDP connectivity tests that append ephemeral containers to running Pods")
+	fs.StringVar(&probeImage, "probe-image", "", "timeout/nc image (Python 3 for UDP), repository:tag or repository@sha256:digest (required with --enable-probes)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	fs.StringVar(&addr, "addr", "127.0.0.1:4747", "address to listen on")
 	fs.StringVar(&templatesDir, "templates-dir", "", "directory of generic/ingress/egress CiliumNetworkPolicy YAML presets (default: built-in templates/)")
@@ -65,11 +65,11 @@ CiliumNetworkPolicy YAML under generic/, ingress/, egress/ subdirectories —
 --templates-dir points at an external one; omitted, the binary's own
 built-in defaults are used.
 
-TCP probes are disabled unless --enable-probes and an approved digest-pinned
+Connectivity tests are disabled unless --enable-probes and an operator-selected
 --probe-image are supplied. This opt-in appends immutable ephemeral containers
 to running Pods, requires additional RBAC, and permits numeric-loopback
-serving only. The approved image must contain timeout and nc; see the TCP
-probe guide for security requirements and limitations.
+serving only. Your image must contain timeout and nc, plus Python 3
+for UDP; see the connectivity-test guide for requirements and limitations.
 
 Flags:
 `, binName)
@@ -116,6 +116,7 @@ Flags:
 	mux.HandleFunc("GET /api/probes/capabilities", srv.handleProbeCapabilities)
 	mux.HandleFunc("GET /api/probes/pods", srv.handleProbePods)
 	mux.HandleFunc("POST /api/probes/tcp", srv.handleTCPProbe)
+	mux.HandleFunc("POST /api/probes/connection", srv.handleConnectionProbe)
 	mux.HandleFunc("POST /api/verdict", srv.handleVerdict)
 	mux.HandleFunc("GET /api/verdict/stream", srv.handleVerdictStream)
 	mux.HandleFunc("GET /api/flows", srv.handleFlows)
@@ -245,10 +246,11 @@ func (s *uiServer) handleCompat(w http.ResponseWriter, r *http.Request) {
 // (not a file path — the web form has no filesystem access to the user's
 // machine the way the CLI does).
 type verdictRequest struct {
-	Namespace     string `json:"namespace"`
-	CandidateYAML string `json:"candidateYAML"`
-	Last          uint64 `json:"last"`
-	ShowUnchanged bool   `json:"showUnchanged"`
+	ReplaceExisting bool   `json:"replaceExisting"`
+	Namespace       string `json:"namespace"`
+	CandidateYAML   string `json:"candidateYAML"`
+	Last            uint64 `json:"last"`
+	ShowUnchanged   bool   `json:"showUnchanged"`
 	flowFilterParams
 }
 
@@ -332,13 +334,15 @@ type verdictCountsOut struct {
 }
 
 type verdictRowOut struct {
-	Change      string `json:"change"`
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-	Protocol    string `json:"protocol"`
-	Port        uint16 `json:"port"`
-	Count       int    `json:"count"`
-	Explanation string `json:"explanation"`
+	BaselineAllowed  *bool  `json:"baselineAllowed,omitempty"`
+	CandidateAllowed *bool  `json:"candidateAllowed,omitempty"`
+	Change           string `json:"change"`
+	Source           string `json:"source"`
+	Destination      string `json:"destination"`
+	Protocol         string `json:"protocol"`
+	Port             uint16 `json:"port"`
+	Count            int    `json:"count"`
+	Explanation      string `json:"explanation"`
 	// Side/SourceLabels/DestinationLabels: see verdictRow.side/srcLabels/dstLabels.
 	Side              string   `json:"side,omitempty"`
 	SourceLabels      []string `json:"sourceLabels,omitempty"`
@@ -388,7 +392,7 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	comp, err := computeVerdict(s.logger, s.core, s.cilium, s.cfg, req.Namespace, filter, candidateRules, req.Last, req.ShowUnchanged)
+	comp, err := computeVerdictWithMode(s.logger, s.core, s.cilium, s.cfg, req.Namespace, filter, candidateRules, req.Last, req.ShowUnchanged, req.ReplaceExisting)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("computing verdict: %v", err), http.StatusInternalServerError)
 		return
@@ -416,13 +420,15 @@ func toCountsOut(c *verdictCounts) verdictCountsOut {
 
 func toRowOut(row *verdictRow, count int) verdictRowOut {
 	return verdictRowOut{
-		Change:      row.change,
-		Source:      row.src,
-		Destination: row.dst,
-		Protocol:    row.proto,
-		Port:        row.port,
-		Count:       count,
-		Explanation: changeExplanation(row.change),
+		BaselineAllowed:  row.baselineAllowed,
+		CandidateAllowed: row.candidateAllowed,
+		Change:           row.change,
+		Source:           row.src,
+		Destination:      row.dst,
+		Protocol:         row.proto,
+		Port:             row.port,
+		Count:            count,
+		Explanation:      changeExplanation(row.change),
 
 		Side:               row.side,
 		SourceLabels:       row.srcLabels,
@@ -464,6 +470,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	namespace := q.Get("namespace")
 	candidateYAML := q.Get("candidateYAML")
 	showUnchanged := q.Get("showUnchanged") == "true"
+	replaceExisting := q.Get("replaceExisting") == "true"
 	filter, err := flowFilterParamsFromQuery(q).filter(namespace)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -492,7 +499,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(s.logger, s.cilium, namespace, candidateRules)
+	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(s.logger, s.cilium, namespace, candidateRules, replaceExisting)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

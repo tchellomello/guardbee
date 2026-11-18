@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ConnectivityTestsPanel } from './ConnectivityTestsPanel'
 import { fetchPods, fetchPolicyWorkloads, runVerdict, type WorkloadsResult, type VerdictChange, type VerdictResponse, type VerdictRow } from '../api'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { groupRows } from '../shared/groupRows'
@@ -72,6 +73,7 @@ const EMPTY_COUNTS = {
 }
 
 export interface VerdictRunItem {
+  replaceExisting: boolean
   id: string
   timestamp: Date
   namespace: string
@@ -101,6 +103,7 @@ export interface VerdictLoad {
 }
 
 export interface VerdictPanelProps {
+  active?: boolean
   load?: VerdictLoad | null
   onSavePolicy?: (entry: NewSavedPolicy) => boolean
   // The Policy Editor's in-progress draft namespace and a way to append a
@@ -112,6 +115,7 @@ export interface VerdictPanelProps {
 }
 
 export function VerdictPanel({
+  active = false,
   load,
   onSavePolicy,
   policyNamespace = '',
@@ -122,6 +126,9 @@ export function VerdictPanel({
   // exceptions included. Runs aren't restored: they're snapshots of live
   // traffic at that moment, and stale results would read as current.
   const [stored] = useState(loadVerdictForm)
+  const [replaceExisting, setReplaceExisting] = useState(stored.replaceExisting)
+  const [resetGeneration, setResetGeneration] = useState(0)
+  const [probeRunning, setProbeRunning] = useState(false)
   const [namespace, setNamespace] = useState(stored.namespace)
   const [allNamespaces, setAllNamespaces] = useState(stored.allNamespaces)
   const [last, setLast] = useState(stored.last)
@@ -149,6 +156,7 @@ export function VerdictPanel({
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const streamRunIdRef = useRef<string | null>(null)
+  const requestGenerationRef = useRef(0)
 
   useEffect(() => {
     if (!load) return
@@ -159,8 +167,8 @@ export function VerdictPanel({
   }, [load])
 
   useEffect(() => {
-    persistVerdictForm({ namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter })
-  }, [namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter])
+    persistVerdictForm({ namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter, replaceExisting })
+  }, [namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter, replaceExisting])
 
   function handleSave(name: string): boolean {
     const updated =
@@ -192,7 +200,13 @@ export function VerdictPanel({
   }
 
   function handleResetSession() {
+    if (probeRunning) return
+    setResetGeneration((generation) => generation + 1)
+    setReplaceExisting(true)
     stopStreaming()
+    requestGenerationRef.current++
+    setLoading(false)
+    setLoadingSince(null)
     setRuns([])
     setError(null)
     setNamespace('')
@@ -207,11 +221,15 @@ export function VerdictPanel({
 
   function handleClearResults() {
     stopStreaming()
+    requestGenerationRef.current++
+    setLoading(false)
+    setLoadingSince(null)
     setRuns([])
     setError(null)
   }
 
   function handleDuplicateToForm(run: VerdictRunItem) {
+    setReplaceExisting(run.replaceExisting)
     setNamespace(run.namespace)
     setAllNamespaces(run.allNamespaces)
     setLast(run.last)
@@ -248,6 +266,7 @@ export function VerdictPanel({
         allNamespaces,
         last,
         showUnchanged,
+        replaceExisting,
         candidateYAML,
         filter,
         isStreaming: true,
@@ -269,6 +288,7 @@ export function VerdictPanel({
         candidateYAML,
         last: String(last),
         showUnchanged: String(showUnchanged),
+        replaceExisting: String(replaceExisting),
       })
       if (ns) params.set('namespace', ns)
       appendFlowFilter(params, filter)
@@ -331,13 +351,14 @@ export function VerdictPanel({
       return
     }
 
-    await runOneShot({ namespace: ns, allNamespaces, last, showUnchanged, candidateYAML, filter }, stackRuns)
+    await runOneShot({ namespace: ns, allNamespaces, last, showUnchanged, candidateYAML, filter, replaceExisting }, stackRuns)
   }
 
   async function runOneShot(
-    params: Pick<VerdictRunItem, 'namespace' | 'allNamespaces' | 'last' | 'showUnchanged' | 'candidateYAML' | 'filter'>,
+    params: Pick<VerdictRunItem, 'namespace' | 'allNamespaces' | 'last' | 'showUnchanged' | 'candidateYAML' | 'filter' | 'replaceExisting'>,
     stack: boolean
   ) {
+    const generation = ++requestGenerationRef.current
     const startedAt = new Date()
     setLoading(true)
     setLoadingSince(startedAt.getTime())
@@ -348,8 +369,10 @@ export function VerdictPanel({
         candidateYAML: params.candidateYAML,
         last: params.last,
         showUnchanged: params.showUnchanged,
+        replaceExisting: params.replaceExisting,
         ...flowFilterParams(params.filter),
       })
+      if (generation !== requestGenerationRef.current) return
       const newRun: VerdictRunItem = {
         ...params,
         id: `run-${Date.now()}`,
@@ -360,10 +383,13 @@ export function VerdictPanel({
       }
       setRuns((prev) => (stack ? [newRun, ...prev] : [newRun]))
     } catch (err) {
+      if (generation !== requestGenerationRef.current) return
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setLoading(false)
-      setLoadingSince(null)
+      if (generation === requestGenerationRef.current) {
+        setLoading(false)
+        setLoadingSince(null)
+      }
     }
   }
 
@@ -424,10 +450,12 @@ export function VerdictPanel({
               </Field>
               <div className="flex flex-col gap-2 sm:pt-6">
                 <CheckRow label="Show unchanged" checked={showUnchanged} onChange={setShowUnchanged} />
+                <CheckRow label="Replace matching live policies" checked={replaceExisting} onChange={setReplaceExisting} />
                 <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
                 <CheckRow label="Stack runs" checked={stackRuns} onChange={setStackRuns} />
               </div>
             </div>
+            <p className="text-xs text-ink-dim">Replacement models an update to matching live policy names. Uncheck for additive simulation: keep live policies and add the candidate. Neither mode applies a policy.</p>
 
             <FlowFilterFields
               filter={filter}
@@ -483,6 +511,7 @@ export function VerdictPanel({
               <button
                 type="button"
                 onClick={handleResetSession}
+                disabled={probeRunning}
                 title="Clear all results and reset the form to start fresh"
                 className="border border-line bg-void/60 px-3 py-2.5 font-display text-xs font-semibold uppercase text-ink-dim hover:border-line-bright hover:text-ink transition-colors cursor-pointer"
               >
@@ -520,6 +549,7 @@ export function VerdictPanel({
                 modal — the old read-only <button> swallowed paste entirely.
                 The expand button still opens the wider editor. */}
             <textarea
+              aria-label="Candidate YAML"
               value={candidateYAML}
               onChange={(e) => setCandidateYAML(e.target.value)}
               required
@@ -576,6 +606,11 @@ export function VerdictPanel({
           </div>
         )}
 
+      </form>
+
+      <ConnectivityTestsPanel active={active} candidateYAML={candidateYAML} namespace={namespace} allNamespaces={allNamespaces} replaceExisting={replaceExisting} resetGeneration={resetGeneration} onRunningChange={setProbeRunning} />
+
+      <div className="mt-6 space-y-6">
         {runs.length > 0 && (
           <div className="flex items-center justify-between border-b border-line pb-3">
             <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
@@ -617,7 +652,7 @@ export function VerdictPanel({
             onAddException={(yaml) => handleAddException(run, yaml)}
           />
         ))}
-      </form>
+      </div>
 
       {/* Informative Verdict Help Modal */}
       <VerdictHelpModal
@@ -736,6 +771,9 @@ function RunCard({
             {run.timestamp.toLocaleTimeString()}
           </span>
           <RunDuration run={run} />
+          <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
+            {run.replaceExisting ? 'mode: replace matching policies' : 'mode: additive'}
+          </span>
           {run.result.context && (
             <span
               title={`The cluster this run judged: kubeconfig context ${run.result.context}${
@@ -914,6 +952,8 @@ function RunCard({
               <p className="text-sm text-ink-dim">
                 No flows observed for this scope in Hubble's current buffer — nothing to simulate.
               </p>
+            ) : result.counts.notSimulated > 0 || result.counts.replySkipped > 0 || result.skippedPolicies?.length || result.counts.unchanged === 0 || result.counts.newlyDropped > 0 || result.counts.newlyAllowed > 0 ? (
+              <p className="text-sm text-ink-dim">Inconclusive sample — {result.counts.unchanged === 0 ? 'no unchanged modeled flows' : `${result.counts.unchanged} unchanged modeled flows`}; {result.counts.notSimulated} not simulated, {result.counts.replySkipped} replies skipped. {result.skippedPolicies?.length ? 'Baseline policies were skipped; the comparison is incomplete.' : 'No universal no-regression conclusion can be drawn from this sample.'}</p>
             ) : (
               <p className="text-sm text-unchanged">
                 ✓ No regressions — {result.flowsSampled} flow(s) sampled, all unchanged

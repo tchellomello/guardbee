@@ -89,8 +89,8 @@ complete -c ${name} -n "__fish_seen_subcommand_from flows blame verdict" -l type
 complete -c ${name} -n "__fish_seen_subcommand_from blame" -l format -x -a "table json markdown" -d "output format"
 complete -c ${name} -n "__fish_seen_subcommand_from verdict" -a "(__fish_complete_suffix .yaml)" -d "candidate policy YAML"
 complete -c ${name} -n "__fish_seen_subcommand_from ui" -l addr -d "address to listen on"
-complete -c ${name} -n "__fish_seen_subcommand_from ui" -l enable-probes -d "explicitly enable TCP ephemeral-container probes"
-complete -c ${name} -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "approved digest-pinned TCP probe image"
+complete -c ${name} -n "__fish_seen_subcommand_from ui" -l enable-probes -d "explicitly enable workload connectivity tests"
+complete -c ${name} -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "connectivity test image (tag or digest)"
 EOF
 
 cat > "completions/_${name}" <<EOF
@@ -128,7 +128,7 @@ _${fn}() {
       _arguments '--kubeconfig[path to kubeconfig]:file:_files' '(-n --namespace)'{-n,--namespace}'[namespace]:namespace:' '(-A --all-namespaces)'{-A,--all-namespaces}'[query cluster-wide]' '--last[number of flows to sample]:count:' '(-f --follow)'{-f,--follow}'[keep judging until Ctrl+C]' '--show-unchanged[also print UNCHANGED rows]' '--pod[only flows where this pod is the source or the destination]:pod:' '--from-pod[only flows from pods with this name prefix]:pod:' '--from-label[only flows from endpoints with this label]:label:' '--from-ip[only flows from this IP or CIDR]:ip:' '--to-pod[only flows to pods with this name prefix]:pod:' '--to-service[only flows to this Service]:service:' '--to-label[only flows to endpoints with this label]:label:' '--to-ip[only flows to this IP or CIDR]:ip:' '--to-port[only flows to this port]:port:' '--verdict[only flows with this observed verdict]:verdict:(FORWARDED DROPPED AUDIT ERROR REDIRECTED TRACED TRANSLATED)' '--drop-reason-desc[only flows dropped for this reason]:reason:' '--type[only events of this Hubble type]:type:(drop debug capture trace l7 agent policy-verdict trace-sock)' '*:candidate policy YAML:_files -g "*.yaml"'
       ;;
     ui)
-      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--addr[address to listen on]:address:' '--enable-probes[explicitly enable TCP ephemeral-container probes]' '--probe-image[approved digest-pinned TCP probe image]:image:'
+      _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--addr[address to listen on]:address:' '--enable-probes[explicitly enable workload connectivity tests]' '--probe-image[connectivity test image (tag or digest)]:image:'
       ;;
     version)
       _arguments '--kubeconfig[path to kubeconfig]:file:_files' '--client[don'"'"'t contact the cluster]'

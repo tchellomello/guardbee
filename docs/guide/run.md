@@ -13,13 +13,14 @@ repo):
 | Scope | Access |
 |---|---|
 | CNPs, CCNPs, `CiliumIdentity`, `CiliumEndpoint`, namespaces | `get`/`list`/`watch` |
+| Kubernetes `NetworkPolicy` inventory (all namespaces) | `list` for connectivity simulation completeness checks |
 | `cilium-system` (for `hubble-relay`) | pod `get`/`list` + port-forward |
 
 <div class="guarantee" markdown="1">
 
-Default GuardBee commands do not write to the cluster. The optional TCP probe
+Default GuardBee commands do not change workload or policy objects. The optional connectivity-test
 backend is a deliberate exception, disabled unless explicitly enabled with an
-operator-approved digest-pinned image and additional RBAC.
+operator-selected image (tag or digest) and additional RBAC.
 
 </div>
 
@@ -36,15 +37,19 @@ export KUBECONFIG=/path/to/kubeconfig
 ./guardbee ui
 ```
 
-### Optional TCP probes
+### Optional connectivity tests in Verdict
 
 ```sh
 ./guardbee ui --addr 127.0.0.1:4747 --enable-probes \
-  --probe-image 'YOUR_APPROVED_REGISTRY/probe@sha256:YOUR_APPROVED_64_HEX_DIGEST'
+  --probe-image '<your-image:tag>'
 ```
 
-Replace the placeholder with an approved image containing compatible `timeout`
-and `nc`. Read [TCP probe safety and image requirements](tcp-probes.html) first.
+Replace the placeholder with your image containing compatible `timeout`
+and `nc`, plus Python 3 for UDP. Read [connectivity-test safety and image requirements](tcp-probes.html) first.
+Load the candidate in Verdict, then expand **Connectivity tests** to generate
+TCP traffic or one fixed UDP datagram from a selected workload Pod. The headline
+compares baseline and candidate decisions; traffic-generation outcomes are
+supporting evidence, not policy predictions. A UDP send is not reachability.
 `kubernetes/probes-rbac.yaml` provides a separately reviewed namespace-scoped
 optional grant, not part of the default read-only RBAC. Each probe adds an
 immutable ephemeral entry to an existing running Pod; it cannot be removed or

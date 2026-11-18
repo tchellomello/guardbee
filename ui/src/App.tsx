@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { CompatButton } from './components/CompatButton'
 import { CompatModal } from './components/CompatModal'
 import { FlowsPanel } from './components/FlowsPanel'
-import { TCPProbePanel } from './components/TCPProbePanel'
 import { PoliciesPanel } from './components/PoliciesPanel'
 import { PolicyEditorPanel } from './components/PolicyEditorPanel'
 import { VerdictPanel, type VerdictLoad } from './components/VerdictPanel'
@@ -28,7 +27,7 @@ import {
   type SavedPolicy,
 } from './shared/workspace'
 
-type Tab = 'verdict' | 'flows' | 'policies' | 'editor' | 'probe'
+type Tab = 'verdict' | 'flows' | 'policies' | 'editor'
 
 // Draft persistence — the in-progress Policy Editor draft used to live only
 // in React state, so switching browser tabs or an accidental reload threw
@@ -242,9 +241,6 @@ function AppContent() {
               <TabButton active={tab === 'editor'} onClick={() => setTab('editor')}>
                 Policy Editor
               </TabButton>
-              <TabButton active={tab === 'probe'} onClick={() => setTab('probe')}>
-                TCP Probe
-              </TabButton>
             </nav>
             <WorkspaceButton count={savedPolicies.length} onClick={() => setWorkspaceOpen(true)} />
             <CompatButton onClick={() => setCompatModalOpen(true)} />
@@ -276,6 +272,7 @@ function AppContent() {
             because each panel's state lives in local useState. */}
         <div className={tab === 'verdict' ? '' : 'hidden'}>
           <VerdictPanel
+            active={tab === 'verdict'}
             load={verdictLoad}
             onSavePolicy={handleSavePolicy}
             policyNamespace={policyModel.namespace}
@@ -292,9 +289,6 @@ function AppContent() {
         </div>
         <div className={tab === 'policies' ? '' : 'hidden'}>
           <PoliciesPanel onEditPolicy={handleEditLivePolicy} />
-        </div>
-        <div className={tab === 'probe' ? '' : 'hidden'}>
-          <TCPProbePanel active={tab === 'probe'} />
         </div>
         <div className={tab === 'editor' ? '' : 'hidden'}>
           <PolicyEditorPanel

@@ -15,7 +15,7 @@ description: GuardBee documentation — commands, the verdict engine, building, 
 - **[Build](build.html)** — building with `mise` or plain Go.
 - **[Run](run.html)** — RBAC, kubeconfig, and running each subcommand against
   a real cluster.
-- **[TCP probes](tcp-probes.html)** — explicitly authorized, bounded traffic
+- **[Connectivity tests](tcp-probes.html)** — explicitly authorized, bounded traffic
   generation through an ephemeral container in an existing workload Pod.
 - **[Lab](lab.html)** — a self-paced, copy-paste lab that reproduces a real
   catch end-to-end on your own machine, no cluster of your own required.

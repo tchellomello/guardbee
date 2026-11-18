@@ -30,5 +30,5 @@ complete -c guardbee -n "__fish_seen_subcommand_from flows blame verdict" -l typ
 complete -c guardbee -n "__fish_seen_subcommand_from blame" -l format -x -a "table json markdown" -d "output format"
 complete -c guardbee -n "__fish_seen_subcommand_from verdict" -a "(__fish_complete_suffix .yaml)" -d "candidate policy YAML"
 complete -c guardbee -n "__fish_seen_subcommand_from ui" -l addr -d "address to listen on"
-complete -c guardbee -n "__fish_seen_subcommand_from ui" -l enable-probes -d "explicitly enable TCP ephemeral-container probes"
-complete -c guardbee -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "approved digest-pinned TCP probe image"
+complete -c guardbee -n "__fish_seen_subcommand_from ui" -l enable-probes -d "explicitly enable workload connectivity tests"
+complete -c guardbee -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "connectivity test image (tag or digest)"

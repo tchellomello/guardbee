@@ -84,7 +84,7 @@ func noProbeMutation(t *testing.T, core *fake.Clientset) {
 }
 
 func TestProbeOptInAndListen(t *testing.T) {
-	for _, image := range []string{"", "busybox:latest", "r@sha256:bad", "r@sha256:" + strings.Repeat("A", 64), "r;bad@sha256:" + strings.Repeat("a", 64)} {
+	for _, image := range []string{"", "busybox", "r@sha256:bad", "r@sha256:" + strings.Repeat("A", 64), "r;bad@sha256:" + strings.Repeat("a", 64)} {
 		if _, err := newProbeBackend(true, image); err == nil {
 			t.Fatalf("accepted %q", image)
 		}
@@ -105,7 +105,11 @@ func TestProbeOptInAndListen(t *testing.T) {
 	s := &uiServer{}
 	w := httptest.NewRecorder()
 	s.handleProbeCapabilities(w, httptest.NewRequest("GET", "/", nil))
-	if strings.TrimSpace(w.Body.String()) != "{\"enabled\":false}" {
+	var caps struct {
+		Enabled   bool     `json:"enabled"`
+		Protocols []string `json:"protocols"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &caps); err != nil || caps.Enabled || !reflect.DeepEqual(caps.Protocols, []string{"TCP", "UDP"}) {
 		t.Fatal(w.Body.String())
 	}
 	w = probePOST(s, testProbeReq())
@@ -259,7 +263,7 @@ func TestProbeRuntimeOutcomesSecurityAndNoWorkloadMutation(t *testing.T) {
 			}
 			s.probes.logs = func(ctx context.Context, _ *uiServer, _ tcpProbeRequest, name string) error {
 				logged = true
-				if !strings.HasPrefix(name, "guardbee-tcp-") {
+				if !strings.HasPrefix(name, "guardbee-connection-") {
 					t.Fatal(name)
 				}
 				return errors.New("logs denied")
@@ -395,6 +399,10 @@ func TestProbeSimulationRealEngineCrossNamespaceAndUnverifiedGroups(t *testing.T
 	if resp.Simulation == nil || resp.Simulation.BaselineRuleCount != 1 || resp.Simulation.Counts.NewlyAllowed != 1 {
 		t.Fatalf("missing full baseline %+v simulation %+v", resp, resp.Simulation)
 	}
+	row := resp.Simulation.Rows[0]
+	if row.BaselineAllowed == nil || row.CandidateAllowed == nil || *row.BaselineAllowed || !*row.CandidateAllowed {
+		t.Fatal("newly allowed decisions lost", row)
+	}
 	// CIDR-group labels can be present on real Hubble identities, but the
 	// new candidate's IPcache injection is not reproduced. Never expand CIDRs.
 	groupCandidate := strings.Replace(candidate, "    - fromEntities: [all]", "    - fromCIDRSet:\n        - cidrGroupRef: external", 1)
@@ -429,7 +437,7 @@ func TestProbePodListing(t *testing.T) {
 	_, _ = core.CoreV1().Pods("app").Create(context.Background(), p, metav1.CreateOptions{})
 	w := httptest.NewRecorder()
 	s.handleProbePods(w, httptest.NewRequest("GET", "/api/probes/pods?namespace=app", nil))
-	if w.Code != 200 || strings.Contains(w.Body.String(), "host") || !strings.Contains(w.Body.String(), "uid-1") {
+	if w.Code != 200 || strings.Contains(w.Body.String(), `"name":"host"`) || !strings.Contains(w.Body.String(), "uid-1") {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
@@ -677,6 +685,15 @@ func TestProbeSimulationNetworkPolicyAndReplacement(t *testing.T) {
 	s.simulateProbe(context.Background(), rules, candidate, flows, &resp)
 	if resp.Simulation == nil || resp.Simulation.Counts.NewlyDropped != 1 || !strings.Contains(strings.Join(resp.Warnings, " "), "replaces live") {
 		t.Fatalf("narrowed edit hidden: %+v %+v", resp, resp.Simulation)
+	}
+	row := resp.Simulation.Rows[0]
+	if row.BaselineAllowed == nil || row.CandidateAllowed == nil || !*row.BaselineAllowed || *row.CandidateAllowed {
+		t.Fatal("newly dropped decisions lost", row)
+	}
+	additive := tcpProbeResponse{Namespace: "app"}
+	s.simulateProbeWithMode(context.Background(), rules, candidate, flows, &additive, false)
+	if additive.Simulation == nil || additive.Simulation.Counts.Unchanged != 1 || additive.Simulation.Counts.NewlyDropped != 0 || !strings.Contains(strings.Join(additive.Warnings, " "), "Additive simulation") {
+		t.Fatalf("explicit additive mode not honored: %+v", additive)
 	}
 	_, err = core.NetworkingV1().NetworkPolicies("unrelated").Create(context.Background(), &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny", Namespace: "unrelated"}}, metav1.CreateOptions{})
 	if err != nil {

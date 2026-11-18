@@ -1,6 +1,8 @@
 # Optional, namespace-scoped ADDITION to the read-only kubernetes/rbac.yaml.
 # Review and replace app before applying yourself. GuardBee does not apply it.
 # No exec, Pod create/delete, patch, or general Pod update permissions.
+# Supports TCP/UDP connectivity tests; legacy Role names are retained so
+# existing operator-managed bindings do not require migration.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

@@ -102,7 +102,7 @@ export { expect }
 
 // Tabs stay mounted (CSS-hidden) when not shown, so every locator in a tab
 // must be scoped to what's visible.
-export async function openTab(page: Page, name: 'Verdict' | 'Flows' | 'Policies' | 'Policy Editor' | 'TCP Probe') {
+export async function openTab(page: Page, name: 'Verdict' | 'Flows' | 'Policies' | 'Policy Editor') {
   await page.goto('/')
   await page.getByRole('button', { name, exact: true }).click()
 }

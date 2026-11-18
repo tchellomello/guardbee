@@ -36,8 +36,9 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
   differently.
 
 All five are read-only against the cluster by default. The UI's explicit
-`--enable-probes --probe-image <digest-pinned-image>` opt-in is the exception:
-bounded TCP probes append a restricted ephemeral container to an existing Pod.
+`--enable-probes --probe-image <image:tag-or-digest>` opt-in is the exception:
+bounded TCP/UDP connectivity tests in Verdict append a restricted ephemeral
+container to an existing Pod. UDP emission alone never proves reachability.
 They never change workload labels, apply a candidate, or delete/restart Pods.
 Terminated entries remain until normal Pod replacement. See
 `docs/guide/tcp-probes.md` and the separate `kubernetes/probes-rbac.yaml`.

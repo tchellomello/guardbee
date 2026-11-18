@@ -9,6 +9,7 @@ import type { FlowFilterParams } from './shared/flowFilter'
 // The flow filter (shared/flowFilter.ts, ui.go's flowFilterParams) rides
 // along as the same top-level keys the CLI flags use: toPod, fromIp, verdict…
 export interface VerdictRequest extends FlowFilterParams {
+  replaceExisting?: boolean
   namespace: string // "" = all namespaces
   candidateYAML: string
   last: number
@@ -18,6 +19,8 @@ export interface VerdictRequest extends FlowFilterParams {
 export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'UNCHANGED'
 
 export interface VerdictRow {
+  baselineAllowed?: boolean
+  candidateAllowed?: boolean
   change: VerdictChange
   source: string
   destination: string
@@ -109,46 +112,80 @@ export interface ProbePod {
   uid: string
 }
 
-export interface TCPProbeRequest {
+export type ProbeProtocol = 'TCP' | 'UDP'
+
+export interface ConnectionProbeRequest {
+  replaceExisting: boolean
+  candidateNamespace: string
   namespace: string
   pod: string
   uid: string
   host: string
   port: number
-  candidateYAML?: string
+  protocol: ProbeProtocol
+  candidateYAML: string
 }
 
-export interface TCPProbeResponse {
+export interface ConnectionProbeResponse {
+  uid?: string
+  context?: string
+  apiServer?: string
+  image?: string
+  startedAt?: string
+  durationMs?: number
   namespace: string
   pod: string
   host: string
   port: number
-  outcome: 'connected' | 'failed' | 'inconclusive'
+  protocol?: ProbeProtocol
+  outcome?: 'connected' | 'generated' | 'failed' | 'inconclusive'
   message: string
   containerName?: string
-  flows: Flow[]
+  flows?: Flow[]
   simulation?: VerdictResponse
-  warnings: string[]
+  warnings?: string[]
 }
 
-export function fetchProbeCapabilities(): Promise<{ enabled: boolean }> {
-  return fetch('/api/probes/capabilities').then((res) => parseErrorOrJSON<{ enabled: boolean }>(res))
+export interface ProbeCapabilities {
+  enabled: boolean
+  protocols?: ProbeProtocol[]
+  context?: string
+  apiServer?: string
+  image?: string
+}
+
+export function fetchProbeCapabilities(): Promise<ProbeCapabilities> {
+  return fetch('/api/probes/capabilities').then((res) => parseErrorOrJSON<ProbeCapabilities>(res))
 }
 
 // Unlike /api/pods (label suggestions), this inventory contains only running
 // probe-eligible Pods and their UID, so replacement cannot target a namesake.
-export function fetchProbePods(namespace: string): Promise<{ pods: ProbePod[] }> {
+export function fetchProbePods(namespace: string): Promise<{ pods: ProbePod[]; excluded?: Record<string, number> }> {
   return fetch(`/api/probes/pods?${new URLSearchParams({ namespace })}`).then((res) =>
-    parseErrorOrJSON<{ pods: ProbePod[] }>(res)
+    parseErrorOrJSON<{ pods: ProbePod[]; excluded?: Record<string, number> }>(res)
   )
 }
 
-export function runTCPProbe(req: TCPProbeRequest): Promise<TCPProbeResponse> {
-  return fetch('/api/probes/tcp', {
+export function runConnectionProbe(req: ConnectionProbeRequest): Promise<ConnectionProbeResponse> {
+  return fetch('/api/probes/connection', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
-  }).then((res) => parseErrorOrJSON<TCPProbeResponse>(res))
+  }).then(async (res) => {
+    if (!res.ok) throw new ConnectionProbeError(await res.text() || `request failed: ${res.status}`, res.status)
+    return res.json() as Promise<ConnectionProbeResponse>
+  })
+}
+
+export class ConnectionProbeError extends Error {
+  readonly definiteRejection: boolean
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+    this.name = 'ConnectionProbeError'
+    this.definiteRejection = [400, 403, 405, 409, 413, 415, 429].includes(status)
+  }
 }
 
 async function parseErrorOrJSON<T>(res: Response): Promise<T> {

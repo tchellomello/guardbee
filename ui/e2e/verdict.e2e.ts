@@ -1,7 +1,43 @@
-import { LOOKS_CORRECT_CNP } from './fixtures/lab'
+import { LOOKS_CORRECT_CNP, VERDICT } from './fixtures/lab'
 import { expect, openTab, test, typeSlowly, visibleForm } from './fixtures/test'
 
 test.describe('Verdict tab', () => {
+  test('reset discards an outstanding verdict response', async ({ page }) => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    let started = false
+    await page.route('**/api/verdict', async (route) => {
+      started = true
+      await pending
+      await route.fulfill({ json: VERDICT })
+    })
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    await form.locator('input').first().fill('postgres')
+    await form.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await page.getByRole('button', { name: 'Run verdict', exact: true }).click()
+    await expect.poll(() => started).toBe(true)
+    await form.getByRole('button', { name: 'Reset', exact: true }).click()
+    const completed = page.waitForResponse('**/api/verdict')
+    release()
+    await completed
+    await expect(form.locator('textarea')).toHaveValue('')
+    await expect(page.getByText('17 real flow(s) would BREAK')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Duplicate to form' })).toHaveCount(0)
+  })
+
+  test('completed runs retain their simulation mode when the form changes', async ({ page }) => {
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    await form.locator('input').first().fill('postgres')
+    await form.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await form.getByText('Replace matching live policies', { exact: true }).click()
+    await page.getByRole('button', { name: 'Run verdict', exact: true }).click()
+    await expect(page.getByText('mode: additive', { exact: true })).toBeVisible()
+    await form.getByText('Replace matching live policies', { exact: true }).click()
+    await expect(page.getByText('mode: additive', { exact: true })).toBeVisible()
+  })
+
   test('runs a candidate and shows the regression, graph and rows', async ({ page, cluster }) => {
     await openTab(page, 'Verdict')
     const form = visibleForm(page)
