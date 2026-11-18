@@ -387,6 +387,12 @@ func buildVerdictEnginesFromRules(logger *slog.Logger, baselineRules api.Rules, 
 	if replaceExisting {
 		candidateBase, replaced = replaceSameNamePolicies(baselineRules, candidateRules)
 	}
+	logger.Debug("building verdict engines",
+		"baselineRules", len(baselineRules),
+		"candidateRules", len(candidateRules),
+		"replaceExisting", replaceExisting,
+		"replaced", replaced,
+	)
 	candidate, err = newVerdictEngine(logger, append(append(api.Rules{}, candidateBase...), candidateRules...), identity.IdentityMap{})
 	if err != nil {
 		baseline.close(logger)
@@ -1088,8 +1094,12 @@ type verdictOwner struct {
 
 func (o verdictOwner) GetID() uint64                                               { return uint64(o.id) }
 func (verdictOwner) GetIngressNamedPort(name string, proto u8proto.U8proto) uint16 { return 0 }
-func (verdictOwner) PolicyDebug(msg string, attrs ...any)                          {}
-func (verdictOwner) IsHost() bool                                                  { return false }
+func (o verdictOwner) PolicyDebug(msg string, attrs ...any) {
+	if debugLogging {
+		slog.Default().Debug(msg, append([]any{"endpointID", uint64(o.id)}, attrs...)...)
+	}
+}
+func (verdictOwner) IsHost() bool                                { return false }
 func (verdictOwner) PreviousMapStateSizes() policy.MapStateSizes                   { return policy.MapStateSizes{} }
 func (verdictOwner) RegenerateIfAlive(_ *regeneration.ExternalRegenerationMetadata) <-chan bool {
 	return nil
@@ -1159,6 +1169,7 @@ func (e *verdictEngine) addIdentities(logger *slog.Logger, newIDs identity.Ident
 	e.repo.GetSelectorCache().UpdateIdentities(added, nil, wg)
 	wg.Wait()
 	e.repo.UpdateIdentities(added, nil)
+	logger.Debug("registered new flow identities in verdict engine", "added", len(added), "totalKnown", len(e.identities))
 
 	for nid, epp := range e.cache {
 		epp.Detach(logger)

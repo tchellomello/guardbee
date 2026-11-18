@@ -333,6 +333,13 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		return
 	}
 	if !probeSameOrigin(r) {
+		s.logger.Debug("probe request rejected: same-origin check failed",
+			"host", r.Host,
+			"origin", r.Header.Get("Origin"),
+			"secFetchSite", r.Header.Get("Sec-Fetch-Site"),
+			"loopbackHost", probeLoopbackHost(r.Host),
+			"tls", r.TLS != nil,
+		)
 		http.Error(w, "same-origin Origin is required", 403)
 		return
 	}
@@ -431,8 +438,17 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		resp.Warnings = append(resp.Warnings, "Hostname capture is best-effort: DNS aliases, mesh interception, or absent Hubble destination names make policy evidence inconclusive; DNS resolves inside the Pod, not on the GuardBee server. Resolved address safety must be enforced by operator admission/network controls.")
 	}
 	req.nodeName = p.Spec.NodeName
+	s.logger.Debug("starting probe hubble capture",
+		"namespace", req.Namespace,
+		"pod", req.Pod,
+		"node", req.nodeName,
+		"protocol", req.Protocol,
+		"host", req.Host,
+		"port", req.Port,
+	)
 	capture, err := b.capture(ctx, s, req)
 	if err != nil {
+		s.logger.Debug("probe hubble capture failed to start", "error", err)
 		resp.Message = "Hubble capture could not start; no container injected"
 		resp.Warnings = append(resp.Warnings, err.Error())
 		respond()
@@ -471,9 +487,18 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 	}
 	start := time.Now()
 	p = p.DeepCopy()
-	p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, secureProbeContainer(name, b.image, req))
+	ec := secureProbeContainer(name, b.image, req)
+	s.logger.Debug("injecting probe ephemeral container",
+		"namespace", req.Namespace,
+		"pod", req.Pod,
+		"container", name,
+		"image", b.image,
+		"command", ec.Command,
+	)
+	p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, ec)
 	_, err = s.core.CoreV1().Pods(req.Namespace).UpdateEphemeralContainers(ctx, req.Pod, p, metav1.UpdateOptions{})
 	if err != nil {
+		s.logger.Debug("ephemeral container injection failed", "container", name, "error", err)
 		resp.Message = "Ephemeral-container update failed or its result is unknown; inspect the Pod before retrying"
 		resp.ContainerName = name
 		resp.Warnings = append(resp.Warnings, err.Error())
@@ -483,6 +508,16 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 	resp.ContainerName = name
 	resp.Warnings = append(resp.Warnings, "The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced. No Pod is removed or restarted.", "HTTP cancellation cannot kill the injected container; the image's timeout bounds command runtime to 8 seconds (plus at most 1 second to force-kill).", "Hubble correlation is best-effort: concurrent workload traffic to the same destination/port in this window cannot be distinguished from the probe. Relay NODE_CONNECTED does not guarantee the source-node collector has subscribed before injection.")
 	terminated, waitErr := s.waitProbe(ctx, req, name)
+	if terminated != nil {
+		s.logger.Debug("probe container terminated",
+			"container", name,
+			"reason", terminated.Reason,
+			"exitCode", terminated.ExitCode,
+			"message", terminated.Message,
+		)
+	} else if waitErr != nil {
+		s.logger.Debug("waiting for probe container failed", "container", name, "error", waitErr)
+	}
 	resp.Message = "Probe status unavailable or deadline exceeded"
 	if waitErr != nil {
 		resp.Warnings = append(resp.Warnings, waitErr.Error())
@@ -525,6 +560,13 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		resp.Warnings = append(resp.Warnings, "Hubble capture reached its 256-flow bound; evidence is incomplete")
 	}
 	flows := correlateProbeFlows(raw, req, start, end)
+	s.logger.Debug("probe flow correlation complete",
+		"container", name,
+		"rawCaptured", len(raw),
+		"correlated", len(flows),
+		"overflow", overflow,
+		"captureErr", captureErr,
+	)
 	for _, f := range flows {
 		resp.Flows = append(resp.Flows, toFlowOut(f))
 	}

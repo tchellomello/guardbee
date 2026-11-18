@@ -8,6 +8,7 @@ complete -c guardbee -f -n "__fish_use_subcommand" -a "ui" -d "start a local web
 complete -c guardbee -f -n "__fish_use_subcommand" -a "version" -d "print binary, pinned engine and cluster Cilium versions"
 complete -c guardbee -f -n "__fish_use_subcommand" -a "compat" -d "list version-gated policy constructs, and why"
 
+complete -c guardbee -l debug -s D -d "enable debug logging to stderr"
 complete -c guardbee -n "__fish_seen_subcommand_from policies flows blame verdict ui version" -l kubeconfig -d "path to kubeconfig"
 complete -c guardbee -n "__fish_seen_subcommand_from version" -l client -d "don't contact the cluster"
 complete -c guardbee -n "__fish_seen_subcommand_from policies flows blame verdict" -l namespace -s n -d "namespace to scope the query to"

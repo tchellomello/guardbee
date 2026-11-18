@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -81,6 +82,7 @@ type clusterVersionStatus struct {
 func detectClusterCiliumVersion(ctx context.Context, core kubernetes.Interface, cfg *rest.Config) *clusterVersionStatus {
 	client, closeFn, err := dialHubble(core, cfg)
 	if err != nil {
+		slog.Default().Debug("cluster version check: could not dial hubble-relay", "error", err)
 		return &clusterVersionStatus{state: clusterVersionUnknown}
 	}
 	defer closeFn()
@@ -90,6 +92,7 @@ func detectClusterCiliumVersion(ctx context.Context, core kubernetes.Interface, 
 
 	resp, err := client.GetNodes(ctx, &observerpb.GetNodesRequest{})
 	if err != nil {
+		slog.Default().Debug("cluster version check: GetNodes RPC failed", "error", err)
 		return &clusterVersionStatus{state: clusterVersionUnknown}
 	}
 
@@ -103,6 +106,7 @@ func detectClusterCiliumVersion(ctx context.Context, core kubernetes.Interface, 
 		seen[v] = true
 		distinct = append(distinct, v)
 	}
+	slog.Default().Debug("detected cluster cilium versions", "pinned", pinnedCiliumVersion, "nodeCount", len(resp.GetNodes()), "versions", distinct)
 
 	switch len(distinct) {
 	case 0:

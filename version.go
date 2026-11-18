@@ -31,6 +31,7 @@ const versionClusterTimeout = 5 * time.Second
 
 func runVersion(args []string) {
 	fs := pflag.NewFlagSet("version", pflag.ExitOnError)
+	registerDebugFlag(fs)
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	clientOnly := fs.Bool("client", false, "only print this binary's own versions; don't contact the cluster")
 	fs.Usage = func() {

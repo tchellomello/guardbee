@@ -12,31 +12,32 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
+	args := stripDebugFlag(os.Args[1:])
+	if len(args) < 1 {
 		printHelp(os.Stderr)
 		os.Exit(1)
 	}
 
-	switch os.Args[1] {
+	switch args[0] {
 	case "-h", "--help", "help":
 		printHelp(os.Stdout)
 		os.Exit(0)
 	case "policies":
-		runPolicies(os.Args[2:])
+		runPolicies(args[1:])
 	case "flows":
-		runFlows(os.Args[2:])
+		runFlows(args[1:])
 	case "blame":
-		runBlame(os.Args[2:])
+		runBlame(args[1:])
 	case "verdict":
-		runVerdict(os.Args[2:])
+		runVerdict(args[1:])
 	case "ui":
-		runUI(os.Args[2:])
+		runUI(args[1:])
 	case "version":
-		runVersion(os.Args[2:])
+		runVersion(args[1:])
 	case "compat":
-		runCompat(os.Args[2:])
+		runCompat(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "%s: unknown command %q\n\n", binName, os.Args[1])
+		fmt.Fprintf(os.Stderr, "%s: unknown command %q\n\n", binName, args[0])
 		printHelp(os.Stderr)
 		os.Exit(1)
 	}
@@ -64,10 +65,12 @@ COMMANDS
   version     Print the binary's version, its pinned Cilium engine, and the cluster's Cilium version
   compat      List version-gated policy constructs GuardBee knows about, and why
 
-GLOBAL FLAGS (every command except ui)
+GLOBAL FLAGS
+  --debug, -D             enable debug logging to stderr (Cilium policy distillation, HTTP requests,
+                          connectivity probe rejections, and Hubble port-forward/dial traces)
   --kubeconfig string     path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)
   --namespace, -n string  namespace to scope the query to; omit (or pass --all-namespaces)
-                          to query cluster-wide
+                          to query cluster-wide (every command except ui, version, compat)
   --all-namespaces, -A    query cluster-wide instead of one namespace (same as omitting
                           --namespace) — needed to see a CiliumClusterwideNetworkPolicy's
                           full blast radius when it spans more than one namespace; a

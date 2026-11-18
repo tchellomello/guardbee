@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -575,6 +576,7 @@ func dialHubble(core kubernetes.Interface, cfg *rest.Config) (observerpb.Observe
 
 func dialHubbleContext(ctx context.Context, core kubernetes.Interface, cfg *rest.Config) (observerpb.ObserverClient, func(), error) {
 	if hubbleAddr != "" {
+		slog.Default().Debug("dialing hubble-relay directly", "addr", hubbleAddr)
 		conn, err := grpc.NewClient(hubbleAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			return nil, nil, fmt.Errorf("dialing hubble-relay at %s: %w", hubbleAddr, err)
@@ -590,6 +592,7 @@ func dialHubbleContext(ctx context.Context, core kubernetes.Interface, cfg *rest
 	if err != nil {
 		return nil, nil, fmt.Errorf("port-forwarding to %s: %w", podName, err)
 	}
+	slog.Default().Debug("opened hubble-relay port-forward", "pod", podName, "localPort", localPort, "remotePort", hubbleRemotePort)
 
 	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", localPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -647,7 +650,11 @@ func startPortForwardContext(ctx context.Context, core kubernetes.Interface, cfg
 	var stopOnce sync.Once
 	stop := func() { stopOnce.Do(func() { close(stopCh) }) }
 	readyCh := make(chan struct{})
-	fw, err := portforward.New(dialer, []string{fmt.Sprintf("0:%d", hubbleRemotePort)}, stopCh, readyCh, io.Discard, os.Stderr)
+	fwOut := io.Discard
+	if debugLogging {
+		fwOut = os.Stderr
+	}
+	fw, err := portforward.New(dialer, []string{fmt.Sprintf("0:%d", hubbleRemotePort)}, stopCh, readyCh, fwOut, os.Stderr)
 	if err != nil {
 		return 0, nil, err
 	}

@@ -55,3 +55,34 @@ func TestContextLabel(t *testing.T) {
 		t.Errorf("empty context should add nothing, got %q", got)
 	}
 }
+
+func TestStripDebugFlag(t *testing.T) {
+	t.Cleanup(func() { initDebugLogging(false) })
+
+	initDebugLogging(false)
+	got := stripDebugFlag([]string{"--debug", "ui", "--addr", "127.0.0.1:4747"})
+	if !debugLogging {
+		t.Fatal("expected --debug before subcommand to enable debugLogging")
+	}
+	if len(got) != 3 || got[0] != "ui" || got[1] != "--addr" || got[2] != "127.0.0.1:4747" {
+		t.Fatalf("unexpected remaining args: %v", got)
+	}
+
+	initDebugLogging(false)
+	got = stripDebugFlag([]string{"verdict", "-D", "-n", "app", "--", "--debug"})
+	if !debugLogging {
+		t.Fatal("expected -D after subcommand to enable debugLogging")
+	}
+	if len(got) != 5 || got[3] != "--" || got[4] != "--debug" {
+		t.Fatalf("expected args after -- to be preserved untouched, got: %v", got)
+	}
+
+	initDebugLogging(false)
+	got = stripDebugFlag([]string{"--debug=true", "--debug=false", "policies"})
+	if debugLogging {
+		t.Fatal("expected trailing --debug=false to leave debugLogging disabled")
+	}
+	if len(got) != 1 || got[0] != "policies" {
+		t.Fatalf("unexpected remaining args: %v", got)
+	}
+}

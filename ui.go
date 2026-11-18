@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
@@ -43,6 +44,7 @@ func runUI(args []string) {
 	var kubeconfig, addr, templatesDir string
 	var enableProbes bool
 	var probeImage string
+	registerDebugFlag(fs)
 	fs.BoolVar(&enableProbes, "enable-probes", false, "opt in to TCP/UDP connectivity tests that append ephemeral containers to running Pods")
 	fs.StringVar(&probeImage, "probe-image", "", "timeout/nc image (Python 3 for UDP), repository:tag or repository@sha256:digest (required with --enable-probes)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
@@ -99,10 +101,17 @@ Flags:
 		os.Exit(1)
 	}
 	templates := loadTemplates(logger, tFS)
-	logger.Info("loaded policy editor templates",
+	logger.Debug("loaded policy editor templates",
 		"generic", len(templates.Generic), "ingress", len(templates.Ingress), "egress", len(templates.Egress))
 
 	target := resolveKubeTarget(kubeconfig, cfg)
+	logger.Debug("ui server configured",
+		"addr", addr,
+		"context", target.context,
+		"apiServer", target.apiServer,
+		"enableProbes", enableProbes,
+		"probeImage", probeImage,
+	)
 	fmt.Printf("%s ui: using kubeconfig context %q (%s)\n", binName, target.context, target.apiServer)
 	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, target: target, logger: logger, templates: templates, probes: probes}
 
@@ -135,10 +144,45 @@ Flags:
 	mux.Handle("/", http.FileServerFS(static))
 
 	fmt.Printf("%s ui: listening on http://%s\n", binName, addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, srv.debugLogRequests(mux)); err != nil {
 		fmt.Fprintf(os.Stderr, binName+" ui: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (s *uiServer) debugLogRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !debugLogging || !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		s.logger.Debug("api request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"query", r.URL.RawQuery,
+			"status", rec.status,
+			"duration", time.Since(start).Round(time.Millisecond),
+		)
+	})
 }
 
 // uiServer holds the clientsets built once at startup, reused by every
