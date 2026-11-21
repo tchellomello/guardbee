@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -246,5 +249,56 @@ func TestProbeNotesCarryStableCodes(t *testing.T) {
 	s.simulateProbeWithMode(context.Background(), rules, candidate, []*flowpb.Flow{testProbeFlow(time.Now())}, &resp, false)
 	if len(resp.Notes) == 0 || resp.Notes[0].Code != noteAdditiveMode || resp.Notes[0].Text == "" {
 		t.Fatalf("notes without codes: %+v", resp.Notes)
+	}
+}
+
+// --debug is the troubleshooting path for an inconclusive test: every
+// captured flow must be logged with the reason correlation accepted or
+// rejected it, using the same check correlation itself uses.
+func TestProbeDebugLogsCorrelationReasonPerFlow(t *testing.T) {
+	prev := debugLogging
+	debugLogging = true
+	t.Cleanup(func() { debugLogging = prev })
+
+	s, core := testProbeServer(t)
+	var buf bytes.Buffer
+	s.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	now := time.Now()
+	matched := testProbeFlow(now) // re-timed below, inside the probe window
+	other := testProbeFlow(now)
+	other.IP.Destination = "192.0.2.99"
+	var capture *probeCapture
+	s.probes.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
+		capture = &probeCapture{stop: func() {}}
+		return capture, nil
+	}
+	stored := testProbePod()
+	core.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) { return true, stored.DeepCopy(), nil })
+	core.PrependReactor("update", "pods", func(a ktesting.Action) (bool, runtime.Object, error) {
+		p := a.(ktesting.UpdateAction).GetObject().(*corev1.Pod)
+		stored = p.DeepCopy()
+		stored.Status.EphemeralContainerStatuses = []corev1.ContainerStatus{{Name: p.Spec.EphemeralContainers[0].Name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed"}}}}
+		// Flows observed while the probe runs, inside its window.
+		ts := timestamppb.New(time.Now())
+		matched.Time, other.Time = ts, ts
+		capture.flows = []*flowpb.Flow{matched, other}
+		return true, p, nil
+	})
+	req := testProbeReq()
+	req.Protocol = "TCP"
+	if w := connectionPOST(s, req); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	logs := buf.String()
+	for _, want := range []string{
+		`msg="probe captured flow"`,
+		`result=correlated`,
+		`result="destination IP differs`,
+		`msg="probe flow correlation complete"`,
+		`rawCaptured=2 correlated=1`,
+	} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("debug log missing %q:\n%s", want, logs)
+		}
 	}
 }

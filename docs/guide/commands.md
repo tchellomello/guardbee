@@ -207,6 +207,19 @@ To import a policy into the Policy Editor, paste it into **⤢ Expand / Edit**. 
 
 To keep the browser responsive, a graph with more than 150 nodes or 300 edges isn't drawn automatically. You'll see a message instead, naming the filters that narrow the sample, and **Draw anyway** draws it. The table under the graph still lists every row. When runs are stacked, only the 3 newest expanded runs draw their graphs; older runs have a **Show graph** button. The header shows the binary's version and the Cilium engine it embeds.
 
+Both graphs (Verdict and Flows) draw each peer as a round node labelled by
+what it is: `POD`, `HOST`, `WORLD`, `API` (kube-apiserver), `NODE`, `IP`. A
+link that reaches its destination is drawn end to end. A blocked link stops
+at a ✕ on its port label, with a faint line showing where it was going. In
+Verdict, red links are `NEWLY_DROPPED`, amber `NEWLY_ALLOWED`, green still
+allowed, and grey still blocked. In Flows, green is `FORWARDED`, red
+`DROPPED`, and amber `AUDIT` (marked `!`). Only links that matter move:
+in Verdict the links the candidate changes, and in either graph every link of
+the node you select. Everything else stays still, and nothing moves at all
+with reduced motion turned on. The connectivity test result in Verdict uses
+the same picture for its single connection, with one lane for the live
+baseline and one for the candidate.
+
 The Verdict tab puts the scope and the candidate policy side by side, with results and graphs at full width below. Every tab also works at phone width.
 
 <div class="shot">

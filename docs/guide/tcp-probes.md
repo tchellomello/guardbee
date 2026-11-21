@@ -147,7 +147,10 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
 
 ## API contract
 
-- `GET /api/probes/capabilities`: `{ "enabled": false }` by default.
+- `GET /api/probes/capabilities`: `{ "enabled": false }` by default. With
+  probes enabled it adds `images`, the catalog the UI picks from: each
+  `{ "id", "name", "image", "protocols": ["TCP","UDP"], "description", "pinned" }`
+  (`pinned`: referenced by digest). `image` is the default (first) entry's reference.
 - `GET /api/probes/pods?namespace=app`: `{ "pods": [{"name":"client","uid":"…"}] }`.
   Requires probes enabled; only eligible running Pods are returned. Optional
   `excluded` maps ineligibility reasons to counts, so an empty picker can explain
@@ -160,7 +163,12 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
   `candidateNamespace` defaults independently of the source Pod: omitted uses
   the source namespace for backward compatibility; explicit `""` requires a CNP
   to declare its namespace. `replaceExisting` defaults to true for probes; the
-  Web UI always supplies its shared simulation-mode setting.
+  Web UI always supplies its shared simulation-mode setting. `imageId` picks a
+  catalog entry by id (omitted: the default entry); an unknown id, a protocol
+  the entry doesn't list, or any raw `image` field is rejected with 400 before
+  anything is injected.
+- `POST /api/probes/connection/stream`: the same request, reported as NDJSON
+  stages and one terminal line; see [Live progress](#live-progress).
 - `POST /api/probes/tcp` is the compatibility alias: old requests without
   `protocol` default to TCP and keep optional `candidateYAML`. Explicit TCP is
   accepted; UDP is rejected on this legacy endpoint.
@@ -182,9 +190,19 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
   they do not provide the intended normal network-policy path.
 
 The result contains `namespace`, `pod`, `host`, `port`, `protocol`, `outcome`
-(`connected` for TCP, `generated` for UDP, `failed`, `inconclusive`), `message`, optional `containerName`, `flows` (the
-existing `flowOut` API shape), optional `simulation` (existing
-`verdictResponse`), and `warnings` (always an array). Invalid inputs return
+(`connected` for TCP, `generated` for UDP, `failed`, `inconclusive`), `message`, optional `containerName`, `image` and
+`imageId` (what was injected), `flows` (the existing `flowOut` API shape plus
+`count`: one connection's identical trace events are folded into one row),
+optional `simulation` (existing `verdictResponse`, rows folded the same way
+the `verdict` command folds them), `warnings` (always an array: this
+attempt's own problems), and `notes` (always an array of
+`{ "code", "text" }`: the standing caveats every attempt carries). A note's
+`code` is stable (`ephemeral-entry`, `runtime-bound`,
+`best-effort-correlation`, `service-match`, `hostname-best-effort`,
+`udp-marker`, `nodes-off-path`, `replace-mode`, `additive-mode`,
+`policy-replaced`); the UI titles notes by code, never by parsing `text`.
+The UI's downloaded test report is `schemaVersion: 2` since `notes` replaced
+the earlier `notices` string list. Invalid inputs return
 400; disabled/authorization/origin failures 403; stale/ineligible Pods or
 entry limits 409; concurrency limits 429. A capture startup failure produces
 an inconclusive result and **does not inject** a container. An uncertain
