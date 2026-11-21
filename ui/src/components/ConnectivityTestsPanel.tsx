@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  fetchNamespaces, fetchProbeCapabilities, fetchProbePods, runConnectionProbe,
+  fetchNamespaces, fetchProbeCapabilities, fetchProbePods, runConnectionProbeStream,
   ConnectionProbeError,
   type ProbePod, type ProbeProtocol, type ConnectionProbeRequest, type ConnectionProbeResponse,
-  type ProbeCapabilities,
+  type ProbeCapabilities, type ProbeImage,
 } from '../api'
 import { validProbeHost, validProbeNamespace, validProbePort } from '../shared/tcpProbe'
 import { candidateFingerprint, connectivityDecision, type ConnectivityDecision } from '../shared/connectivity'
+import type { ProbeStageId } from '../shared/probeStages'
 import { Field } from './NamespaceScope'
+import { ProbeImagePicker } from './ProbeImagePicker'
+import { ProbePath } from './ProbePath'
+import { ProbeStepper } from './ProbeStepper'
 import { downloadTextFile } from '../shared/tableExport'
 
 const inputClass = 'w-full min-w-0 rounded-sm border border-line bg-void px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none disabled:cursor-not-allowed disabled:opacity-50'
 const buttonClass = 'rounded-sm bg-signal px-5 py-2.5 font-display text-xs font-bold tracking-wide text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer'
 const errorText = (err: unknown) => err instanceof Error ? err.message : String(err)
 type RequestSnapshot = Readonly<ConnectionProbeRequest>
-type Attempt = { request: RequestSnapshot; allNamespaces: boolean; submittedAt: string; capabilities: ProbeCapabilities; response?: ConnectionProbeResponse; error?: string; definiteRejection?: boolean; errorStatus?: number }
+type Attempt = { request: RequestSnapshot; allNamespaces: boolean; submittedAt: string; capabilities: ProbeCapabilities; stages: ProbeStageId[]; response?: ConnectionProbeResponse; error?: string; definiteRejection?: boolean; errorStatus?: number }
 
 export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdictNamespace, allNamespaces, replaceExisting, resetGeneration, onRunningChange }: {
   active: boolean; candidateYAML: string; namespace: string; allNamespaces: boolean; replaceExisting: boolean; resetGeneration: number; onRunningChange: (running: boolean) => void
@@ -30,6 +34,7 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
   const [host, setHost] = useState('')
   const [port, setPort] = useState('5432')
   const [protocol, setProtocol] = useState<ProbeProtocol>('TCP')
+  const [imageId, setImageId] = useState('')
   const [running, setRunning] = useState(false)
   const [attempt, setAttempt] = useState<Attempt | null>(null)
   const [podRefresh, setPodRefresh] = useState(0)
@@ -60,7 +65,7 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
       if (!ignore) setServer(res)
       if (!ignore) setCapability(res.enabled === true
         ? { enabled: true, message: 'Connection tests enabled on this server.' }
-        : { enabled: false, message: 'Connection tests are disabled. Start the server with --enable-probes and --probe-image (tag or digest).' })
+        : { enabled: false, message: 'Connection tests are disabled. Start the server with --enable-probes.' })
     }).catch((err) => {
       if (!ignore) setCapability({ enabled: false, message: `Test availability could not be verified: ${errorText(err)}. No test can be started.` })
     })
@@ -92,25 +97,37 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
     return () => { ignore = true }
   }, [namespace, allNamespaces, capability.enabled, podRefresh, active, expanded])
 
+  // The catalog is the server's; an id it no longer offers falls back to its
+  // default (first) entry rather than sending something it would reject.
+  const images = server.images ?? []
+  const selectedImage = images.find((image) => image.id === imageId) ?? images[0]
   const currentInventory = inventory.namespace === namespace && validProbeNamespace(namespace)
   const pods = currentInventory ? inventory.pods : []
   const selectedPod = selection.namespace === namespace ? pods.find((pod) => pod.uid === selection.uid) : undefined
-  const protocolSupported = !server.protocols || server.protocols.includes(protocol)
+  const imageSupports = (p: ProbeProtocol) => !selectedImage || selectedImage.protocols.includes(p)
+  const protocolSupported = (!server.protocols || server.protocols.includes(protocol)) && imageSupports(protocol)
   const podPlaceholder = !capability.enabled ? 'Enable connectivity tests first' : !validProbeNamespace(namespace) ? 'Select a source namespace' : inventory.loading ? 'Loading eligible Pods…' : inventory.error ? 'Could not load Pods' : !pods.length ? 'No eligible Pods found' : 'Select an existing Pod'
   const excluded = currentInventory ? Object.entries(inventory.excluded ?? {}) : []
   const ready = active && expanded && capability.enabled && protocolSupported && candidateYAML.trim() && selectedPod && validProbeHost(host) && validProbePort(port) && !inventory.loading
   const stale = !!attempt && (attempt.request.namespace !== namespace || attempt.allNamespaces !== allNamespaces ||
     (!inventory.loading && attempt.request.uid !== selectedPod?.uid) || attempt.request.host !== host || attempt.request.port !== Number(port) ||
-    attempt.request.protocol !== protocol || attempt.request.candidateYAML !== candidateYAML || attempt.request.replaceExisting !== replaceExisting || attempt.request.candidateNamespace !== (allNamespaces ? '' : verdictNamespace))
+    attempt.request.protocol !== protocol || attempt.request.candidateYAML !== candidateYAML || attempt.request.replaceExisting !== replaceExisting ||
+    attempt.request.candidateNamespace !== (allNamespaces ? '' : verdictNamespace) || attempt.request.imageId !== selectedImage?.id)
+
+  function pickImage(image: ProbeImage) {
+    setImageId(image.id)
+    if (!image.protocols.includes(protocol)) setProtocol(image.protocols[0])
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!ready || runningRef.current || !selectedPod) return
     runningRef.current = true
-    const request: RequestSnapshot = Object.freeze({ namespace, pod: selectedPod.name, uid: selectedPod.uid, host, port: Number(port), protocol, candidateYAML, replaceExisting, candidateNamespace: allNamespaces ? '' : verdictNamespace })
-    const snapshot = { request, allNamespaces, submittedAt: new Date().toISOString(), capabilities: { ...server } }
+    const request: RequestSnapshot = Object.freeze({ namespace, pod: selectedPod.name, uid: selectedPod.uid, host, port: Number(port), protocol, candidateYAML, replaceExisting, candidateNamespace: allNamespaces ? '' : verdictNamespace, ...(selectedImage ? { imageId: selectedImage.id } : {}) })
+    const snapshot: Attempt = { request, allNamespaces, submittedAt: new Date().toISOString(), capabilities: { ...server }, stages: [] }
     const confirmed = window.confirm(
       `Run one bounded ${protocol === 'UDP' ? 'UDP datagram with a fixed payload (27 bytes: guardbee-connectivity-probe)' : 'TCP connection'} from existing Pod ${namespace}/${selectedPod.name} (UID ${selectedPod.uid}) to ${host}:${port}?\n\n` +
+      (selectedImage ? `Probe image: ${selectedImage.name} (${selectedImage.image})\n\n` : '') +
       (server.context || server.apiServer ? `Cluster: ${server.context ?? 'unknown context'}${server.apiServer ? ` · ${server.apiServer}` : ''}\n\n` : '') +
       'This adds an ephemeral container, changing the Pod spec but not its labels. The process exits, but its spec entry remains until normal Pod replacement. GuardBee does NOT automatically restart or delete the Pod.\n\n' +
       'Traffic runs against current policy. The loaded candidate is simulated separately, never applied. No shell, editable payload, or arbitrary commands. ' +
@@ -120,11 +137,14 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
     setRunning(true)
     onRunningChange(true)
     setAttempt(snapshot)
+    const onStage = (stage: ProbeStageId) => {
+      if (mounted.current) setAttempt((current) => current?.submittedAt === snapshot.submittedAt ? { ...current, stages: [...current.stages, stage] } : current)
+    }
     try {
-      const response = await runConnectionProbe(request)
-      if (mounted.current) setAttempt({ ...snapshot, response })
+      const response = await runConnectionProbeStream(request, onStage)
+      if (mounted.current) setAttempt((current) => ({ ...(current ?? snapshot), response }))
     } catch (err) {
-      if (mounted.current) setAttempt({ ...snapshot, error: errorText(err), definiteRejection: err instanceof ConnectionProbeError && err.definiteRejection, errorStatus: err instanceof ConnectionProbeError ? err.status : undefined })
+      if (mounted.current) setAttempt((current) => ({ ...(current ?? snapshot), error: errorText(err), definiteRejection: err instanceof ConnectionProbeError && err.definiteRejection, errorStatus: err instanceof ConnectionProbeError ? err.status : undefined }))
     } finally {
       runningRef.current = false
       onRunningChange(false)
@@ -140,23 +160,21 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
       </button>
       <div id="connectivity-tests-content" hidden={!expanded} className="min-w-0 space-y-5 border-t border-line p-5">
         <div className="flex flex-wrap items-center gap-2 text-xs text-ink-dim" aria-label="Current candidate context">
-          <Badge>{candidateYAML.trim() ? `Candidate snapshot ${candidateFingerprint(candidateYAML)}` : 'No candidate loaded'}</Badge>
-          <span>{allNamespaces ? 'All namespaces · choose a source below' : `Source namespace: ${namespace || 'not selected'}`}</span>
-          <span>Simulation only · never applied</span>
-          <span>{replaceExisting ? 'Replace matching live policies' : 'Additive · keep live policies'}</span>
-          {(server.context || server.apiServer) && <span className="break-all">Cluster: {server.context ?? 'unknown context'}{server.apiServer && ` · ${server.apiServer}`}</span>}
+          <Badge>{candidateYAML.trim() ? `Candidate ${candidateFingerprint(candidateYAML)}` : 'No candidate loaded'}</Badge>
+          <Badge>{allNamespaces ? 'All namespaces' : `Source namespace: ${namespace || 'not selected'}`}</Badge>
+          <Badge>{replaceExisting ? 'Replace matching live policies' : 'Additive · keep live policies'}</Badge>
+          {(server.context || server.apiServer) && <Badge>Cluster: {server.context ?? 'unknown context'}{server.apiServer && ` · ${server.apiServer}`}</Badge>}
         </div>
         {!candidateYAML.trim() && <p role="status" className="text-sm text-ink-dim">Load a nonempty candidate in the Verdict form above before running a connectivity test.</p>}
-        <p id="connection-capability" role="status" className="break-words text-xs text-ink-dim">{capability.message}</p>
+        <p id="connection-capability" role="status" className={capability.enabled ? 'sr-only' : 'break-words text-xs text-ink-dim'}>{capability.message}</p>
         {!capability.enabled && <div className="space-y-2 border border-line bg-void/40 p-4 text-sm text-ink-dim" aria-label="Connectivity enablement">
           <h3 className="font-display font-bold text-ink">Connectivity tests require explicit server opt-in</h3>
-          <p>Read-only launch cannot select a source Pod or start a test. No Pod lookup is made until connectivity tests are explicitly enabled.</p>
-          <p>Restart your local server with your probe image (tag or digest) and the separate probes RBAC:</p>
-          <code className="block whitespace-pre-wrap break-all text-xs text-ink">./guardbee ui --enable-probes --probe-image &lt;your-image:tag&gt;</code>
-          <details className="text-xs"><summary className="cursor-pointer">Runtime requirements & permissions</summary><p className="mt-2">The image must provide timeout and nc for TCP; UDP requires timeout and Python 3. Enabling tests permits bounded ephemeral-container mutations; candidates are never applied. Use the separate probes RBAC.</p></details>
+          <code className="block whitespace-pre-wrap break-all text-xs text-ink">./guardbee ui --enable-probes</code>
+          <p className="text-xs">Offers the built-in vetted probe images; <code>--probe-images-file</code> replaces that list. Needs the separate probes RBAC.</p>
         </div>}
         <form aria-label="Connection test configuration" onSubmit={handleSubmit} className="min-w-0 space-y-4">
           <fieldset disabled={running || !capability.enabled} className="min-w-0 space-y-4">
+            {images.length > 0 && selectedImage && <ProbeImagePicker images={images} value={selectedImage.id} protocol={protocol} onChange={pickImage} />}
             <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {allNamespaces && <Field label="Source namespace">
                 <input value={sourceNamespace} list="connection-namespaces" required maxLength={63} pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" className={inputClass} placeholder="Choose a namespace" onChange={(e) => setSourceNamespace(e.target.value)} />
@@ -168,33 +186,35 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
               </select></Field>
               <Field label="Host or IP"><input value={host} required maxLength={253} aria-describedby="connection-host-help" aria-invalid={!!host && !validProbeHost(host)} className={inputClass} placeholder="db.myapp.svc.cluster.local" onChange={(e) => setHost(e.target.value)} /></Field>
               <Field label="Port"><input value={port} required inputMode="numeric" maxLength={5} pattern="[0-9]{1,5}" aria-invalid={!validProbePort(port)} className={inputClass} onChange={(e) => setPort(e.target.value)} /></Field>
-              <Field label="Protocol"><select value={protocol} className={inputClass} onChange={(e) => setProtocol(e.target.value as ProbeProtocol)}><option value="TCP" disabled={!!server.protocols && !server.protocols.includes('TCP')}>TCP</option><option value="UDP" disabled={!!server.protocols && !server.protocols.includes('UDP')}>UDP</option></select></Field>
+              <Field label="Protocol"><select value={protocol} className={inputClass} onChange={(e) => setProtocol(e.target.value as ProbeProtocol)}>{(['TCP', 'UDP'] as const).map((p) => <option key={p} value={p} disabled={!!server.protocols && !server.protocols.includes(p) || !imageSupports(p)}>{p}{!imageSupports(p) && selectedImage ? ` (not in ${selectedImage.name})` : ''}</option>)}</select></Field>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p id="connection-host-help" className="text-xs text-ink-dim">One DNS name or IPv4/IPv6 address; no URL or embedded port. Port: 1–65535.</p>
-              <button type="button" className="cursor-pointer text-xs text-signal disabled:opacity-40" disabled={!validProbeNamespace(namespace) || inventory.loading} onClick={() => setPodRefresh((value) => value + 1)}>Refresh running Pods</button>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-dim">
+              <p id="connection-host-help">{protocol === 'UDP' ? 'Sends one bounded datagram with a fixed payload (27 bytes); delivery is never proven.' : 'Opens one bounded TCP connection; not an application login.'} Host: a DNS name or IP, no URL.</p>
+              <button type="button" className="cursor-pointer text-signal disabled:opacity-40" disabled={!validProbeNamespace(namespace) || inventory.loading} onClick={() => setPodRefresh((value) => value + 1)}>Refresh running Pods</button>
             </div>
             {currentInventory && inventory.error && <p role="alert" className="break-words text-sm text-drop">Could not list running Pods: {inventory.error}</p>}
-            {capability.enabled && currentInventory && !inventory.loading && !inventory.error && !pods.length && <p role="status" className="text-xs text-ink-dim">No eligible Pods found in this namespace. Choose a ready, normal Linux workload; system, host-network, process-sharing, and Pods with pending GuardBee containers are excluded.</p>}
+            {capability.enabled && currentInventory && !inventory.loading && !inventory.error && !pods.length && <p role="status" className="text-xs text-ink-dim">No eligible Pods here. System, host-network, process-sharing, unready Pods, and Pods with a pending GuardBee container are excluded.</p>}
             {excluded.length > 0 && <details open={!pods.length} className="text-xs text-ink-dim"><summary className="cursor-pointer">{excluded.reduce((total, [, count]) => total + count, 0)} Pods excluded</summary><ul className="mt-2 space-y-1">{excluded.map(([reason, count]) => <li key={reason}>{reason} ({count})</li>)}</ul></details>}
-            <p className="text-xs text-ink-dim">{protocol === 'UDP' ? 'UDP sends one bounded datagram with a fixed payload: guardbee-connectivity-probe (27 bytes). Payload and commands are not editable. Requires Python 3 in the probe image; missing runtime is inconclusive. Policy prediction, not proof of reachability or delivery.' : 'TCP opens one bounded connection. It does not authenticate to the application.'}</p>
           </fieldset>
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-line pt-4">
-            <details className="max-w-2xl text-xs leading-relaxed text-ink-dim"><summary className="cursor-pointer">Active cluster change · adds an ephemeral container · confirmation required</summary><p className="mt-2">Its spec entry remains after exit until normal Pod replacement. No label changes, candidate apply, automatic restart, or deletion.</p></details>
+            <p className="text-xs text-ink-dim">Adds an ephemeral container to the Pod · you confirm first</p>
             <button type="submit" disabled={!ready || running} aria-describedby="connection-capability" className={buttonClass}>{running ? 'Running connection test…' : 'Review & run connection test'}</button>
           </div>
         </form>
-        {attempt && <section aria-label="Submitted connection test" className="min-w-0 space-y-4 border-t border-line pt-5 break-words">
-          <div className="flex flex-wrap items-center gap-2"><Badge>{attempt.request.protocol}</Badge><Badge>{attempt.request.namespace}/{attempt.request.pod}</Badge><span aria-hidden="true" className="text-ink-faint">→</span><Badge>{attempt.request.host} · port {attempt.request.port}</Badge></div>
-          {stale && <p role="status" className="text-xs text-allow">Inputs changed since this test. Results are stale and refer only to the submitted Pod, target, scope, and candidate snapshot, not the current Verdict form.</p>}
+        {attempt && <section aria-label="Submitted connection test" className="rise-in min-w-0 space-y-4 border-t border-line pt-5 break-words">
+          <div className="flex flex-wrap items-center gap-2"><Badge>{attempt.request.protocol}</Badge><Badge>{attempt.request.namespace}/{attempt.request.pod}</Badge><span aria-hidden="true" className="text-ink-faint">→</span><Badge>{attempt.request.host} · port {attempt.request.port}</Badge>{attempt.request.imageId && <Badge>{attempt.capabilities.images?.find((image) => image.id === attempt.request.imageId)?.name ?? attempt.request.imageId}</Badge>}</div>
+          {stale && <p role="status" className="text-xs text-allow">Inputs changed since this test. Results are stale and refer only to the submitted Pod, target, image, scope, and candidate snapshot, not the current Verdict form.</p>}
+          {(running || attempt.stages.length > 0) && <ProbeStepper reached={attempt.stages} run={running ? 'running' : attempt.error !== undefined ? 'failed' : 'done'} />}
+          {running && <p role="status" className="text-xs text-ink-dim">Switching tabs does not cancel or repeat this test.</p>}
           {attempt.response && <ConnectionResult response={attempt.response} request={attempt.request} />}
           {attempt.error !== undefined && <div role="alert" className="space-y-2 rounded-sm border border-drop/40 bg-drop/10 p-4 text-sm text-drop">
-            <p>{attempt.definiteRejection ? 'Test not started' : 'Predicted candidate: INCONCLUSIVE'}</p><p>{attempt.error}</p>
+            <p className="font-bold">{attempt.definiteRejection ? 'Test not started' : 'Predicted candidate: INCONCLUSIVE'}</p><p>{attempt.error}</p>
             {attempt.definiteRejection ? <p>The server rejected this request before adding an ephemeral container. Fix the error before running a new confirmed test.</p> : <p>An ephemeral container may already have been added to the original Pod {attempt.request.namespace}/{attempt.request.pod} (UID {attempt.request.uid}). Inspect that Pod before deciding to run again. GuardBee does not automatically retry, restart, or delete it.</p>}
           </div>}
-          {running && <p role="status" className="text-xs text-ink-dim">Preparing the workload test, collecting traffic, and evaluating the candidate. This can take up to 30 seconds. Switching tabs does not cancel or repeat it.</p>}
-          {!running && <button type="button" className="cursor-pointer text-xs text-signal" onClick={() => downloadTextFile(`guardbee-connectivity-${candidateFingerprint(attempt.request.candidateYAML)}.json`, JSON.stringify({ schemaVersion: 1, ...attempt }, null, 2), 'application/json')}>Download test report (JSON)</button>}
-          {!running && <button type="button" className="ml-4 cursor-pointer text-xs text-ink-dim" onClick={() => setAttempt(null)}>Clear completed test</button>}
+          {!running && <div className="flex flex-wrap gap-4">
+            <button type="button" className="cursor-pointer text-xs text-signal" onClick={() => downloadTextFile(`guardbee-connectivity-${candidateFingerprint(attempt.request.candidateYAML)}.json`, JSON.stringify({ schemaVersion: 1, ...attempt }, null, 2), 'application/json')}>Download test report (JSON)</button>
+            <button type="button" className="cursor-pointer text-xs text-ink-dim" onClick={() => setAttempt(null)}>Clear completed test</button>
+          </div>}
           <details><summary className="cursor-pointer text-xs text-ink-dim">Submitted candidate snapshot {candidateFingerprint(attempt.request.candidateYAML)}</summary>
             <p className="mt-3 text-xs text-ink-dim">Original Pod UID: {attempt.request.uid} · {attempt.allNamespaces ? 'All namespaces' : 'Single namespace'}</p>
             <pre className="mt-3 whitespace-pre-wrap break-words text-xs text-ink-dim">{attempt.request.candidateYAML}</pre>
@@ -209,8 +229,10 @@ function Badge({ children }: { children: React.ReactNode }) {
   return <span className="max-w-full break-words rounded-sm border border-line bg-void/50 px-2 py-1 font-mono text-[0.65rem] text-ink-dim">{children}</span>
 }
 
+const decisionTone: Record<ConnectivityDecision, string> = { ALLOWED: 'text-signal', BLOCKED: 'text-drop', INCONCLUSIVE: 'text-ink-dim' }
+
 function Decision({ label, decision }: { label: string; decision: ConnectivityDecision }) {
-  return <div className="space-y-1"><p className="text-xs text-ink-dim">{label}</p><p className={`font-display text-sm font-bold ${decision === 'ALLOWED' ? 'text-allow' : decision === 'BLOCKED' ? 'text-drop' : 'text-ink-dim'}`}>{decision}</p></div>
+  return <div className="space-y-0.5"><p className="text-[0.65rem] tracking-wide text-ink-dim uppercase">{label}</p><p className={`font-display text-sm font-bold ${decisionTone[decision]}`}>{decision}</p></div>
 }
 
 function ConnectionResult({ response, request }: { response: ConnectionProbeResponse; request: RequestSnapshot }) {
@@ -218,28 +240,42 @@ function ConnectionResult({ response, request }: { response: ConnectionProbeResp
   const protocolMatches = !response.protocol || response.protocol === request.protocol
   const baseline = protocolMatches ? connectivityDecision(response, 'baselineAllowed') : 'INCONCLUSIVE'
   const candidate = protocolMatches ? connectivityDecision(response, 'candidateAllowed') : 'INCONCLUSIVE'
+  // Warnings are this attempt's own problems and stay visible; notices are the
+  // caveats every attempt carries and live behind a disclosure, so the one
+  // thing that went wrong isn't buried among them.
   const warnings = [...new Set([...(response.warnings ?? []), ...(simulation?.skippedPolicies ?? []).map((policy) => `Baseline policy skipped: ${policy}. Simulation does not account for it.`)])]
+  const notices = [...new Set(response.notices ?? [])]
+  const flows = response.flows ?? []
+  const events = flows.reduce((total, flow) => total + (flow.count ?? 1), 0)
+  const transport = request.protocol === 'UDP' ? 'Traffic generation' : 'Observed TCP transport'
+  const outcome = response.outcome ?? 'inconclusive'
   return <div className="min-w-0 space-y-4" aria-live="polite">
-    <section aria-label="Candidate prediction" className="space-y-4 rounded-sm border border-line bg-void/40 p-4">
-      <div><p className="text-xs text-ink-dim">Predicted candidate policy</p><h3 className={`mt-1 font-display text-xl font-bold ${candidate === 'ALLOWED' ? 'text-allow' : candidate === 'BLOCKED' ? 'text-drop' : 'text-ink'}`}>{candidate}</h3></div>
-      <div className="flex flex-wrap items-center gap-4 border-t border-line pt-3"><Decision label="Baseline model" decision={baseline} /><span aria-hidden="true" className="text-ink-faint">→</span><Decision label="With candidate" decision={candidate} /></div>
-      {candidate === 'INCONCLUSIVE' && <p className="text-sm text-ink-dim">{warnings.find((warning) => warning.startsWith('Simulation inconclusive:')) ?? (!response.flows?.length ? 'No matching Hubble evidence was captured for this attempt.' : 'The sample does not provide one complete, consistent candidate decision. Expand the evidence below for details.')}</p>}
-      <p className="text-xs leading-relaxed text-ink-dim">Hypothetical engine comparison; the candidate was never applied. UNCHANGED is not an allow decision. Missing, partial, or conflicting evidence is inconclusive.</p>
+    <section aria-label="Candidate prediction" className="grid min-w-0 items-center gap-4 rounded-sm border border-line bg-void/40 p-4 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-3">
+        <div><p className="text-[0.65rem] tracking-wide text-ink-dim uppercase">Predicted with candidate</p><h3 className={`mt-1 font-display text-2xl font-bold ${decisionTone[candidate]}`}>{candidate}</h3></div>
+        <div className="flex flex-wrap gap-5"><Decision label="Baseline model" decision={baseline} /><Decision label="With candidate" decision={candidate} /></div>
+        <p title={request.protocol === 'UDP' ? 'A generated datagram does not prove reachability or delivery.' : 'Connected proves TCP transport only, not application authentication. Failure does not by itself prove policy denial.'} className={`inline-block rounded-sm border px-2 py-1 font-mono text-[0.65rem] ${outcome === 'connected' || outcome === 'generated' ? 'border-signal/50 text-signal' : outcome === 'failed' ? 'border-drop/50 text-drop' : 'border-line text-ink-dim'}`}>{transport}: {outcome}</p>
+      </div>
+      <ProbePath source={`${request.namespace}/${request.pod}`} destination={flows[0]?.destination || request.host} l4={`${request.protocol} ${request.port}`} baseline={baseline} candidate={candidate} />
+      {candidate === 'INCONCLUSIVE' && <p className="text-sm text-ink-dim md:col-span-2">{warnings.find((warning) => warning.startsWith('Simulation inconclusive:')) ?? warnings[0] ?? (!flows.length ? 'No matching Hubble evidence was captured for this attempt.' : 'The sample does not provide one complete, consistent candidate decision. Expand the evidence below for details.')}</p>}
+      <p className="text-[0.65rem] text-ink-faint md:col-span-2">Simulated with Cilium's engine against the captured flows; the candidate is never applied. {response.message}</p>
     </section>
-    <p className="text-xs text-ink-dim">{request.protocol === 'UDP' ? 'Traffic generation' : 'Observed TCP transport'}: {response.outcome ?? 'inconclusive'} · {response.message}<br />{request.protocol === 'UDP' ? 'A generated datagram does not prove reachability or delivery.' : 'Connected proves TCP transport only, not application authentication. Failure does not by itself prove policy denial.'}</p>
-    <details><summary className="cursor-pointer text-xs text-ink-dim">Evidence & limitations · {response.flows?.length ?? 0} observed flows{warnings.length > 0 && ` · ${warnings.length} warnings`}</summary>
+    {warnings.length > 0 && <ul aria-label="Attempt warnings" className="space-y-1 text-xs text-allow">{warnings.map((warning, i) => <li key={i}>Warning: {warning}</li>)}</ul>}
+    <details><summary className="cursor-pointer text-xs text-ink-dim">Evidence & limitations · {flows.length} distinct {flows.length === 1 ? 'flow' : 'flows'}{events > flows.length && ` (${events} Hubble events)`}{notices.length > 0 && ` · ${notices.length} notes`}</summary>
       <div className="mt-3 min-w-0 space-y-4 text-xs text-ink-dim">
-        {response.containerName && <p>Ephemeral container: {response.containerName}. Its entry remains until normal Pod replacement.</p>}
-        {(response.context || response.apiServer) && <p className="break-all">Cluster: {response.context ?? 'unknown context'}{response.apiServer && ` · ${response.apiServer}`}</p>}
-        {response.startedAt && <p>Started: {response.startedAt}{response.durationMs !== undefined && ` · ${response.durationMs} ms`}</p>}
-        {response.image && <p className="break-all">Probe image: {response.image}</p>}
-        {warnings.map((warning, i) => <p key={i} className="text-allow">Warning: {warning}</p>)}
+        <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
+          {response.containerName && <><dt>Ephemeral container</dt><dd className="break-all text-ink">{response.containerName}</dd></>}
+          {(response.context || response.apiServer) && <><dt>Cluster</dt><dd className="break-all text-ink">{response.context ?? 'unknown context'}{response.apiServer && ` · ${response.apiServer}`}</dd></>}
+          {response.startedAt && <><dt>Started</dt><dd className="text-ink">{response.startedAt}{response.durationMs !== undefined && ` · ${response.durationMs} ms`}</dd></>}
+          {response.image && <><dt>Probe image</dt><dd className="break-all text-ink">{response.image}</dd></>}
+        </dl>
         <section aria-label="Observed Hubble flows" className="space-y-2"><h4 className="font-display font-bold text-ink">Observed under current policy</h4>
-          {!response.flows?.length ? <p>No Hubble flows observed. Observation is unavailable or inconclusive.</p> : response.flows.map((flow, i) => <div key={i} className="space-y-1 border border-line p-3"><p>{flow.source} → {flow.destination} · {flow.l4}</p><p>Hubble verdict: {flow.verdict}{flow.dropReason && ` · ${flow.dropReason}`}</p><p>{flow.time}{flow.direction && ` · ${flow.direction}`}</p>{flow.decision && <p>Observed policy decision: {flow.decision}</p>}{flow.allowedBy?.map((policy, j) => <p key={`allow-${j}`}>Hubble allowed by: {policy.display}</p>)}{flow.deniedBy?.map((policy, j) => <p key={`deny-${j}`}>Hubble denied by: {policy.display}</p>)}</div>)}
+          {!flows.length ? <p>No Hubble flows observed. Observation is unavailable or inconclusive.</p> : flows.map((flow, i) => <div key={i} className="space-y-1 border border-line p-3"><p>{flow.source} → {flow.destination} · {flow.l4}{(flow.count ?? 1) > 1 && <span className="text-ink-faint"> · ×{flow.count} events</span>}</p><p>Hubble verdict: {flow.verdict}{flow.dropReason && ` · ${flow.dropReason}`}</p><p>{flow.time}{flow.direction && ` · ${flow.direction}`}</p>{flow.decision && <p>Observed policy decision: {flow.decision}</p>}{flow.allowedBy?.map((policy, j) => <p key={`allow-${j}`}>Hubble allowed by: {policy.display}</p>)}{flow.deniedBy?.map((policy, j) => <p key={`deny-${j}`}>Hubble denied by: {policy.display}</p>)}</div>)}
         </section>
         <section aria-label="Candidate simulation" className="space-y-2"><h4 className="font-display font-bold text-ink">Candidate simulation evidence</h4>
-          {!simulation?.rows?.length ? <p>No modeled result rows; candidate impact is inconclusive.</p> : simulation.rows.map((row, i) => <div key={i} className="space-y-1 border border-line p-3"><p>{row.change} · {row.source} → {row.destination} · {row.protocol}:{row.port}</p><p>Baseline: {row.baselineAllowed === true ? 'ALLOWED' : row.baselineAllowed === false ? 'BLOCKED' : 'INCONCLUSIVE'} · Candidate: {row.candidateAllowed === true ? 'ALLOWED' : row.candidateAllowed === false ? 'BLOCKED' : 'INCONCLUSIVE'}</p><p>{row.explanation}</p></div>)}
+          {!simulation?.rows?.length ? <p>No modeled result rows; candidate impact is inconclusive.</p> : simulation.rows.map((row, i) => <div key={i} className="space-y-1 border border-line p-3"><p>{row.change} · {row.source} → {row.destination} · {row.protocol}:{row.port}{row.count > 1 && <span className="text-ink-faint"> · ×{row.count} events</span>}</p><p>Baseline: {row.baselineAllowed === true ? 'ALLOWED' : row.baselineAllowed === false ? 'BLOCKED' : 'INCONCLUSIVE'} · Candidate: {row.candidateAllowed === true ? 'ALLOWED' : row.candidateAllowed === false ? 'BLOCKED' : 'INCONCLUSIVE'}</p><p>{row.explanation}</p></div>)}
         </section>
+        {notices.length > 0 && <section aria-label="Test notes" className="space-y-1"><h4 className="font-display font-bold text-ink">About this test</h4>{notices.map((notice, i) => <p key={i}>{notice}</p>)}</section>}
       </div>
     </details>
   </div>

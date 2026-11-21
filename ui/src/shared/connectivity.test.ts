@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ConnectionProbeResponse, VerdictResponse } from '../api'
-import { candidateFingerprint, connectivityDecision } from './connectivity'
+import { candidateFingerprint, connectivityDecision, shortenMiddle } from './connectivity'
 import { ConnectionProbeError } from '../api'
 
 const simulation: VerdictResponse = {
@@ -39,5 +39,15 @@ describe('connectivity evidence display', () => {
     expect(candidateFingerprint('candidate')).toBe(candidateFingerprint('candidate'))
     expect(candidateFingerprint('candidate\n')).not.toBe(candidateFingerprint('candidate'))
     expect(candidateFingerprint('')).toMatch(/^[0-9a-f]{8}$/)
+  })
+})
+
+describe('shortenMiddle', () => {
+  it('keeps short names and both ends of long ones', () => {
+    expect(shortenMiddle('webapp/webapp-1')).toBe('webapp/webapp-1')
+    const short = shortenMiddle('testing2/server-5ccfcf7b88-hvh26')
+    expect(short).toHaveLength(20)
+    expect(short.startsWith('testing2/')).toBe(true)
+    expect(short.endsWith('-hvh26')).toBe(true)
   })
 })

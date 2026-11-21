@@ -36,7 +36,9 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
   differently.
 
 All five are read-only against the cluster by default. The UI's explicit
-`--enable-probes --probe-image <image:tag-or-digest>` opt-in is the exception:
+`--enable-probes` opt-in is the exception (images come from a server-side
+catalog — built-in `probes/images.yaml`, `--probe-images-file`, or one
+`--probe-image` — that the browser picks from by id, never by reference):
 bounded TCP/UDP connectivity tests in Verdict append a restricted ephemeral
 container to an existing Pod. UDP emission alone never proves reachability.
 They never change workload labels, apply a candidate, or delete/restart Pods.
@@ -190,6 +192,7 @@ flake.nix, nix/package.nix  Nix flake users install from (docs/guide/install.md)
 kubernetes/rbac.yaml  read-only ServiceAccount/ClusterRole for the CLI's own access, validated live
 templates/        generic/ingress/egress CiliumNetworkPolicy YAML presets (real, standalone CNPs)
 examples/         ready-to-run candidate policies matching the self-paced Lab's scenario, plus generic patterns
+probes/images.yaml  built-in vetted probe image catalog (probeimages.go embeds it; --probe-images-file replaces it). List only protocols an image passed live
 ui/               React + TypeScript + Vite + Tailwind + @xyflow/react frontend (milestone 1 web UI)
 ```
 

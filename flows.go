@@ -615,10 +615,25 @@ func findHubbleRelayPodContext(ctx context.Context, core kubernetes.Interface) (
 	if err != nil {
 		return "", err
 	}
+	// A replica on a NotReady node keeps phase Running for minutes after the
+	// node is gone (until eviction), but its Ready condition flips at once;
+	// port-forwarding to it fails with the kubelet unreachable. Prefer a Ready
+	// replica and only fall back to merely Running ones.
+	fallback := ""
 	for _, p := range pods.Items {
-		if p.Status.Phase == corev1.PodRunning {
+		if p.Status.Phase != corev1.PodRunning || p.DeletionTimestamp != nil {
+			continue
+		}
+		if probePodReady(&p) {
 			return p.Name, nil
 		}
+		if fallback == "" {
+			fallback = p.Name
+		}
+	}
+	if fallback != "" {
+		slog.Default().Debug("no Ready hubble-relay replica; using a Running one", "pod", fallback)
+		return fallback, nil
 	}
 	return "", fmt.Errorf("no running hubble-relay pod found in namespace %s", hubbleNamespace)
 }

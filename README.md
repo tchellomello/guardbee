@@ -130,8 +130,8 @@ changes to the verdict engine (`verdict.go`).
 [Apache License 2.0](LICENSE).
 ## Optional active connectivity tests
 
-The UI's default remains read-only. `guardbee ui --enable-probes --probe-image
-<repository:tag-or-digest>` explicitly enables a
+The UI's default remains read-only. `guardbee ui --enable-probes` explicitly
+enables a
 cluster-mutating TCP/UDP test using a restricted ephemeral container in a selected
 running Pod. It requires numeric-loopback serving and additional optional RBAC.
 Each terminated ephemeral entry is immutable and remains until the Pod is
@@ -142,7 +142,10 @@ proof that a packet came from the probe. CIDR-group identity injection is
 unverified and FQDN/L7 proxy semantics are not reproduced, so those policies
 suppress probe simulation instead of producing a reassuring verdict.
 Authentication, named ports, agent-resolved services, Kubernetes NetworkPolicy
-inventory, and incomplete/lost capture likewise withhold probe predictions.
+inventory, and incomplete/lost capture likewise withhold probe predictions
+(scoped to the tested flow's source and destination namespaces, plus every
+CCNP and the candidate). A Service-name target correlates through that
+Service's ClusterIPs and EndpointSlice addresses, read from the API.
 Candidate decisions use the shared real Cilium engine; `UNCHANGED` can be still
 denied, so verdict JSON explicitly includes `baselineAllowed`/`candidateAllowed`.
 UDP requires Python 3 and sends one fixed `guardbee-connectivity-probe`
@@ -151,3 +154,9 @@ and selected operator-owned target before sending. UDP `generated` means only
 that `sendto` returned, not reachability or policy allowance; unresolved captured
 endpoints are not simulated. The legacy TCP API is retained.
 See [connectivity safety, image requirements, and API](docs/guide/tcp-probes.md).
+
+Probe images come from a catalog, never typed in the browser: the built-in
+vetted one (`probes/images.yaml`: digest-pinned netshoot for TCP/UDP, BusyBox
+for TCP), `--probe-images-file` to replace it, or `--probe-image` for one image.
+The test reports its progress live and draws the result as the path the
+traffic took through the baseline and the candidate.

@@ -41,6 +41,16 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["list"]
+  # Connectivity tests against a Service name (db.app.svc) correlate Hubble
+  # flows through the Service's ClusterIPs and backend addresses: socket-level
+  # load balancing rewrites the ClusterIP before Hubble sees the packet. A
+  # denied read leaves such a test inconclusive, never guessed.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

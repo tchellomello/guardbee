@@ -43,10 +43,11 @@ func runUI(args []string) {
 	// them silently without them doing anything.
 	var kubeconfig, addr, templatesDir string
 	var enableProbes bool
-	var probeImage string
+	var probeImage, probeImagesFile string
 	registerDebugFlag(fs)
 	fs.BoolVar(&enableProbes, "enable-probes", false, "opt in to TCP/UDP connectivity tests that append ephemeral containers to running Pods")
-	fs.StringVar(&probeImage, "probe-image", "", "timeout/nc image (Python 3 for UDP), repository:tag or repository@sha256:digest (required with --enable-probes)")
+	fs.StringVar(&probeImage, "probe-image", "", "offer only this timeout/nc image (Python 3 for UDP), repository:tag or repository@sha256:digest (default: the built-in vetted image catalog)")
+	fs.StringVar(&probeImagesFile, "probe-images-file", "", "YAML/JSON catalog of probe images the UI may pick from, replacing the built-in vetted one (see probes/images.yaml)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	fs.StringVar(&addr, "addr", "127.0.0.1:4747", "address to listen on")
 	fs.StringVar(&templatesDir, "templates-dir", "", "directory of generic/ingress/egress CiliumNetworkPolicy YAML presets (default: built-in templates/)")
@@ -67,19 +68,21 @@ CiliumNetworkPolicy YAML under generic/, ingress/, egress/ subdirectories —
 --templates-dir points at an external one; omitted, the binary's own
 built-in defaults are used.
 
-Connectivity tests are disabled unless --enable-probes and an operator-selected
---probe-image are supplied. This opt-in appends immutable ephemeral containers
-to running Pods, requires additional RBAC, and permits numeric-loopback
-serving only. Your image must contain timeout and nc, plus Python 3
-for UDP; see the connectivity-test guide for requirements and limitations.
+Connectivity tests are disabled unless --enable-probes is supplied. This
+opt-in appends immutable ephemeral containers to running Pods, requires
+additional RBAC, and permits numeric-loopback serving only. The browser picks
+the probe image from a catalog the server was started with, never a free-form
+image: the built-in vetted catalog by default, --probe-images-file to replace
+it, or --probe-image for exactly one image. Images need timeout and nc, plus
+Python 3 for UDP; see the connectivity-test guide.
 
 Flags:
 `, binName)
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s ui\n  %[1]s ui --addr 127.0.0.1:9000\n  %[1]s ui --templates-dir ./my-presets\n", binName)
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s ui\n  %[1]s ui --addr 127.0.0.1:9000\n  %[1]s ui --templates-dir ./my-presets\n  %[1]s ui --enable-probes\n  %[1]s ui --enable-probes --probe-images-file ./probe-images.yaml\n", binName)
 	}
 	_ = fs.Parse(args)
-	probes, err := newProbeBackend(enableProbes, probeImage)
+	probes, err := newProbeBackendFromFlags(enableProbes, probeImage, probeImagesFile)
 	if err == nil && enableProbes {
 		err = validateProbeListenAddr(addr)
 	}
@@ -111,6 +114,7 @@ Flags:
 		"apiServer", target.apiServer,
 		"enableProbes", enableProbes,
 		"probeImage", probeImage,
+		"probeImagesFile", probeImagesFile,
 	)
 	fmt.Printf("%s ui: using kubeconfig context %q (%s)\n", binName, target.context, target.apiServer)
 	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, target: target, logger: logger, templates: templates, probes: probes}
@@ -126,6 +130,7 @@ Flags:
 	mux.HandleFunc("GET /api/probes/pods", srv.handleProbePods)
 	mux.HandleFunc("POST /api/probes/tcp", srv.handleTCPProbe)
 	mux.HandleFunc("POST /api/probes/connection", srv.handleConnectionProbe)
+	mux.HandleFunc("POST /api/probes/connection/stream", srv.handleConnectionProbeStream)
 	mux.HandleFunc("POST /api/verdict", srv.handleVerdict)
 	mux.HandleFunc("GET /api/verdict/stream", srv.handleVerdictStream)
 	mux.HandleFunc("GET /api/flows", srv.handleFlows)

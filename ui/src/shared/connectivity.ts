@@ -22,3 +22,12 @@ export function connectivityDecision(response: ConnectionProbeResponse, side: 'b
   if (decisions.every((value) => value === false)) return 'BLOCKED'
   return 'INCONCLUSIVE'
 }
+
+// Middle-ellipsis for the path diagram's endpoint labels: keeps both the
+// namespace prefix and the Pod's unique suffix, which is what tells two
+// replicas apart.
+export function shortenMiddle(name: string, max = 20): string {
+  if (name.length <= max) return name
+  const keep = max - 1
+  return `${name.slice(0, Math.ceil(keep / 2))}…${name.slice(name.length - Math.floor(keep / 2))}`
+}

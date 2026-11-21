@@ -46,7 +46,7 @@ _${fn}_complete() {
             fi
             ;;
         ui)
-            COMPREPLY=(\$(compgen -W "--debug -D --kubeconfig --addr --enable-probes --probe-image" -- "\$cur"))
+            COMPREPLY=(\$(compgen -W "--debug -D --kubeconfig --addr --enable-probes --probe-image --probe-images-file" -- "\$cur"))
             ;;
         version)
             COMPREPLY=(\$(compgen -W "--debug -D --kubeconfig --client" -- "\$cur"))
@@ -94,7 +94,8 @@ complete -c ${name} -n "__fish_seen_subcommand_from blame" -l format -x -a "tabl
 complete -c ${name} -n "__fish_seen_subcommand_from verdict" -a "(__fish_complete_suffix .yaml)" -d "candidate policy YAML"
 complete -c ${name} -n "__fish_seen_subcommand_from ui" -l addr -d "address to listen on"
 complete -c ${name} -n "__fish_seen_subcommand_from ui" -l enable-probes -d "explicitly enable workload connectivity tests"
-complete -c ${name} -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "connectivity test image (tag or digest)"
+complete -c ${name} -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "offer only this connectivity test image (tag or digest)"
+complete -c ${name} -n "__fish_seen_subcommand_from ui" -l probe-images-file -r -F -d "catalog of probe images the UI may pick from"
 EOF
 
 cat > "completions/_${name}" <<EOF
@@ -132,7 +133,7 @@ _${fn}() {
       _arguments '(-D --debug)'{-D,--debug}'[enable debug logging to stderr]' '--kubeconfig[path to kubeconfig]:file:_files' '(-n --namespace)'{-n,--namespace}'[namespace]:namespace:' '(-A --all-namespaces)'{-A,--all-namespaces}'[query cluster-wide]' '--last[number of flows to sample]:count:' '(-f --follow)'{-f,--follow}'[keep judging until Ctrl+C]' '--show-unchanged[also print UNCHANGED rows]' '--pod[only flows where this pod is the source or the destination]:pod:' '--from-pod[only flows from pods with this name prefix]:pod:' '--from-label[only flows from endpoints with this label]:label:' '--from-ip[only flows from this IP or CIDR]:ip:' '--to-pod[only flows to pods with this name prefix]:pod:' '--to-service[only flows to this Service]:service:' '--to-label[only flows to endpoints with this label]:label:' '--to-ip[only flows to this IP or CIDR]:ip:' '--to-port[only flows to this port]:port:' '--verdict[only flows with this observed verdict]:verdict:(FORWARDED DROPPED AUDIT ERROR REDIRECTED TRACED TRANSLATED)' '--drop-reason-desc[only flows dropped for this reason]:reason:' '--type[only events of this Hubble type]:type:(drop debug capture trace l7 agent policy-verdict trace-sock)' '*:candidate policy YAML:_files -g "*.yaml"'
       ;;
     ui)
-      _arguments '(-D --debug)'{-D,--debug}'[enable debug logging to stderr]' '--kubeconfig[path to kubeconfig]:file:_files' '--addr[address to listen on]:address:' '--enable-probes[explicitly enable workload connectivity tests]' '--probe-image[connectivity test image (tag or digest)]:image:'
+      _arguments '(-D --debug)'{-D,--debug}'[enable debug logging to stderr]' '--kubeconfig[path to kubeconfig]:file:_files' '--addr[address to listen on]:address:' '--enable-probes[explicitly enable workload connectivity tests]' '--probe-image[offer only this connectivity test image (tag or digest)]:image:' '--probe-images-file[catalog of probe images the UI may pick from]:file:_files'
       ;;
     version)
       _arguments '(-D --debug)'{-D,--debug}'[enable debug logging to stderr]' '--kubeconfig[path to kubeconfig]:file:_files' '--client[don'"'"'t contact the cluster]'

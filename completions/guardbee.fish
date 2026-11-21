@@ -32,4 +32,5 @@ complete -c guardbee -n "__fish_seen_subcommand_from blame" -l format -x -a "tab
 complete -c guardbee -n "__fish_seen_subcommand_from verdict" -a "(__fish_complete_suffix .yaml)" -d "candidate policy YAML"
 complete -c guardbee -n "__fish_seen_subcommand_from ui" -l addr -d "address to listen on"
 complete -c guardbee -n "__fish_seen_subcommand_from ui" -l enable-probes -d "explicitly enable workload connectivity tests"
-complete -c guardbee -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "connectivity test image (tag or digest)"
+complete -c guardbee -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "offer only this connectivity test image (tag or digest)"
+complete -c guardbee -n "__fish_seen_subcommand_from ui" -l probe-images-file -r -F -d "catalog of probe images the UI may pick from"

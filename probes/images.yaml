@@ -1,0 +1,25 @@
+# Vetted connectivity-probe images, offered in the web UI's image picker when
+# "guardbee ui --enable-probes" runs without --probe-image. Replace the whole
+# list with "--probe-images-file your-images.yaml" (same format, YAML or JSON),
+# e.g. to point at mirrors in a private registry.
+#
+# Every entry here was checked against a live cluster under the exact
+# restricted context GuardBee injects (UID 65532, read-only root filesystem,
+# all capabilities dropped, RuntimeDefault seccomp), running GuardBee's own
+# commands: "timeout … nc -z -v -w 5 <host> <port>" for TCP (exit 0 open,
+# exit 1 refused, by DNS name and by IP), and the fixed Python 3 marker
+# script for UDP. List only the protocols an image actually passed.
+#
+# Built-in entries are pinned by digest: GuardBee pulls tag-only images on
+# every test, so a moving tag could run different code between two tests.
+images:
+  - id: netshoot
+    name: netshoot
+    image: docker.io/nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
+    protocols: [TCP, UDP]
+    description: Network troubleshooting toolbox (nc, Python 3, dig, curl). Larger pull, supports TCP and UDP.
+  - id: busybox
+    name: BusyBox 1.37
+    image: docker.io/library/busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+    protocols: [TCP]
+    description: Official minimal image (~2 MB) with nc and timeout. TCP only, no Python for UDP.

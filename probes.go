@@ -4,6 +4,7 @@ package main
 // cluster access. Never exec into a workload: append one immutable, restricted
 // ephemeral container, and leave both the workload and terminated entry alone.
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +29,8 @@ import (
 	"github.com/cilium/cilium/pkg/policy/api"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/yaml"
@@ -35,7 +39,11 @@ import (
 const probeBodyLimit = 256 << 10
 
 type connectionProbeRequest struct {
-	nodeName      string
+	nodeName string
+	// service is set when Host names a Kubernetes Service GuardBee could read
+	// (resolveProbeService): its ClusterIPs and ready backend addresses, and
+	// the backend target ports the requested Service port maps to.
+	service       *probeService
 	Namespace     string `json:"namespace"`
 	Pod           string `json:"pod"`
 	UID           string `json:"uid"`
@@ -47,6 +55,43 @@ type connectionProbeRequest struct {
 	// empty scope must not default a namespace-less CNP to the chosen source.
 	CandidateNamespace *string `json:"candidateNamespace,omitempty"`
 	ReplaceExisting    *bool   `json:"replaceExisting,omitempty"`
+	// ImageID picks a catalog entry (probeimages.go); never an image
+	// reference. Empty selects the catalog's default (first) entry.
+	ImageID string `json:"imageId,omitempty"`
+}
+
+type probeService struct {
+	name, namespace string
+	addrs           map[netip.Addr]bool
+	ports           map[uint32]bool
+}
+
+// probeFlowOut is one distinct observed flow. One TCP connection is several
+// Hubble trace events (SYN, ACK, data, FIN, each seen at more than one
+// observation point); identical rows are folded with a count so the evidence
+// reads as "what happened", not as one card per packet.
+type probeFlowOut struct {
+	flowOut
+	Count int `json:"count"`
+}
+
+func foldProbeFlows(flows []*flowpb.Flow) []probeFlowOut {
+	out := []probeFlowOut{}
+	index := map[string]int{}
+	for _, f := range flows {
+		row := toFlowOut(f)
+		key, _ := json.Marshal(struct {
+			flowOut
+			Time string `json:"time"`
+		}{flowOut: row})
+		if i, ok := index[string(key)]; ok {
+			out[i].Count++
+			continue
+		}
+		index[string(key)] = len(out)
+		out = append(out, probeFlowOut{flowOut: row, Count: 1})
+	}
+	return out
 }
 
 type connectionProbeResponse struct {
@@ -54,6 +99,7 @@ type connectionProbeResponse struct {
 	Context       string           `json:"context,omitempty"`
 	APIServer     string           `json:"apiServer,omitempty"`
 	Image         string           `json:"image"`
+	ImageID       string           `json:"imageId,omitempty"`
 	StartedAt     string           `json:"startedAt"`
 	DurationMs    int64            `json:"durationMs"`
 	Namespace     string           `json:"namespace"`
@@ -64,9 +110,14 @@ type connectionProbeResponse struct {
 	Outcome       string           `json:"outcome"`
 	Message       string           `json:"message"`
 	ContainerName string           `json:"containerName,omitempty"`
-	Flows         []flowOut        `json:"flows"`
+	Flows         []probeFlowOut   `json:"flows"`
 	Simulation    *verdictResponse `json:"simulation,omitempty"`
-	Warnings      []string         `json:"warnings"`
+	// Warnings are problems with this particular attempt (lost capture,
+	// skipped policies, no evidence…). Notices are the standing caveats every
+	// attempt carries (ephemeral entry stays, simulation mode, best-effort
+	// correlation), kept apart so the attempt's real problem isn't buried.
+	Warnings []string `json:"warnings"`
+	Notices  []string `json:"notices"`
 }
 
 // Keep the legacy TCP boundary compatible while callers migrate to connection.
@@ -82,7 +133,9 @@ func probeProtocol(req connectionProbeRequest) string {
 
 // Hooks isolate the cluster boundary in tests, not the Cilium engine.
 type probeBackend struct {
-	image   string
+	// images is the catalog the browser may pick from, by id; the first
+	// entry is the default for clients that send no imageId.
+	images  []probeImage
 	slots   chan struct{}
 	mu      sync.Mutex
 	active  map[string]bool
@@ -99,9 +152,40 @@ func newProbeBackend(enabled bool, image string) (*probeBackend, error) {
 		return nil, nil
 	}
 	if !validProbeImage(image) {
-		return nil, fmt.Errorf("--enable-probes requires --probe-image repository:tag or repository@sha256:<64 lowercase hex digits>")
+		return nil, fmt.Errorf("--probe-image must be repository:tag or repository@sha256:<64 lowercase hex digits>")
 	}
-	return &probeBackend{image: image, slots: make(chan struct{}, 2), active: map[string]bool{}, timeout: 30 * time.Second, poll: 250 * time.Millisecond, drain: 2 * time.Second, capture: startProbeCapture, logs: readProbeLogs, dial: func(ctx context.Context, s *uiServer) (observerpb.ObserverClient, func(), error) {
+	return newProbeBackendCatalog([]probeImage{cliProbeImage(image)})
+}
+
+// newProbeBackendFromFlags resolves the image flags: --probe-image keeps its
+// historical one-image meaning, --probe-images-file replaces the catalog,
+// and neither uses the built-in vetted catalog. Probes stay off without
+// --enable-probes either way.
+func newProbeBackendFromFlags(enabled bool, image, imagesFile string) (*probeBackend, error) {
+	if !enabled {
+		if image != "" || imagesFile != "" {
+			return nil, fmt.Errorf("--probe-image/--probe-images-file need --enable-probes")
+		}
+		return nil, nil
+	}
+	if image != "" && imagesFile != "" {
+		return nil, fmt.Errorf("use either --probe-image or --probe-images-file, not both")
+	}
+	if image != "" {
+		return newProbeBackend(true, image)
+	}
+	images, err := loadProbeImages(imagesFile)
+	if err != nil {
+		return nil, err
+	}
+	return newProbeBackendCatalog(images)
+}
+
+func newProbeBackendCatalog(images []probeImage) (*probeBackend, error) {
+	if err := validateProbeImages(images); err != nil {
+		return nil, err
+	}
+	return &probeBackend{images: images, slots: make(chan struct{}, 2), active: map[string]bool{}, timeout: 30 * time.Second, poll: 250 * time.Millisecond, drain: 2 * time.Second, capture: startProbeCapture, logs: readProbeLogs, dial: func(ctx context.Context, s *uiServer) (observerpb.ObserverClient, func(), error) {
 		return dialHubbleContext(ctx, s.core, s.cfg)
 	}}, nil
 }
@@ -125,16 +209,38 @@ func validProbeImage(image string) bool {
 	return (hasTag || hasDigest) && regexp.MustCompile(`^[a-z0-9]+(?:[._-]+[a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-]+[a-z0-9]+)*)*$`).MatchString(repository)
 }
 
+// image resolves a request's imageId against the catalog; empty selects the
+// default (first) entry so pre-catalog clients keep working.
+func (b *probeBackend) image(id string) (probeImage, bool) {
+	if id == "" {
+		return b.images[0], true
+	}
+	for _, img := range b.images {
+		if img.ID == id {
+			return img, true
+		}
+	}
+	return probeImage{}, false
+}
+
 func (s *uiServer) handleProbeCapabilities(w http.ResponseWriter, _ *http.Request) {
+	type imageOut struct {
+		probeImage
+		Pinned bool `json:"pinned"`
+	}
 	capabilities := struct {
-		Enabled   bool     `json:"enabled"`
-		Protocols []string `json:"protocols"`
-		Context   string   `json:"context,omitempty"`
-		APIServer string   `json:"apiServer,omitempty"`
-		Image     string   `json:"image,omitempty"`
+		Enabled   bool       `json:"enabled"`
+		Protocols []string   `json:"protocols"`
+		Context   string     `json:"context,omitempty"`
+		APIServer string     `json:"apiServer,omitempty"`
+		Image     string     `json:"image,omitempty"`
+		Images    []imageOut `json:"images,omitempty"`
 	}{Enabled: s.probes != nil, Protocols: []string{"TCP", "UDP"}, Context: s.target.context, APIServer: s.target.apiServer}
 	if s.probes != nil {
-		capabilities.Image = s.probes.image
+		capabilities.Image = s.probes.images[0].Image
+		for _, img := range s.probes.images {
+			capabilities.Images = append(capabilities.Images, imageOut{img, img.pinned()})
+		}
 	}
 	probeJSON(w, capabilities)
 }
@@ -315,21 +421,91 @@ func (s *uiServer) probeAccess(ctx context.Context, ns, name, resource, subresou
 }
 
 func (s *uiServer) handleTCPProbe(w http.ResponseWriter, r *http.Request) {
-	s.handleProbe(w, r, true)
+	s.handleProbe(w, r, true, false)
 }
 
 func (s *uiServer) handleConnectionProbe(w http.ResponseWriter, r *http.Request) {
-	s.handleProbe(w, r, false)
+	s.handleProbe(w, r, false, false)
 }
 
-func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP bool) {
+// handleConnectionProbeStream is the same probe, reported as it happens: one
+// NDJSON line per stage ({"stage":"capture"}), then exactly one terminal
+// line, {"result":{…}} or {"error":"…","status":409}. Rejections before the
+// first stage stay ordinary HTTP errors, so "nothing was injected" keeps its
+// status-code meaning for both endpoints.
+func (s *uiServer) handleConnectionProbeStream(w http.ResponseWriter, r *http.Request) {
+	s.handleProbe(w, r, false, true)
+}
+
+// The probe stages, in order, as streamed and as the UI draws them.
+const (
+	probeStageAuthorize = "authorize"
+	probeStageCapture   = "capture"
+	probeStageInject    = "inject"
+	probeStageRun       = "run"
+	probeStageCollect   = "collect"
+	probeStageSimulate  = "simulate"
+)
+
+type probeOutput struct {
+	w         http.ResponseWriter
+	stream    bool
+	streaming bool
+}
+
+func (o *probeOutput) line(v any) {
+	_ = json.NewEncoder(o.w).Encode(v)
+	if f, ok := o.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (o *probeOutput) stage(name string) {
+	if !o.stream {
+		return
+	}
+	if !o.streaming {
+		o.streaming = true
+		o.w.Header().Set("Content-Type", "application/x-ndjson")
+		o.w.Header().Set("Cache-Control", "no-store")
+		o.w.Header().Set("X-Content-Type-Options", "nosniff")
+		o.w.WriteHeader(http.StatusOK)
+	}
+	o.line(struct {
+		Stage string `json:"stage"`
+	}{name})
+}
+
+func (o *probeOutput) fail(msg string, status int) {
+	if !o.streaming {
+		http.Error(o.w, msg, status)
+		return
+	}
+	o.line(struct {
+		Error  string `json:"error"`
+		Status int    `json:"status"`
+	}{msg, status})
+}
+
+func (o *probeOutput) result(resp connectionProbeResponse) {
+	if !o.streaming {
+		probeJSON(o.w, resp)
+		return
+	}
+	o.line(struct {
+		Result connectionProbeResponse `json:"result"`
+	}{resp})
+}
+
+func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP, stream bool) {
 	requestStart := time.Now()
+	out := &probeOutput{w: w, stream: stream}
 	if s.probes == nil {
-		http.Error(w, "Connectivity tests are disabled", 403)
+		out.fail("Connectivity tests are disabled", 403)
 		return
 	}
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		out.fail("method not allowed", 405)
 		return
 	}
 	if !probeSameOrigin(r) {
@@ -340,11 +516,11 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 			"loopbackHost", probeLoopbackHost(r.Host),
 			"tls", r.TLS != nil,
 		)
-		http.Error(w, "same-origin Origin is required", 403)
+		out.fail("same-origin Origin is required", 403)
 		return
 	}
 	if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" {
-		http.Error(w, "application/json is required", 415)
+		out.fail("application/json is required", 415)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, probeBodyLimit)
@@ -352,11 +528,11 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(&req); err != nil {
-		http.Error(w, "invalid or oversized JSON request", 400)
+		out.fail("invalid or oversized JSON request", 400)
 		return
 	}
 	if err := d.Decode(new(any)); err != io.EOF {
-		http.Error(w, "exactly one JSON object is required", 400)
+		out.fail("exactly one JSON object is required", 400)
 		return
 	}
 	if legacyTCP {
@@ -364,12 +540,21 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 			req.Protocol = "TCP"
 		}
 		if req.Protocol != "TCP" {
-			http.Error(w, "legacy TCP endpoint only supports TCP", 400)
+			out.fail("legacy TCP endpoint only supports TCP", 400)
 			return
 		}
 	}
 	if err := validateConnectionProbe(req); err != nil {
-		http.Error(w, err.Error(), 400)
+		out.fail(err.Error(), 400)
+		return
+	}
+	img, ok := s.probes.image(req.ImageID)
+	if !ok {
+		out.fail("unknown probe image; pick one the server offers", 400)
+		return
+	}
+	if !img.supports(req.Protocol) {
+		out.fail("probe image "+img.Name+" does not support "+req.Protocol, 400)
 		return
 	}
 	var rules api.Rules
@@ -381,7 +566,7 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		}
 		rules, err = parseCandidateYAML(s.logger, []byte(req.CandidateYAML), candidateNamespace)
 		if err != nil {
-			http.Error(w, err.Error(), 400)
+			out.fail(err.Error(), 400)
 			return
 		}
 	}
@@ -390,7 +575,7 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 	case b.slots <- struct{}{}:
 		defer func() { <-b.slots }()
 	default:
-		http.Error(w, "probe concurrency limit reached", 429)
+		out.fail("probe concurrency limit reached", 429)
 		return
 	}
 	key := req.Namespace + "/" + req.Pod
@@ -401,41 +586,51 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 	}
 	b.mu.Unlock()
 	if busy {
-		http.Error(w, "a probe is already running for this Pod", 429)
+		out.fail("a probe is already running for this Pod", 429)
 		return
 	}
 	defer func() { b.mu.Lock(); delete(b.active, key); b.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(r.Context(), b.timeout)
 	defer cancel()
+	out.stage(probeStageAuthorize)
 	for _, a := range []struct{ resource, sub, verb string }{{"pods", "", "get"}, {"pods", "ephemeralcontainers", "update"}, {"pods", "log", "get"}} {
 		if err := s.probeAccess(ctx, req.Namespace, req.Pod, a.resource, a.sub, a.verb); err != nil {
-			http.Error(w, err.Error(), 403)
+			out.fail(err.Error(), 403)
 			return
 		}
 	}
 	p, err := s.core.CoreV1().Pods(req.Namespace).Get(ctx, req.Pod, metav1.GetOptions{})
 	if err != nil {
-		http.Error(w, err.Error(), 409)
+		out.fail(err.Error(), 409)
 		return
 	}
 	if string(p.UID) != req.UID || !normalProbePod(p) {
-		http.Error(w, "Pod changed or is not a normal running Linux Pod; select it again", 409)
+		out.fail("Pod changed or is not a normal running Linux Pod; select it again", 409)
 		return
 	}
 	if name := pendingProbeContainer(p); name != "" {
-		http.Error(w, "Previous GuardBee container "+name+" is pending or running; inspect that attempt before starting another", http.StatusConflict)
+		out.fail("Previous GuardBee container "+name+" is pending or running; inspect that attempt before starting another", http.StatusConflict)
 		return
 	}
-	resp := connectionProbeResponse{UID: req.UID, Context: s.target.context, APIServer: s.target.apiServer, Image: b.image, StartedAt: requestStart.UTC().Format(time.RFC3339Nano), Namespace: req.Namespace, Pod: req.Pod, Host: req.Host, Port: req.Port, Protocol: req.Protocol, Outcome: "inconclusive", Flows: []flowOut{}, Warnings: []string{}}
+	resp := connectionProbeResponse{UID: req.UID, Context: s.target.context, APIServer: s.target.apiServer, Image: img.Image, ImageID: img.ID, StartedAt: requestStart.UTC().Format(time.RFC3339Nano), Namespace: req.Namespace, Pod: req.Pod, Host: req.Host, Port: req.Port, Protocol: req.Protocol, Outcome: "inconclusive", Flows: []probeFlowOut{}, Warnings: []string{}, Notices: []string{}}
 	respond := func() {
 		resp.DurationMs = time.Since(requestStart).Milliseconds()
-		probeJSON(w, resp)
+		out.result(resp)
 	}
 	if req.Protocol == "UDP" {
-		resp.Warnings = append(resp.Warnings, "UDP sends one fixed 27-byte guardbee-connectivity-probe marker to the selected target, with no reply wait or retry. Even a successful send does not prove delivery or policy allowance; the target may treat the unexpected payload as invalid application traffic.")
+		resp.Notices = append(resp.Notices, "UDP sends one fixed 27-byte guardbee-connectivity-probe marker to the selected target, with no reply wait or retry. Even a successful send does not prove delivery or policy allowance; the target may treat the unexpected payload as invalid application traffic.")
 	}
 	if _, err := netip.ParseAddr(req.Host); err != nil {
-		resp.Warnings = append(resp.Warnings, "Hostname capture is best-effort: DNS aliases, mesh interception, or absent Hubble destination names make policy evidence inconclusive; DNS resolves inside the Pod, not on the GuardBee server. Resolved address safety must be enforced by operator admission/network controls.")
+		svc, note := s.resolveProbeService(ctx, req)
+		req.service = svc
+		switch {
+		case svc != nil:
+			resp.Notices = append(resp.Notices, fmt.Sprintf("Hostname matched Service %s/%s: flows to its ClusterIPs or its %d current backend addresses on the mapped target port count as evidence. DNS resolves inside the Pod, not on the GuardBee server.", svc.namespace, svc.name, len(svc.addrs)))
+		case note != "":
+			resp.Warnings = append(resp.Warnings, note)
+		default:
+			resp.Notices = append(resp.Notices, "Hostname capture is best-effort: unless Hubble reports the destination name (DNS visibility), flows to a non-Service hostname cannot be correlated and the result stays inconclusive. Use an IP literal for external targets. DNS resolves inside the Pod, not on the GuardBee server.")
+		}
 	}
 	req.nodeName = p.Spec.NodeName
 	s.logger.Debug("starting probe hubble capture",
@@ -446,6 +641,7 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		"host", req.Host,
 		"port", req.Port,
 	)
+	out.stage(probeStageCapture)
 	capture, err := b.capture(ctx, s, req)
 	if err != nil {
 		s.logger.Debug("probe hubble capture failed to start", "error", err)
@@ -459,15 +655,15 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 	// are NOT retried against a possibly replacement Pod.
 	p, err = s.core.CoreV1().Pods(req.Namespace).Get(ctx, req.Pod, metav1.GetOptions{})
 	if err != nil || string(p.UID) != req.UID || !normalProbePod(p) {
-		http.Error(w, "Pod changed before injection; select it again", 409)
+		out.fail("Pod changed before injection; select it again", 409)
 		return
 	}
 	if name := pendingProbeContainer(p); name != "" {
-		http.Error(w, "Previous GuardBee container "+name+" is pending or running; inspect that attempt before starting another", http.StatusConflict)
+		out.fail("Previous GuardBee container "+name+" is pending or running; inspect that attempt before starting another", http.StatusConflict)
 		return
 	}
 	if len(p.Spec.EphemeralContainers) >= 32 {
-		http.Error(w, "Pod already has 32 ephemeral entries; select another Pod", 409)
+		out.fail("Pod already has 32 ephemeral entries; select another Pod", 409)
 		return
 	}
 	priorProbes := 0
@@ -477,24 +673,25 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		}
 	}
 	if priorProbes >= 8 {
-		http.Error(w, "Pod already has 8 GuardBee probe entries; select another Pod", 409)
+		out.fail("Pod already has 8 GuardBee probe entries; select another Pod", 409)
 		return
 	}
 	name, err := probeContainerName()
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		out.fail(err.Error(), 500)
 		return
 	}
 	start := time.Now()
 	p = p.DeepCopy()
-	ec := secureProbeContainer(name, b.image, req)
+	ec := secureProbeContainer(name, img.Image, req)
 	s.logger.Debug("injecting probe ephemeral container",
 		"namespace", req.Namespace,
 		"pod", req.Pod,
 		"container", name,
-		"image", b.image,
+		"image", img.Image,
 		"command", ec.Command,
 	)
+	out.stage(probeStageInject)
 	p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, ec)
 	_, err = s.core.CoreV1().Pods(req.Namespace).UpdateEphemeralContainers(ctx, req.Pod, p, metav1.UpdateOptions{})
 	if err != nil {
@@ -506,7 +703,8 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		return
 	}
 	resp.ContainerName = name
-	resp.Warnings = append(resp.Warnings, "The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced. No Pod is removed or restarted.", "HTTP cancellation cannot kill the injected container; the image's timeout bounds command runtime to 8 seconds (plus at most 1 second to force-kill).", "Hubble correlation is best-effort: concurrent workload traffic to the same destination/port in this window cannot be distinguished from the probe. Relay NODE_CONNECTED does not guarantee the source-node collector has subscribed before injection.")
+	resp.Notices = append(resp.Notices, "The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced. No Pod is removed or restarted.", "HTTP cancellation cannot kill the injected container; the image's timeout bounds command runtime to 8 seconds (plus at most 1 second to force-kill).", "Hubble correlation is best-effort: concurrent workload traffic to the same destination/port in this window cannot be distinguished from the probe. Relay NODE_CONNECTED does not guarantee the source-node collector has subscribed before injection.")
+	out.stage(probeStageRun)
 	terminated, waitErr := s.waitProbe(ctx, req, name)
 	if terminated != nil {
 		s.logger.Debug("probe container terminated",
@@ -546,6 +744,7 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		resp.Warnings = append(resp.Warnings, "Probe logs unavailable: "+err.Error())
 	}
 	end := time.Now()
+	out.stage(probeStageCollect)
 	// A short finite drain lets relay aggregation deliver the last packets.
 	select {
 	case <-time.After(b.drain):
@@ -560,6 +759,25 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		resp.Warnings = append(resp.Warnings, "Hubble capture reached its 256-flow bound; evidence is incomplete")
 	}
 	flows := correlateProbeFlows(raw, req, start, end)
+	if down := capture.unavailableNodes(); len(down) > 0 {
+		if onPath := probeDownOnPath(down, req.nodeName, flows); len(onPath) > 0 {
+			if captureErr == nil {
+				captureErr = fmt.Errorf("relay reports Hubble node(s) %s unavailable on this test's path", strings.Join(onPath, ", "))
+				resp.Warnings = append(resp.Warnings, "Hubble capture incomplete: "+captureErr.Error())
+			}
+		} else {
+			resp.Notices = append(resp.Notices, "Hubble node(s) "+strings.Join(down, ", ")+" were unavailable during capture but are not on this test's path.")
+		}
+	}
+	if debugLogging {
+		for _, f := range raw {
+			reason := probeFlowMismatch(f, req, start, end)
+			if reason == "" {
+				reason = "correlated"
+			}
+			s.logger.Debug("probe captured flow", "container", name, "result", reason, "flow", probeFlowSummary(f))
+		}
+	}
 	s.logger.Debug("probe flow correlation complete",
 		"container", name,
 		"rawCaptured", len(raw),
@@ -567,10 +785,10 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		"overflow", overflow,
 		"captureErr", captureErr,
 	)
-	for _, f := range flows {
-		resp.Flows = append(resp.Flows, toFlowOut(f))
-	}
-	if len(flows) == 0 {
+	resp.Flows = foldProbeFlows(flows)
+	if len(flows) == 0 && len(raw) > 0 {
+		resp.Warnings = append(resp.Warnings, fmt.Sprintf("Hubble captured %d flows from this Pod on the target port, but none could be tied to the requested host; no policy conclusion is available. Run with --debug to see why each was rejected, or target an IP literal or Service name.", len(raw)))
+	} else if len(flows) == 0 {
 		resp.Warnings = append(resp.Warnings, "No correlated Hubble flows observed; no policy conclusion is available")
 	}
 	// A Pod may emit unrelated application traffic even when the injected
@@ -580,11 +798,95 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: the probe runtime could not be verified; captured workload traffic cannot establish the result of this attempt")
 	} else if len(rules) > 0 && captureErr == nil && !overflow && ctx.Err() == nil {
 		replaceExisting := req.ReplaceExisting == nil || *req.ReplaceExisting
+		out.stage(probeStageSimulate)
 		s.simulateProbeWithMode(ctx, rules, req.CandidateYAML, flows, &resp, replaceExisting)
 	} else if len(rules) > 0 {
 		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: capture lost events, overflowed, failed, or exceeded its deadline; no reassuring simulation is produced")
 	}
 	respond()
+}
+
+// resolveProbeService looks up the Service a hostname names, read-only, so
+// correlation has positive evidence when Hubble carries neither destination
+// names (no DNS visibility) nor a destination Service (socket-level load
+// balancing translates ClusterIP to a backend before any datapath event).
+// Returns nil and no note when the host simply isn't a Service; a note when
+// it looks like one that GuardBee couldn't read.
+func (s *uiServer) resolveProbeService(ctx context.Context, req connectionProbeRequest) (*probeService, string) {
+	name, namespace, ok := probeServiceRef(req.Host, req.Namespace)
+	if !ok {
+		return nil, ""
+	}
+	svc, err := s.core.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		s.logger.Debug("probe hostname is not a readable Service", "service", namespace+"/"+name, "error", err)
+		if apierrors.IsForbidden(err) {
+			return nil, "Could not read Service " + namespace + "/" + name + " (forbidden): flows to its backends cannot be correlated, so the result will likely be inconclusive. Grant get on services and list on endpointslices, or target an IP literal."
+		}
+		return nil, ""
+	}
+	out := &probeService{name: name, namespace: namespace, addrs: map[netip.Addr]bool{}, ports: map[uint32]bool{uint32(req.Port): true}}
+	for _, ip := range svc.Spec.ClusterIPs {
+		if addr, err := netip.ParseAddr(ip); err == nil {
+			out.addrs[addr] = true
+		}
+	}
+	portName, found := "", false
+	for _, p := range svc.Spec.Ports {
+		if int(p.Port) == req.Port && string(p.Protocol) == probeProtocol(req) {
+			portName, found = p.Name, true
+			if p.TargetPort.IntValue() > 0 {
+				out.ports[uint32(p.TargetPort.IntValue())] = true
+			}
+		}
+	}
+	epSlices, err := s.core.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{LabelSelector: discoveryv1.LabelServiceName + "=" + name})
+	if err != nil {
+		s.logger.Debug("probe Service endpoints unreadable", "service", namespace+"/"+name, "error", err)
+		return out, ""
+	}
+	for _, slice := range epSlices.Items {
+		for _, p := range slice.Ports {
+			// EndpointSlice ports carry the resolved (possibly named) target
+			// port under the Service port's name.
+			if found && p.Port != nil && (p.Name == nil && portName == "" || p.Name != nil && *p.Name == portName) {
+				out.ports[uint32(*p.Port)] = true
+			}
+		}
+		for _, ep := range slice.Endpoints {
+			for _, a := range ep.Addresses {
+				if addr, err := netip.ParseAddr(a); err == nil {
+					out.addrs[addr] = true
+				}
+			}
+		}
+	}
+	s.logger.Debug("probe hostname resolved to Service", "service", namespace+"/"+name, "addresses", len(out.addrs), "ports", sortedKeys(out.ports))
+	return out, ""
+}
+
+// probeServiceRef maps the in-cluster DNS forms of a Service name to
+// (name, namespace): "<svc>" (resolved in the Pod's own namespace first),
+// "<svc>.<ns>", "<svc>.<ns>.svc" and "<svc>.<ns>.svc.<cluster-domain>".
+func probeServiceRef(host, podNamespace string) (string, string, bool) {
+	labels := strings.Split(normalizeProbeDNS(host), ".")
+	switch {
+	case len(labels) == 1:
+		return labels[0], podNamespace, true
+	case len(labels) == 2 || labels[2] == "svc":
+		return labels[0], labels[1], true
+	default:
+		return "", "", false
+	}
+}
+
+func sortedKeys[K cmp.Ordered](m map[K]bool) []K {
+	out := make([]K, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // HTTP cancellation releases a process-local slot but cannot cancel Kubernetes
@@ -686,8 +988,14 @@ func readProbeLogs(ctx context.Context, s *uiServer, req connectionProbeRequest,
 	}
 	defer stream.Close()
 	// Do not echo image-controlled text into the verdict/message or infer
-	// success from it; bounded read only, exit status is the signal.
-	_, err = io.Copy(io.Discard, io.LimitReader(stream, limit))
+	// success from it; bounded read only, exit status is the signal. --debug
+	// only copies it to the operator's own stderr, as a quoted string.
+	if !debugLogging {
+		_, err = io.Copy(io.Discard, io.LimitReader(stream, limit))
+		return err
+	}
+	out, err := io.ReadAll(io.LimitReader(stream, limit))
+	s.logger.Debug("probe container output", "container", name, "output", strings.TrimSpace(string(out)))
 	return err
 }
 
@@ -696,7 +1004,46 @@ type probeCapture struct {
 	flows    []*flowpb.Flow
 	err      error
 	overflow bool
-	stop     func()
+	// unavailable holds relay node names whose latest state is not
+	// NODE_CONNECTED. Not an error by itself: a down node only makes the
+	// evidence incomplete when it is on this test's path (probeDownOnPath).
+	unavailable map[string]bool
+	stop        func()
+}
+
+func (c *probeCapture) unavailableNodes() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return sortedKeys(c.unavailable)
+}
+
+func probeNodeMatches(relayName, nodeName string) bool {
+	return relayName == nodeName || strings.HasSuffix(relayName, "/"+nodeName)
+}
+
+// probeDownOnPath returns the unavailable relay nodes that could hold this
+// test's evidence: the source Pod's node always; any other node only when
+// the destination is a Pod and no destination-side event (one observed on a
+// node other than the source's, or delivered to the endpoint) arrived, since
+// then the destination's node, and an ingress drop it saw, may be the one
+// missing. A node that is neither can't have seen the probe's packets.
+func probeDownOnPath(down []string, sourceNode string, flows []*flowpb.Flow) []string {
+	destinationSeen, destinationPod := false, false
+	for _, f := range flows {
+		if f.GetDestination().GetPodName() != "" {
+			destinationPod = true
+		}
+		if f.GetTraceObservationPoint() == flowpb.TraceObservationPoint_TO_ENDPOINT || f.GetNodeName() != "" && !probeNodeMatches(f.GetNodeName(), sourceNode) {
+			destinationSeen = true
+		}
+	}
+	out := []string{}
+	for _, n := range down {
+		if probeNodeMatches(n, sourceNode) || destinationPod && !destinationSeen || len(flows) == 0 {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (c *probeCapture) snapshot() ([]*flowpb.Flow, error, bool) {
@@ -711,10 +1058,18 @@ func startProbeCapture(ctx context.Context, s *uiServer, req connectionProbeRequ
 		return nil, err
 	}
 	cctx, cancel := context.WithCancel(ctx)
-	filter := &flowpb.FlowFilter{SourcePod: []string{req.Namespace + "/" + req.Pod}, DestinationPort: []string{strconv.Itoa(req.Port)}, Protocol: []string{probeProtocol(req)}}
+	ports := []string{strconv.Itoa(req.Port)}
+	if req.service != nil {
+		ports = ports[:0]
+		for _, p := range sortedKeys(req.service.ports) {
+			ports = append(ports, strconv.FormatUint(uint64(p), 10))
+		}
+	}
+	filter := &flowpb.FlowFilter{SourcePod: []string{req.Namespace + "/" + req.Pod}, DestinationPort: ports, Protocol: []string{probeProtocol(req)}}
 	if _, err := netip.ParseAddr(req.Host); err == nil {
 		filter.DestinationIp = []string{req.Host}
 	}
+	s.logger.Debug("probe hubble filter", "filter", filter.String())
 	stream, err := client.GetFlows(cctx, &observerpb.GetFlowsRequest{Follow: true, Whitelist: []*flowpb.FlowFilter{filter}})
 	if err != nil {
 		cancel()
@@ -788,10 +1143,20 @@ func startProbeCapture(ctx context.Context, s *uiServer, req connectionProbeRequ
 				}
 				c.mu.Unlock()
 			}
-			if status := resp.GetNodeStatus(); status != nil && status.GetStateChange() != relaypb.NodeState_NODE_CONNECTED {
+			if status := resp.GetNodeStatus(); status != nil {
 				c.mu.Lock()
-				c.err = fmt.Errorf("relay reports %s: %v", status.GetStateChange(), status.GetNodeNames())
+				if c.unavailable == nil {
+					c.unavailable = map[string]bool{}
+				}
+				for _, n := range status.GetNodeNames() {
+					if status.GetStateChange() == relaypb.NodeState_NODE_CONNECTED {
+						delete(c.unavailable, n)
+					} else {
+						c.unavailable[n] = true
+					}
+				}
 				c.mu.Unlock()
+				s.logger.Debug("probe relay node status", "state", status.GetStateChange(), "nodes", status.GetNodeNames())
 			}
 			if lost := resp.GetLostEvents(); lost != nil {
 				c.mu.Lock()
@@ -805,30 +1170,99 @@ func startProbeCapture(ctx context.Context, s *uiServer, req connectionProbeRequ
 
 func correlateProbeFlows(flows []*flowpb.Flow, req connectionProbeRequest, start, end time.Time) []*flowpb.Flow {
 	out := []*flowpb.Flow{}
-	ip, ipErr := netip.ParseAddr(req.Host)
 	for _, f := range flows {
-		src := f.GetSource()
-		ts := f.GetTime()
-		matched := false
-		if ipErr == nil {
-			dstIP, err := netip.ParseAddr(f.GetIP().GetDestination())
-			matched = err == nil && dstIP.Unmap() == ip.Unmap()
-		} else {
-			for _, name := range f.GetDestinationNames() {
-				if normalizeProbeDNS(name) == normalizeProbeDNS(req.Host) {
-					matched = true
-					break
-				}
-			}
+		if probeFlowMismatch(f, req, start, end) == "" {
+			out = append(out, f)
 		}
-		l4 := f.GetL4()
-		protocolMatch := probeProtocol(req) == "TCP" && l4.GetTCP() != nil && l4.GetTCP().GetDestinationPort() == uint32(req.Port) || probeProtocol(req) == "UDP" && l4.GetUDP() != nil && l4.GetUDP().GetDestinationPort() == uint32(req.Port)
-		if src.GetNamespace() != req.Namespace || src.GetPodName() != req.Pod || ts == nil || ts.CheckValid() != nil || ts.AsTime().Before(start) || ts.AsTime().After(end) || !matched || !protocolMatch || f.GetIsReply().GetValue() {
-			continue
-		}
-		out = append(out, f)
 	}
 	return out
+}
+
+// probeFlowMismatch names the first correlation check a captured flow fails,
+// or "" when it is evidence for this attempt. Kept as one function so the
+// --debug trace and the correlation itself can never disagree.
+func probeFlowMismatch(f *flowpb.Flow, req connectionProbeRequest, start, end time.Time) string {
+	src := f.GetSource()
+	if src.GetNamespace() != req.Namespace || src.GetPodName() != req.Pod {
+		return "source is not the probed Pod"
+	}
+	ts := f.GetTime()
+	if ts == nil || ts.CheckValid() != nil {
+		return "flow has no valid timestamp"
+	}
+	if ts.AsTime().Before(start) || ts.AsTime().After(end) {
+		return "outside the probe container's run window"
+	}
+	if f.GetIsReply().GetValue() {
+		return "reply direction"
+	}
+	l4 := f.GetL4()
+	var dport uint32
+	switch {
+	case probeProtocol(req) == "TCP" && l4.GetTCP() != nil:
+		dport = l4.GetTCP().GetDestinationPort()
+	case probeProtocol(req) == "UDP" && l4.GetUDP() != nil:
+		dport = l4.GetUDP().GetDestinationPort()
+	default:
+		return "protocol differs"
+	}
+	// A Service target is the only case where the packet's port may differ
+	// from the requested one: its port maps to the backends' targetPort.
+	if dport != uint32(req.Port) {
+		dstIP, err := netip.ParseAddr(f.GetIP().GetDestination())
+		if req.service == nil || !req.service.ports[dport] || err != nil || !req.service.addrs[dstIP.Unmap()] {
+			return "destination port differs"
+		}
+	}
+	if ip, err := netip.ParseAddr(req.Host); err == nil {
+		dstIP, err := netip.ParseAddr(f.GetIP().GetDestination())
+		if err != nil || dstIP.Unmap() != ip.Unmap() {
+			return "destination IP differs (a ClusterIP target is usually translated to a backend Pod IP before Hubble sees it)"
+		}
+		return ""
+	}
+	for _, name := range f.GetDestinationNames() {
+		if normalizeProbeDNS(name) == normalizeProbeDNS(req.Host) {
+			return ""
+		}
+	}
+	if svc := f.GetDestinationService(); svc.GetName() != "" && probeHostIsService(req.Host, req.Namespace, svc.GetName(), svc.GetNamespace()) {
+		return ""
+	}
+	if req.service != nil {
+		if dstIP, err := netip.ParseAddr(f.GetIP().GetDestination()); err == nil && req.service.addrs[dstIP.Unmap()] {
+			return ""
+		}
+		return "destination is not one of Service " + req.service.namespace + "/" + req.service.name + "'s ClusterIPs or backends"
+	}
+	return "hostname matches neither a Hubble destination name nor a readable Service"
+}
+
+// Hubble only carries DestinationNames when DNS visibility (the agent's DNS
+// proxy) observed the lookup, and DestinationService only when the datapath
+// translated a ClusterIP itself; either is positive evidence of the Service.
+func probeHostIsService(host, podNamespace, svcName, svcNamespace string) bool {
+	name, namespace, ok := probeServiceRef(host, podNamespace)
+	return ok && name == svcName && namespace == svcNamespace
+}
+
+// probeFlowSummary is a compact one-line description of a captured flow for
+// --debug traces, enough to see why correlation accepted or rejected it.
+func probeFlowSummary(f *flowpb.Flow) string {
+	port, proto := uint32(0), "?"
+	if t := f.GetL4().GetTCP(); t != nil {
+		port, proto = t.GetDestinationPort(), "TCP"
+	} else if u := f.GetL4().GetUDP(); u != nil {
+		port, proto = u.GetDestinationPort(), "UDP"
+	}
+	ts := ""
+	if f.GetTime() != nil {
+		ts = f.GetTime().AsTime().UTC().Format("15:04:05.000")
+	}
+	return fmt.Sprintf("%s %s/%s -> %s:%d/%s svc=%s names=%v verdict=%s type=%s reply=%v obs=%s",
+		ts, f.GetSource().GetNamespace(), f.GetSource().GetPodName(), f.GetIP().GetDestination(), port, proto,
+		serviceString(f.GetDestinationService()), f.GetDestinationNames(), f.GetVerdict(), f.GetType(),
+		f.GetIsReply().GetValue(), f.GetTraceObservationPoint())
 }
 
 // Inspect raw inventory, before Parse() can drop unsupported fields. CIDR
@@ -877,21 +1311,37 @@ func (s *uiServer) simulateProbe(ctx context.Context, rules api.Rules, rawCandid
 
 func (s *uiServer) simulateProbeWithMode(ctx context.Context, rules api.Rules, rawCandidate string, flows []*flowpb.Flow, resp *connectionProbeResponse, replaceExisting bool) {
 	if replaceExisting {
-		resp.Warnings = append(resp.Warnings, "Candidate simulation replaces live policies with the same kind/namespace/name; baseline remains original. Nothing is applied to the cluster; this sample is not policy sign-off.")
+		resp.Notices = append(resp.Notices, "Candidate simulation replaces live policies with the same kind/namespace/name; baseline remains original. Nothing is applied to the cluster; this sample is not policy sign-off.")
 	} else {
-		resp.Warnings = append(resp.Warnings, "Additive simulation keeps matching live policies alongside the candidate; removed permissions can remain allowed. Nothing is applied to the cluster; this sample is not policy sign-off.")
+		resp.Notices = append(resp.Notices, "Additive simulation keeps matching live policies alongside the candidate; removed permissions can remain allowed. Nothing is applied to the cluster; this sample is not policy sign-off.")
 	}
 	if len(flows) == 0 {
 		return
 	}
-	networkPolicies, err := s.core.NetworkingV1().NetworkPolicies("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: Kubernetes NetworkPolicy inventory unavailable: "+err.Error())
-		return
+	// A Kubernetes NetworkPolicy's podSelector only ever selects Pods in its
+	// own namespace, so only policies in a correlated flow's source or
+	// destination namespace can enforce on it. Gating on every NetworkPolicy
+	// cluster-wide made the simulation permanently inconclusive on any
+	// cluster where some unrelated app (Argo CD, Longhorn…) ships one.
+	namespaces := map[string]bool{}
+	for _, f := range flows {
+		for _, ns := range []string{f.GetSource().GetNamespace(), f.GetDestination().GetNamespace()} {
+			if ns != "" {
+				namespaces[ns] = true
+			}
+		}
 	}
-	if len(networkPolicies.Items) > 0 {
-		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: Kubernetes NetworkPolicy objects are present but are not included in this probe engine baseline")
-		return
+	for _, ns := range sortedKeys(namespaces) {
+		networkPolicies, err := s.core.NetworkingV1().NetworkPolicies(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			resp.Warnings = append(resp.Warnings, "Simulation inconclusive: Kubernetes NetworkPolicy inventory unavailable: "+err.Error())
+			return
+		}
+		if len(networkPolicies.Items) > 0 {
+			s.logger.Debug("probe simulation gated by Kubernetes NetworkPolicy", "namespace", ns, "count", len(networkPolicies.Items))
+			resp.Warnings = append(resp.Warnings, "Simulation inconclusive: Kubernetes NetworkPolicy objects in namespace "+ns+" are not included in this probe engine baseline")
+			return
+		}
 	}
 	cnps, err := s.cilium.CiliumV2().CiliumNetworkPolicies("").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -921,11 +1371,18 @@ func (s *uiServer) simulateProbeWithMode(ctx context.Context, rules api.Rules, r
 	}
 	// Build from the very inventory checked above, not a second live List
 	// whose changed policies could bypass the conservative simulation gates.
-	baselineRules := api.Rules{}
+	// A CNP's endpointSelector only ever selects endpoints in its own
+	// namespace, so its agent-side semantics (proxy redirects, toServices,
+	// named ports, auth) can only matter here when it lives in a correlated
+	// flow's source or destination namespace. Out-of-scope CNPs still go to
+	// the engine, which does the real matching; CCNPs and the candidate are
+	// always gated, conservatively.
+	baselineRules, proxyRelevant := api.Rules{}, api.Rules{}
 	for i := range cnps.Items {
+		inScope := namespaces[cnps.Items[i].Namespace]
 		raw, _ := json.Marshal(cnps.Items[i])
-		if e := probeRawSemantics(raw); e != nil {
-			resp.Warnings = append(resp.Warnings, "Simulation inconclusive: "+e.Error())
+		if e := probeRawSemantics(raw); e != nil && inScope {
+			resp.Warnings = append(resp.Warnings, "Simulation inconclusive: "+cnps.Items[i].Namespace+"/"+cnps.Items[i].Name+": "+e.Error())
 			return
 		}
 		if e := probeBaselineGates(cnps.Items[i], rawRules(cnps.Items[i].Spec, cnps.Items[i].Specs)); e != nil {
@@ -938,6 +1395,9 @@ func (s *uiServer) simulateProbeWithMode(ctx context.Context, rules api.Rules, r
 			return
 		}
 		baselineRules = append(baselineRules, parsed...)
+		if inScope {
+			proxyRelevant = append(proxyRelevant, parsed...)
+		}
 	}
 	for i := range ccnps.Items {
 		raw, _ := json.Marshal(ccnps.Items[i])
@@ -955,9 +1415,10 @@ func (s *uiServer) simulateProbeWithMode(ctx context.Context, rules api.Rules, r
 			return
 		}
 		baselineRules = append(baselineRules, parsed...)
+		proxyRelevant = append(proxyRelevant, parsed...)
 	}
-	if probeProxyRules(append(append(api.Rules{}, baselineRules...), rules...)) {
-		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: baseline/candidate uses FQDN or L7 proxy semantics not reproduced by this connectivity simulation")
+	if probeProxyRules(append(proxyRelevant, rules...)) {
+		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: a policy in "+strings.Join(sortedKeys(namespaces), ", ")+", a clusterwide policy, or the candidate uses FQDN or L7 proxy semantics not reproduced by this connectivity simulation")
 		return
 	}
 	n, skipped, replaced, base, candidate, err := buildVerdictEnginesFromRules(s.logger, baselineRules, nil, rules, replaceExisting)
@@ -968,19 +1429,16 @@ func (s *uiServer) simulateProbeWithMode(ctx context.Context, rules api.Rules, r
 	defer base.close(s.logger)
 	defer candidate.close(s.logger)
 	for _, name := range replaced {
-		resp.Warnings = append(resp.Warnings, "Simulation replaces live "+name+" with the candidate")
+		resp.Notices = append(resp.Notices, "Simulation replaces live "+name+" with the candidate")
 	}
 	if len(skipped) > 0 {
 		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: baseline policies were skipped: "+strings.Join(skipped, ", "))
 		return
 	}
-	comp := &verdictComputation{namespace: resp.Namespace, candidateRuleCount: len(rules), baselineRuleCount: n, flowsRequested: uint64(len(flows)), flowsSampled: len(flows), counts: &verdictCounts{total: len(flows)}, target: s.target}
-	for _, f := range flows {
-		if row := judgeFlow(s.logger, base, candidate, f, comp.counts, true); row != nil {
-			comp.rows = append(comp.rows, row)
-			comp.rowCounts = append(comp.rowCounts, 1)
-		}
-	}
+	// Same judging and same row folding as the verdict command, so the trace
+	// events of one connection become one row with a count.
+	comp := judgeFetchedFlows(s.logger, base, candidate, flows, resp.Namespace, flowFilter{}, uint64(len(flows)), true)
+	comp.candidateRuleCount, comp.baselineRuleCount, comp.target = len(rules), n, s.target
 	out := toVerdictResponse(comp)
 	resp.Simulation = &out
 	if comp.counts.notSimulated > 0 {

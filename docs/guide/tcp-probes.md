@@ -17,13 +17,53 @@ also permits diagnostics without a candidate; those requests have no candidate
 prediction. No synthetic endpoints or identities are introduced.
 
 ```sh
-guardbee ui --addr 127.0.0.1:4747 --enable-probes \
-  --probe-image '<your-image:tag>'
+guardbee ui --addr 127.0.0.1:4747 --enable-probes
 ```
 
-Choose your own image using `repository:tag` or `repository@sha256:digest`.
-Tagged images use `imagePullPolicy: Always`; digest references use
-`IfNotPresent`. GuardBee does not prescribe an image. It needs compatible
+## Probe images
+
+The web UI offers a **catalog** of probe images as cards, each showing which
+protocols it can test and whether it is pinned by digest. The browser sends
+only the chosen entry's id: it can never type or send an image reference, so
+what runs inside a workload is always something the server was started with.
+`--enable-probes` is still required either way.
+
+| Startup flags | Images offered |
+|---|---|
+| `--enable-probes` | The built-in vetted catalog, [`probes/images.yaml`](https://github.com/tchellomello/guardbee/blob/main/probes/images.yaml) |
+| `--enable-probes --probe-images-file my-images.yaml` | Your catalog instead (YAML or JSON, same format) |
+| `--enable-probes --probe-image <repository:tag-or-digest>` | Exactly that one image, as before |
+
+The built-in catalog ships two images, each checked against a live cluster
+under the exact restricted context below with GuardBee's own commands:
+
+| Id | Image | Protocols | Why |
+|---|---|---|---|
+| `netshoot` | `docker.io/nicolaka/netshoot@sha256:…` | TCP, UDP | Widely used network troubleshooting toolbox: OpenBSD `nc`, Python 3. Larger pull. |
+| `busybox` | `docker.io/library/busybox:1.37@sha256:…` | TCP | Official, ~2 MB, `nc` and `timeout`. No Python, so no UDP. |
+
+Your own catalog uses the same format. Unknown fields are rejected at startup,
+so a typo fails loudly instead of offering a broken entry:
+
+```yaml
+images:
+  - id: netshoot-mirror          # lowercase DNS label, unique; what the browser sends
+    name: netshoot (corp mirror) # card title, 1-64 characters
+    image: registry.corp.example/netshoot@sha256:<64 hex digits>
+    protocols: [TCP, UDP]        # only what the image passed; UDP needs Python 3
+    description: Mirrored from docker.io for air-gapped clusters.
+```
+
+Prefer digests. GuardBee pulls a tag-only image on **every** test
+(`imagePullPolicy: Always`; digests use `IfNotPresent`), so a moving tag can
+run different code between two tests; the UI marks such entries ⚠. A
+private or air-gapped cluster can't pull the built-in Docker Hub references:
+mirror them and point `--probe-images-file` at the mirror. The UI won't
+offer a protocol the chosen image doesn't list.
+
+## Image requirements
+
+Every image needs compatible
 **`timeout` and `nc` binaries on PATH** for
 TCP. UDP additionally requires **Python 3 with its standard library**, including
 `socket` and `ipaddress`; no dependencies are installed at runtime. It must
@@ -38,8 +78,8 @@ timeout -k 1s 8s python3 -I -c <fixed-GuardBee-UDP-program> <host> <port>
 Use GNU-compatible timeout (`-k`, duration suffixes), and OpenBSD-compatible
 netcat (`-n -z -v -w`). Verify those binaries under UID/GID 65532, no capabilities,
 read-only root filesystem, and RuntimeDefault seccomp before enabling probes.
-Startup validates reference syntax, not binary availability. The test reports
-runtime failures explicitly if a required executable is missing.
+Startup validates the catalog and reference syntax, not binary availability. The
+test reports runtime failures explicitly if a required executable is missing.
 
 The UDP program uses `getaddrinfo(AF_UNSPEC, SOCK_DGRAM)`, validates the first
 resolved IPv4/IPv6 address, and calls `sendto` **exactly once** with the fixed
@@ -125,9 +165,17 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
   `protocol` default to TCP and keep optional `candidateYAML`. Explicit TCP is
   accepted; UDP is rejected on this legacy endpoint.
   DNS hostnames (case-insensitive, optional trailing dot) resolve inside the
-  Pod, never server-side. Hostname flow correlation requires exact normalized
-  Hubble destination names, never just the port. Missing names/aliases/mesh
-   interception make policy evidence inconclusive, even when traffic generation succeeds.
+  Pod, never server-side. Hostname flow correlation needs positive evidence,
+  never just the port: an exact normalized Hubble destination name, the flow's
+  destination Service, or, for an in-cluster Service name (`<svc>`,
+  `<svc>.<ns>`, `<svc>.<ns>.svc[.<cluster-domain>]`), a destination that is one
+  of that Service's ClusterIPs or current EndpointSlice addresses, on the
+  requested port or the target port it maps to. That last form is read from the
+  API (`get` services, `list` endpointslices) because socket-level load
+  balancing rewrites the ClusterIP before Hubble sees the packet, so most
+  clusters report neither names nor a Service. Other hostnames without Hubble
+  DNS visibility, aliases, and mesh interception stay inconclusive, even when
+  traffic generation succeeds; use an IP literal for external targets.
   Operator network/admission controls must constrain DNS-resolved targets;
   the server cannot safely resolve them in the Pod's DNS context. Loopback, link-local,
   multicast, unspecified, and limited-broadcast targets are rejected because
@@ -184,13 +232,18 @@ Replacement removes policies with the same kind, namespace, and name only from
 the candidate engine; the original baseline remains unchanged. Turning the
 setting off explicitly selects additive simulation, which can retain permissions
 removed by an edited candidate. The submitted snapshot records the chosen mode.
-Any Kubernetes NetworkPolicy object, or inability to read that full inventory,
-suppresses simulation because those policies are not part of this engine
-baseline. Optional simulation therefore requires cluster-wide NetworkPolicy
-list access in addition to existing CNP/CCNP reads; the shipped read ClusterRole
-now grants this inventory read. This grant resolves authorization only: existing
-NetworkPolicy objects still make simulation inconclusive until the engine
-supports them.
+A Kubernetes NetworkPolicy in a correlated flow's source or destination
+namespace, or inability to read those namespaces' inventory, suppresses
+simulation because those policies are not part of this engine baseline. A
+NetworkPolicy's podSelector only selects Pods in its own namespace, so ones
+elsewhere in the cluster cannot enforce on the tested flow and are ignored.
+The same scoping applies to CNPs' agent-side semantics (FQDN/L7 proxy,
+toServices, named ports, authentication): only CNPs in those namespaces, any
+CCNP, and the candidate suppress simulation; out-of-scope CNPs still go to the
+engine. Likewise a Hubble node reported unavailable only makes the capture
+incomplete when it is the source Pod's node, or may be the destination's (a
+Pod destination with no destination-side events). The shipped read
+ClusterRole grants the NetworkPolicy, Service and EndpointSlice reads.
 
 `cidrGroupRef` or `cidrGroupSelector` in any baseline/candidate suppresses simulation with an explicit
 **unverified** warning. Cilium's real agent injects CIDR-group labels through
@@ -225,3 +278,34 @@ test on that Pod, including after a client disconnect or server restart. Inspect
 the named container; do not restart the workload just to retry. Image-pull and
 container-creation errors are surfaced explicitly. Missing executables or an
 unverified runtime cannot yield a prediction from unrelated workload traffic.
+
+## Live progress
+
+The UI calls `POST /api/probes/connection/stream`, which reports each stage
+as it happens, one NDJSON line each (`{"stage":"capture"}`), then exactly one
+terminal line, `{"result":{…}}` or `{"error":"…","status":409}`. Stages, in
+order: `authorize`, `capture`, `inject`, `run`, `collect`, `simulate` (only
+when a candidate is simulated). The stepper only shows stages the server
+reported, never a timer's guess; a stage never reached shows as skipped. A
+rejection before the first stage stays an ordinary HTTP status. A rejection
+after it keeps the same status in its error line, so "nothing was injected"
+means the same thing on both endpoints. A stream that ends with no terminal
+line is treated as uncertain: something may already have been injected.
+`POST /api/probes/connection` keeps answering with one JSON response.
+
+The result is drawn as the path the traffic took: the source Pod, the policy
+gate, and the destination, with one lane for the live baseline and one for
+the candidate. An allowed lane flows end to end, a blocked lane stops at the
+gate, and an inconclusive lane is dashed with a "?".
+
+## Troubleshooting an inconclusive test
+
+Start the server with `--debug` (`guardbee ui --debug --enable-probes …`). For
+each test it logs, to stderr only: the Service a hostname resolved to (its
+address and port counts), the exact Hubble filter, relay node state changes,
+the probe container's own output (for example `nc`'s resolved address), one
+line per captured flow with the reason it was or wasn't correlated
+(`destination IP differs`, `outside the probe container's run window`, …), and
+which namespace's Kubernetes NetworkPolicy gated the simulation. The UI shows
+the attempt's own problems as warnings; the standing caveats every test
+carries are under **Evidence & limitations → About this test**.

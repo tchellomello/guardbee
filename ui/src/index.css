@@ -204,3 +204,24 @@ body::before {
 .glow-pulse {
   animation: glow-pulse 1.6s ease-in-out infinite;
 }
+
+/* Connectivity test path (ProbePath.tsx): an allowed lane's dashes travel
+   from source to destination so "traffic passes" reads at a glance. Motion
+   is decoration only, so reduced-motion users get the static dashes. */
+@keyframes probe-flow {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+
+.probe-flow {
+  stroke-dasharray: 10 6;
+  animation: probe-flow 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .probe-flow,
+  .glow-pulse {
+    animation: none;
+  }
+}

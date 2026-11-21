@@ -2,7 +2,7 @@
 // and shapes mirror ui.go's verdictRequest/verdictResponse/flowsResponse
 // exactly — these two files are the one contract, kept in sync by hand since
 // there's no shared schema generation for a project this size yet.
-
+import { isProbeStage, splitNDJSON, type ProbeStageId } from './shared/probeStages'
 import type { EgressRule, IngressRule, PolicyModel } from './policy'
 import type { FlowFilterParams } from './shared/flowFilter'
 
@@ -124,6 +124,9 @@ export interface ConnectionProbeRequest {
   port: number
   protocol: ProbeProtocol
   candidateYAML: string
+  // A catalog entry id from ProbeCapabilities.images, never an image
+  // reference; omitted against a server without a catalog.
+  imageId?: string
 }
 
 export interface ConnectionProbeResponse {
@@ -131,6 +134,7 @@ export interface ConnectionProbeResponse {
   context?: string
   apiServer?: string
   image?: string
+  imageId?: string
   startedAt?: string
   durationMs?: number
   namespace: string
@@ -141,9 +145,23 @@ export interface ConnectionProbeResponse {
   outcome?: 'connected' | 'generated' | 'failed' | 'inconclusive'
   message: string
   containerName?: string
-  flows?: Flow[]
+  // count: identical trace events of one connection, folded server-side.
+  flows?: (Flow & { count?: number })[]
   simulation?: VerdictResponse
+  // warnings: problems with this attempt. notices: standing caveats every
+  // attempt carries (ephemeral entry remains, simulation mode, …).
   warnings?: string[]
+  notices?: string[]
+}
+
+export interface ProbeImage {
+  id: string
+  name: string
+  image: string
+  protocols: ProbeProtocol[]
+  description?: string
+  // pinned: referenced by digest, so every test runs the same bytes.
+  pinned: boolean
 }
 
 export interface ProbeCapabilities {
@@ -152,6 +170,7 @@ export interface ProbeCapabilities {
   context?: string
   apiServer?: string
   image?: string
+  images?: ProbeImage[]
 }
 
 export function fetchProbeCapabilities(): Promise<ProbeCapabilities> {
@@ -175,6 +194,43 @@ export function runConnectionProbe(req: ConnectionProbeRequest): Promise<Connect
     if (!res.ok) throw new ConnectionProbeError(await res.text() || `request failed: ${res.status}`, res.status)
     return res.json() as Promise<ConnectionProbeResponse>
   })
+}
+
+// runConnectionProbeStream is runConnectionProbe reported as it happens:
+// onStage fires for each stage the server reaches, then the result resolves.
+// A rejection before anything happened is still a plain HTTP status; one
+// after the stream began arrives as an {"error","status"} line and keeps the
+// same definite-vs-uncertain meaning. A stream that ends without a terminal
+// line is uncertain (status 0): something may already have been injected.
+export async function runConnectionProbeStream(req: ConnectionProbeRequest, onStage: (stage: ProbeStageId) => void): Promise<ConnectionProbeResponse> {
+  const res = await fetch('/api/probes/connection/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new ConnectionProbeError(await res.text() || `request failed: ${res.status}`, res.status)
+  if (!res.body) throw new ConnectionProbeError('Connection test stream unavailable', 0)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    let parsed: ReturnType<typeof splitNDJSON>
+    try {
+      parsed = splitNDJSON(done ? `${buffer}\n` : buffer)
+    } catch {
+      throw new ConnectionProbeError('Connection test stream was corrupted', 0)
+    }
+    buffer = parsed.rest
+    for (const line of parsed.lines) {
+      const event = line as { stage?: unknown; result?: ConnectionProbeResponse; error?: string; status?: number }
+      if (event.result) return event.result
+      if (event.error !== undefined) throw new ConnectionProbeError(event.error, event.status ?? 0)
+      if (isProbeStage(event.stage)) onStage(event.stage)
+    }
+    if (done) throw new ConnectionProbeError('Connection test ended before reporting a result', 0)
+  }
 }
 
 export class ConnectionProbeError extends Error {

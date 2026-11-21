@@ -9,6 +9,11 @@ const response: ConnectionProbeResponse = {
   flows: [{ time: '2026-11-17T12:00:00Z', source: 'webapp/webapp-123', destination: 'postgres/postgres-0', l4: 'TCP:5432', verdict: 'FORWARDED' }],
   simulation: { ...VERDICT, counts: { ...VERDICT.counts, notSimulated: 0 }, rows: [{ ...VERDICT.rows[0], baselineAllowed: true, candidateAllowed: false }] },
 }
+// The UI reads the streamed endpoint: stages, then one terminal line.
+const ALL_STAGES = ['authorize', 'capture', 'inject', 'run', 'collect', 'simulate']
+function probeStream(result: unknown, stages: string[] = ALL_STAGES, terminal: Record<string, unknown> = { result }) {
+  return { contentType: 'application/x-ndjson', body: [...stages.map((stage) => ({ stage })), terminal].map((line) => JSON.stringify(line)).join('\n') + '\n' }
+}
 const panel = (page: Page) => page.getByRole('region', { name: 'Connectivity tests', exact: true })
 const configuration = (page: Page) => page.getByRole('form', { name: 'Connection test configuration' })
 const run = (page: Page) => configuration(page).getByRole('button', { name: 'Review & run connection test' })
@@ -43,7 +48,7 @@ test.describe('Connectivity tests', () => {
     await expect(panel(page)).toContainText('Connection tests are disabled')
     await expect(run(page)).toBeDisabled()
     await expect(configuration(page).getByLabel('Source Pod')).toContainText('Enable connectivity tests first')
-    await expect(panel(page).getByLabel('Connectivity enablement')).toContainText('./guardbee ui --enable-probes --probe-image <your-image:tag>')
+    await expect(panel(page).getByLabel('Connectivity enablement')).toContainText('./guardbee ui --enable-probes')
     await page.route('**/api/probes/capabilities', (route) => route.fulfill({ status: 503, body: 'capability unavailable' }))
     await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
     await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
@@ -54,7 +59,7 @@ test.describe('Connectivity tests', () => {
 
   test('requires a loaded candidate, inherits Verdict namespace, and has no nested or duplicated candidate form', async ({ page }) => {
     let posts = 0
-    await page.route('**/api/probes/connection', (route) => { posts++; return route.fulfill({ json: response }) })
+    await page.route('**/api/probes/connection/stream', (route) => { posts++; return route.fulfill(probeStream(response)) })
     const form = await enabled(page, '')
     await expect(run(page)).toBeDisabled()
     await expect(form.locator('textarea')).toHaveCount(0)
@@ -67,7 +72,7 @@ test.describe('Connectivity tests', () => {
 
   test('confirmation sends inherited candidate, protocol, and Pod UID; outcome leads evidence', async ({ page }) => {
     const requests: ConnectionProbeRequest[] = []
-    await page.route('**/api/probes/connection', (route) => { requests.push(route.request().postDataJSON()); return route.fulfill({ json: response }) })
+    await page.route('**/api/probes/connection/stream', (route) => { requests.push(route.request().postDataJSON()); return route.fulfill(probeStream(response)) })
     await enabled(page)
     page.once('dialog', async (dialog) => {
       expect(dialog.message()).toContain('changing the Pod spec but not its labels')
@@ -89,7 +94,7 @@ test.describe('Connectivity tests', () => {
   })
 
   test('main candidate edits preserve the exact submitted snapshot and mark prediction stale', async ({ page }) => {
-    await page.route('**/api/probes/connection', (route) => route.fulfill({ json: response }))
+    await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response)))
     await enabled(page)
     await submit(page)
     const submitted = page.getByRole('region', { name: 'Submitted connection test' })
@@ -107,9 +112,9 @@ test.describe('Connectivity tests', () => {
 
   test('UDP sends protocol and fixed datagram only; both-blocked UNCHANGED stays BLOCKED', async ({ page }) => {
     let request: ConnectionProbeRequest | undefined
-    await page.route('**/api/probes/connection', (route) => {
+    await page.route('**/api/probes/connection/stream', (route) => {
       request = route.request().postDataJSON()
-      return route.fulfill({ json: { ...response, protocol: 'UDP', outcome: 'generated', message: 'One datagram generated', simulation: { ...response.simulation, rows: [{ ...VERDICT.rows[0], change: 'UNCHANGED', baselineAllowed: false, candidateAllowed: false }] } } })
+      return route.fulfill(probeStream({ ...response, protocol: 'UDP', outcome: 'generated', message: 'One datagram generated', simulation: { ...response.simulation, rows: [{ ...VERDICT.rows[0], change: 'UNCHANGED', baselineAllowed: false, candidateAllowed: false }] } }))
     })
     const form = await enabled(page)
     await form.getByLabel('Protocol').selectOption('UDP')
@@ -128,6 +133,27 @@ test.describe('Connectivity tests', () => {
     expect(Object.keys(request!)).toEqual(['namespace', 'pod', 'uid', 'host', 'port', 'protocol', 'candidateYAML', 'replaceExisting', 'candidateNamespace'])
   })
 
+  test('attempt warnings stay visible; standing notices and repeated trace events are folded away', async ({ page }) => {
+    const result: ConnectionProbeResponse = {
+      ...response,
+      flows: [{ ...response.flows![0], count: 8 }, { ...response.flows![0], verdict: 'DROPPED', count: 1 }],
+      warnings: ['Simulation inconclusive: Kubernetes NetworkPolicy objects in namespace postgres are not included in this probe engine baseline'],
+      notices: ['The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced.'],
+      simulation: undefined,
+    }
+    await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(result)))
+    await enabled(page)
+    await submit(page)
+    await expect(prediction(page).getByRole('heading')).toHaveText('INCONCLUSIVE')
+    await expect(page.getByRole('list', { name: 'Attempt warnings' })).toBeVisible()
+    await expect(page.getByRole('list', { name: 'Attempt warnings' })).toContainText('namespace postgres')
+    await expect(page.getByRole('region', { name: 'Test notes' })).not.toBeVisible()
+    await expect(panel(page).getByText(/Evidence & limitations/)).toContainText('2 distinct flows (9 Hubble events) · 1 notes')
+    await panel(page).getByText(/Evidence & limitations/).click()
+    await expect(page.getByRole('region', { name: 'Observed Hubble flows' })).toContainText('×8 events')
+    await expect(page.getByRole('region', { name: 'Test notes' })).toContainText('entry cannot be removed')
+  })
+
   for (const scenario of ['missing decisions', 'mixed decisions', 'not simulated', 'missing flows', 'skipped baseline', 'missing simulation'] as const) {
     test(`${scenario} never implies a universal allow`, async ({ page }) => {
       const simulation = { ...response.simulation!, rows: [{ ...VERDICT.rows[0], baselineAllowed: true, candidateAllowed: true }] }
@@ -138,7 +164,7 @@ test.describe('Connectivity tests', () => {
       if (scenario === 'missing flows') result.flows = []
       if (scenario === 'skipped baseline') simulation.skippedPolicies = ['CNP:webapp/node-selectors']
       if (scenario === 'missing simulation') result.simulation = undefined as unknown as typeof simulation
-      await page.route('**/api/probes/connection', (route) => route.fulfill({ json: result }))
+      await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(result)))
       await enabled(page)
       await submit(page)
       await expect(prediction(page).getByRole('heading')).toHaveText('INCONCLUSIVE')
@@ -147,7 +173,7 @@ test.describe('Connectivity tests', () => {
 
   test('namespace edits require fresh Pod selection and preserve uncertain mutation warnings', async ({ page }) => {
     let posts = 0
-    await page.route('**/api/probes/connection', (route) => { posts++; return route.fulfill({ status: 504, body: 'Timed out waiting for ephemeral container status' }) })
+    await page.route('**/api/probes/connection/stream', (route) => { posts++; return route.fulfill({ status: 504, body: 'Timed out waiting for ephemeral container status' }) })
     const form = await enabled(page)
     await submit(page)
     await expect(panel(page).getByRole('alert')).toContainText('may already have been added')
@@ -186,7 +212,7 @@ test.describe('Connectivity tests', () => {
     let posts = 0
     let release!: () => void
     const pending = new Promise<void>((resolve) => { release = resolve })
-    await page.route('**/api/probes/connection', async (route) => { posts++; await pending; await route.fulfill({ json: response }) })
+    await page.route('**/api/probes/connection/stream', async (route) => { posts++; await pending; await route.fulfill(probeStream(response)) })
     const form = await enabled(page)
     let confirmations = 0
     page.on('dialog', (dialog) => { confirmations++; return dialog.accept() })
@@ -209,7 +235,7 @@ test.describe('Connectivity tests', () => {
     let release!: () => void
     const pending = new Promise<void>((resolve) => { release = resolve })
     const result = { ...response, uid: 'uid-original', context: 'lab-review', apiServer: 'https://cluster.invalid', image: 'probe@sha256:123', startedAt: '2026-11-17T12:00:00Z', durationMs: 1234 }
-    await page.route('**/api/probes/connection', async (route) => { await pending; await route.fulfill({ json: result }) })
+    await page.route('**/api/probes/connection/stream', async (route) => { await pending; await route.fulfill(probeStream(result)) })
     await enabled(page)
     await page.route('**/api/probes/capabilities', (route) => route.fulfill({ json: { enabled: true, protocols: ['TCP', 'UDP'], context: 'lab-review', apiServer: 'https://cluster.invalid' } }))
     await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
@@ -249,7 +275,7 @@ test.describe('Connectivity tests', () => {
     const verdicts: Record<string, unknown>[] = []
     let connection: ConnectionProbeRequest | undefined
     await page.route('**/api/verdict', (route) => { verdicts.push(route.request().postDataJSON()); return route.fulfill({ json: VERDICT }) })
-    await page.route('**/api/probes/connection', (route) => { connection = route.request().postDataJSON(); return route.fulfill({ json: response }) })
+    await page.route('**/api/probes/connection/stream', (route) => { connection = route.request().postDataJSON(); return route.fulfill(probeStream(response)) })
     await enabled(page)
     const main = visibleForm(page)
     await expect(main.getByLabel('Replace matching live policies')).toBeChecked()
@@ -270,7 +296,7 @@ test.describe('Connectivity tests', () => {
 
   test('candidate namespace is distinct from explicit source in all-namespace scope', async ({ page }) => {
     let request: ConnectionProbeRequest | undefined
-    await page.route('**/api/probes/connection', (route) => { request = route.request().postDataJSON(); return route.fulfill({ json: response }) })
+    await page.route('**/api/probes/connection/stream', (route) => { request = route.request().postDataJSON(); return route.fulfill(probeStream(response)) })
     const form = await enabled(page)
     await visibleForm(page).getByText('All namespaces', { exact: true }).click()
     await form.getByLabel('Source namespace').fill('source-only')
@@ -282,7 +308,7 @@ test.describe('Connectivity tests', () => {
   })
 
   test('returning to tab refreshes replaced Pod inventory and marks completed evidence stale', async ({ page }) => {
-    await page.route('**/api/probes/connection', (route) => route.fulfill({ json: response }))
+    await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response)))
     await enabled(page)
     await submit(page)
     await expect(prediction(page).getByRole('heading')).toHaveText('BLOCKED')
@@ -294,7 +320,7 @@ test.describe('Connectivity tests', () => {
   })
 
   test('inventory refresh does not mark results stale while the same Pod is loading', async ({ page }) => {
-    await page.route('**/api/probes/connection', (route) => route.fulfill({ json: response }))
+    await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response)))
     const form = await enabled(page)
     await submit(page)
     await expect(prediction(page)).toBeVisible()
@@ -311,7 +337,7 @@ test.describe('Connectivity tests', () => {
 
   test('network failure remains an uncertain mutation and is never retried', async ({ page }) => {
     let posts = 0
-    await page.route('**/api/probes/connection', (route) => { posts++; return route.abort('failed') })
+    await page.route('**/api/probes/connection/stream', (route) => { posts++; return route.abort('failed') })
     await enabled(page)
     await submit(page)
     await expect(panel(page).getByRole('alert')).toContainText('may already have been added')
@@ -319,7 +345,7 @@ test.describe('Connectivity tests', () => {
   })
 
   test('reset clears completed connectivity inputs and evidence without remounting the panel', async ({ page }) => {
-    await page.route('**/api/probes/connection', (route) => route.fulfill({ json: response }))
+    await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response)))
     const form = await enabled(page)
     await submit(page)
     await expect(prediction(page)).toBeVisible()
@@ -349,7 +375,7 @@ test.describe('Connectivity tests', () => {
 
   for (const status of [400, 403, 405, 409, 413, 415, 429, 500, 504]) {
     test(`HTTP ${status} distinguishes definite rejection from uncertain mutation`, async ({ page }) => {
-      await page.route('**/api/probes/connection', (route) => route.fulfill({ status, body: 'Request rejected or unavailable' }))
+      await page.route('**/api/probes/connection/stream', (route) => route.fulfill({ status, body: 'Request rejected or unavailable' }))
       await enabled(page)
       await submit(page)
       const alert = panel(page).getByRole('alert')
@@ -392,7 +418,7 @@ test.describe('Connectivity tests', () => {
   })
 
   test('console hierarchy fits desktop light, dark, and mobile', async ({ page }) => {
-    await page.route('**/api/probes/connection', (route) => route.fulfill({ json: response }))
+    await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response)))
     await enabled(page)
     await submit(page)
     await expect(prediction(page).getByRole('heading')).toHaveText('BLOCKED')
@@ -406,5 +432,77 @@ test.describe('Connectivity tests', () => {
     await page.screenshot({ path: '/tmp/opencode/connectivity-mobile.png', fullPage: true })
     const dimensions = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }))
     expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.width)
+  })
+
+  test.describe('probe image catalog and live progress', () => {
+    const IMAGES = [
+      { id: 'netshoot', name: 'netshoot', image: 'docker.io/nicolaka/netshoot@sha256:' + 'b'.repeat(64), protocols: ['TCP', 'UDP'], description: 'Toolbox', pinned: true },
+      { id: 'busybox', name: 'BusyBox 1.37', image: 'docker.io/library/busybox:1.37', protocols: ['TCP'], description: 'Tiny', pinned: false },
+    ]
+    async function withCatalog(page: Page) {
+      const form = await enabled(page)
+      await page.route('**/api/probes/capabilities', (route) => route.fulfill({ json: { enabled: true, protocols: ['TCP', 'UDP'], images: IMAGES } }))
+      await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
+      await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
+      await form.getByLabel('Source Pod').selectOption('uid-original')
+      return form
+    }
+
+    test('picks a catalog image by id; a TCP-only image cannot run UDP', async ({ page }) => {
+      let request: ConnectionProbeRequest | undefined
+      await page.route('**/api/probes/connection/stream', (route) => { request = route.request().postDataJSON(); return route.fulfill(probeStream({ ...response, imageId: 'busybox' })) })
+      const form = await withCatalog(page)
+      const picker = form.getByRole('radiogroup', { name: 'Probe image' })
+      await expect(picker.getByRole('radio')).toHaveCount(2)
+      await expect(picker.getByRole('radio', { name: /netshoot/ })).toBeChecked()
+      await expect(picker).toContainText('Tag only, re-pulled on every test')
+      await form.getByLabel('Protocol').selectOption('UDP')
+      await picker.getByRole('radio', { name: /BusyBox/ }).check()
+      await expect(form.getByLabel('Protocol')).toHaveValue('TCP')
+      await expect(form.getByLabel('Protocol').locator('option[value="UDP"]')).toHaveJSProperty('disabled', true)
+      await expect(form.locator('input[name="image"], textarea[name="image"]')).toHaveCount(0)
+      page.once('dialog', async (dialog) => { expect(dialog.message()).toContain('Probe image: BusyBox 1.37 (docker.io/library/busybox:1.37)'); await dialog.accept() })
+      await run(page).click()
+      await expect(prediction(page).getByRole('heading')).toHaveText('BLOCKED')
+      expect(request?.imageId).toBe('busybox')
+      expect(request?.protocol).toBe('TCP')
+      await expect(page.getByRole('region', { name: 'Submitted connection test' })).toContainText('BusyBox 1.37')
+      await picker.getByRole('radio', { name: /netshoot/ }).check()
+      await expect(panel(page)).toContainText('Results are stale')
+    })
+
+    test('stepper shows streamed stages; an unreached simulation is skipped, and the path is drawn', async ({ page }) => {
+      await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response, ['authorize', 'capture', 'inject', 'run', 'collect'])))
+      await withCatalog(page)
+      await submit(page)
+      await expect(prediction(page).getByRole('heading')).toHaveText('BLOCKED')
+      const steps = panel(page).getByRole('list', { name: 'Connection test progress' }).getByRole('listitem')
+      await expect(steps).toHaveCount(6)
+      for (let i = 0; i < 5; i++) await expect(steps.nth(i)).toHaveAttribute('data-state', 'done')
+      await expect(steps.nth(5)).toHaveAttribute('data-state', 'skipped')
+      await expect(prediction(page).getByRole('img')).toHaveAttribute('aria-label', 'webapp/webapp-123 to postgres/postgres-0: baseline allowed, candidate blocked')
+    })
+
+    test('a rejection after the stream began keeps its definite status and fails the current stage', async ({ page }) => {
+      await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(null, ['authorize', 'capture'], { error: 'Pod changed before injection; select it again', status: 409 })))
+      await withCatalog(page)
+      await submit(page)
+      const alert = panel(page).getByRole('alert')
+      await expect(alert).toContainText('Test not started')
+      await expect(alert).toContainText('Pod changed before injection')
+      const steps = panel(page).getByRole('list', { name: 'Connection test progress' }).getByRole('listitem')
+      await expect(steps.nth(1)).toHaveAttribute('data-state', 'failed')
+      await expect(steps.nth(2)).toHaveAttribute('data-state', 'skipped')
+    })
+
+    test('a stream that ends without a result is an uncertain mutation', async ({ page }) => {
+      await page.route('**/api/probes/connection/stream', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: '{"stage":"authorize"}\n{"stage":"capture"}\n{"stage":"inject"}\n' }))
+      await withCatalog(page)
+      await submit(page)
+      const alert = panel(page).getByRole('alert')
+      await expect(alert).toContainText('ended before reporting a result')
+      await expect(alert).toContainText('may already have been added')
+      await expect(panel(page).getByRole('list', { name: 'Connection test progress' }).getByRole('listitem').nth(2)).toHaveAttribute('data-state', 'failed')
+    })
   })
 })

@@ -40,12 +40,12 @@ export KUBECONFIG=/path/to/kubeconfig
 ### Optional connectivity tests in Verdict
 
 ```sh
-./guardbee ui --addr 127.0.0.1:4747 --enable-probes \
-  --probe-image '<your-image:tag>'
+./guardbee ui --addr 127.0.0.1:4747 --enable-probes
 ```
 
-Replace the placeholder with your image containing compatible `timeout`
-and `nc`, plus Python 3 for UDP. Read [connectivity-test safety and image requirements](tcp-probes.html) first.
+The UI offers the built-in vetted probe images (netshoot for TCP and UDP,
+BusyBox for TCP) to pick from; `--probe-images-file` replaces that list, and
+`--probe-image` offers exactly one image. Read [connectivity-test safety and image requirements](tcp-probes.html) first.
 Load the candidate in Verdict, then expand **Connectivity tests** to generate
 TCP traffic or one fixed UDP datagram from a selected workload Pod. The headline
 compares baseline and candidate decisions; traffic-generation outcomes are
