@@ -506,6 +506,24 @@ test.describe('Connectivity tests', () => {
       await expect(steps.nth(2)).toHaveAttribute('data-state', 'skipped')
     })
 
+    // probes.go refuses an external hostname (422) right after authorize,
+    // before anything is injected; it must read as "not started", never as
+    // "a container may already have been added".
+    test('an external hostname is refused as not started, with the IP-or-Service hint', async ({ page }) => {
+      const error = "External hostnames can't be matched to Hubble flows yet: target an IP address (resolve it inside the Pod, e.g. nslookup) or a Kubernetes Service name (svc, svc.namespace, svc.namespace.svc.cluster.local). Nothing was injected."
+      await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(null, ['authorize'], { error, status: 422 })))
+      await withCatalog(page)
+      await submit(page)
+      await expect(panel(page).getByText('Host: an IP address or a Kubernetes Service name')).toBeVisible()
+      const alert = panel(page).getByRole('alert')
+      await expect(alert).toContainText('Test not started')
+      await expect(alert).toContainText("External hostnames can't be matched")
+      await expect(alert).not.toContainText('may already have been added')
+      const steps = panel(page).getByRole('list', { name: 'Connection test progress' }).getByRole('listitem')
+      await expect(steps.nth(0)).toHaveAttribute('data-state', 'failed')
+      await expect(steps.nth(2)).toHaveAttribute('data-state', 'skipped')
+    })
+
     test('a stream that ends without a result is an uncertain mutation', async ({ page }) => {
       await page.route('**/api/probes/connection/stream', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: '{"stage":"authorize"}\n{"stage":"capture"}\n{"stage":"inject"}\n' }))
       await withCatalog(page)

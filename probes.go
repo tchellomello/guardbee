@@ -131,7 +131,6 @@ type probeNote struct {
 const (
 	noteUDPMarker             = "udp-marker"
 	noteServiceMatch          = "service-match"
-	noteHostnameBestEffort    = "hostname-best-effort"
 	noteEphemeralEntry        = "ephemeral-entry"
 	noteRuntimeBound          = "runtime-bound"
 	noteBestEffortCorrelation = "best-effort-correlation"
@@ -421,6 +420,25 @@ func validateConnectionProbe(req connectionProbeRequest) error {
 	return nil
 }
 
+// Shown when a hostname target is neither an IP literal nor a Service
+// GuardBee can read: until Hubble DNS visibility (or the probe's own resolved
+// address) is used for correlation, such a target can't produce evidence.
+const probeExternalHostError = "External hostnames can't be matched to Hubble flows yet: target an IP address (resolve it inside the Pod, e.g. nslookup) or a Kubernetes Service name (svc, svc.namespace, svc.namespace.svc.cluster.local). Nothing was injected."
+
+// With probes enabled the writable API only answers to a numeric loopback
+// Host (DNS-rebinding defense, probeSameOrigin), so a browser opened on
+// "localhost" would load the UI and then have every test refused. Send it to
+// the numeric address the server listens on instead of relaxing that check.
+func probeLocalhostRedirect(addr string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h, _, err := net.SplitHostPort(r.Host); err == nil && strings.EqualFold(h, "localhost") && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			http.Redirect(w, r, "http://"+addr+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func normalizeProbeDNS(host string) string { return strings.TrimSuffix(strings.ToLower(host), ".") }
 
 // Require Origin even for non-browser clients. No CORS, forwarded-host trust,
@@ -654,7 +672,13 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		case note != "":
 			resp.Warnings = append(resp.Warnings, note)
 		default:
-			resp.note(noteHostnameBestEffort, "Hostname capture is best-effort: unless Hubble reports the destination name (DNS visibility), flows to a non-Service hostname cannot be correlated and the result stays inconclusive. Use an IP literal for external targets. DNS resolves inside the Pod, not on the GuardBee server.")
+			// Nothing on a Hubble flow ties it to an external name unless the
+			// agent's DNS proxy saw the lookup (DNS visibility), so every
+			// captured flow would be rejected and the run could only end
+			// inconclusive. Refuse before anything is injected instead.
+			s.logger.Debug("probe rejected: hostname is not a Kubernetes Service", "host", req.Host)
+			out.fail(probeExternalHostError, http.StatusUnprocessableEntity)
+			return
 		}
 	}
 	req.nodeName = p.Spec.NodeName
