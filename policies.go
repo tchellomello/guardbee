@@ -237,5 +237,12 @@ func fetchBaselineRules(logger *slog.Logger, cilium ciliumclient.Interface, name
 		rules = append(rules, parsed...)
 	}
 
+	logger.Debug("fetched baseline policies",
+		"namespace", namespaceLabel(namespace),
+		"cnps", len(cnps.Items),
+		"ccnps", len(ccnps.Items),
+		"rules", len(rules),
+		"skipped", len(skipped),
+	)
 	return rules, skipped, nil
 }

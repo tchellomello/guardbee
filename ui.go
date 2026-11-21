@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
@@ -41,6 +42,12 @@ func runUI(args []string) {
 	// not once at server startup. Registering those flags here would accept
 	// them silently without them doing anything.
 	var kubeconfig, addr, templatesDir string
+	var enableProbes bool
+	var probeImage, probeImagesFile string
+	registerDebugFlag(fs)
+	fs.BoolVar(&enableProbes, "enable-probes", false, "opt in to TCP/UDP connectivity tests that append ephemeral containers to running Pods")
+	fs.StringVar(&probeImage, "probe-image", "", "offer only this timeout/nc image (Python 3 for UDP), repository:tag or repository@sha256:digest (default: the built-in vetted image catalog)")
+	fs.StringVar(&probeImagesFile, "probe-images-file", "", "YAML/JSON catalog of probe images the UI may pick from, replacing the built-in vetted one (see probes/images.yaml)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	fs.StringVar(&addr, "addr", "127.0.0.1:4747", "address to listen on")
 	fs.StringVar(&templatesDir, "templates-dir", "", "directory of generic/ingress/egress CiliumNetworkPolicy YAML presets (default: built-in templates/)")
@@ -50,7 +57,7 @@ func runUI(args []string) {
 Starts a local web UI at the given address: the same flows/verdict
 capability as the "flows" and "verdict" subcommands, in a browser instead of
 a terminal. Uses the same kubeconfig-based cluster access as every other
-subcommand — no new cluster footprint, no remote hosting, no auth (that's a
+subcommand — read-only by default, no remote hosting, no auth (that's a
 stated future direction once this is proven locally, not this milestone).
 Namespace scope (one namespace, or all) is chosen per-request in the
 browser, not as a flag here.
@@ -61,12 +68,28 @@ CiliumNetworkPolicy YAML under generic/, ingress/, egress/ subdirectories —
 --templates-dir points at an external one; omitted, the binary's own
 built-in defaults are used.
 
+Connectivity tests are disabled unless --enable-probes is supplied. This
+opt-in appends immutable ephemeral containers to running Pods, requires
+additional RBAC, and permits numeric-loopback serving only. The browser picks
+the probe image from a catalog the server was started with, never a free-form
+image: the built-in vetted catalog by default, --probe-images-file to replace
+it, or --probe-image for exactly one image. Images need timeout and nc, plus
+Python 3 for UDP; see the connectivity-test guide.
+
 Flags:
 `, binName)
 		fs.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s ui\n  %[1]s ui --addr 127.0.0.1:9000\n  %[1]s ui --templates-dir ./my-presets\n", binName)
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s ui\n  %[1]s ui --addr 127.0.0.1:9000\n  %[1]s ui --templates-dir ./my-presets\n  %[1]s ui --enable-probes\n  %[1]s ui --enable-probes --probe-images-file ./probe-images.yaml\n", binName)
 	}
 	_ = fs.Parse(args)
+	probes, err := newProbeBackendFromFlags(enableProbes, probeImage, probeImagesFile)
+	if err == nil && enableProbes {
+		err = validateProbeListenAddr(addr)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, binName+" ui: %v\n", err)
+		os.Exit(1)
+	}
 
 	core, cilium, cfg, err := newClientsets(kubeconfig)
 	if err != nil {
@@ -81,12 +104,20 @@ Flags:
 		os.Exit(1)
 	}
 	templates := loadTemplates(logger, tFS)
-	logger.Info("loaded policy editor templates",
+	logger.Debug("loaded policy editor templates",
 		"generic", len(templates.Generic), "ingress", len(templates.Ingress), "egress", len(templates.Egress))
 
 	target := resolveKubeTarget(kubeconfig, cfg)
+	logger.Debug("ui server configured",
+		"addr", addr,
+		"context", target.context,
+		"apiServer", target.apiServer,
+		"enableProbes", enableProbes,
+		"probeImage", probeImage,
+		"probeImagesFile", probeImagesFile,
+	)
 	fmt.Printf("%s ui: using kubeconfig context %q (%s)\n", binName, target.context, target.apiServer)
-	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, target: target, logger: logger, templates: templates}
+	srv := &uiServer{core: core, cilium: cilium, cfg: cfg, target: target, logger: logger, templates: templates, probes: probes}
 
 	static, err := iofs.Sub(uiAssets, "ui/dist")
 	if err != nil {
@@ -95,6 +126,11 @@ Flags:
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/probes/capabilities", srv.handleProbeCapabilities)
+	mux.HandleFunc("GET /api/probes/pods", srv.handleProbePods)
+	mux.HandleFunc("POST /api/probes/tcp", srv.handleTCPProbe)
+	mux.HandleFunc("POST /api/probes/connection", srv.handleConnectionProbe)
+	mux.HandleFunc("POST /api/probes/connection/stream", srv.handleConnectionProbeStream)
 	mux.HandleFunc("POST /api/verdict", srv.handleVerdict)
 	mux.HandleFunc("GET /api/verdict/stream", srv.handleVerdictStream)
 	mux.HandleFunc("GET /api/flows", srv.handleFlows)
@@ -113,10 +149,45 @@ Flags:
 	mux.Handle("/", http.FileServerFS(static))
 
 	fmt.Printf("%s ui: listening on http://%s\n", binName, addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, srv.debugLogRequests(mux)); err != nil {
 		fmt.Fprintf(os.Stderr, binName+" ui: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (s *uiServer) debugLogRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !debugLogging || !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		s.logger.Debug("api request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"query", r.URL.RawQuery,
+			"status", rec.status,
+			"duration", time.Since(start).Round(time.Millisecond),
+		)
+	})
 }
 
 // uiServer holds the clientsets built once at startup, reused by every
@@ -124,6 +195,7 @@ Flags:
 // subcommand, just long-lived instead of built-and-discarded per CLI
 // invocation.
 type uiServer struct {
+	probes    *probeBackend
 	core      kubernetes.Interface
 	cilium    ciliumclient.Interface
 	cfg       *rest.Config
@@ -223,10 +295,11 @@ func (s *uiServer) handleCompat(w http.ResponseWriter, r *http.Request) {
 // (not a file path — the web form has no filesystem access to the user's
 // machine the way the CLI does).
 type verdictRequest struct {
-	Namespace     string `json:"namespace"`
-	CandidateYAML string `json:"candidateYAML"`
-	Last          uint64 `json:"last"`
-	ShowUnchanged bool   `json:"showUnchanged"`
+	ReplaceExisting bool   `json:"replaceExisting"`
+	Namespace       string `json:"namespace"`
+	CandidateYAML   string `json:"candidateYAML"`
+	Last            uint64 `json:"last"`
+	ShowUnchanged   bool   `json:"showUnchanged"`
 	flowFilterParams
 }
 
@@ -310,13 +383,15 @@ type verdictCountsOut struct {
 }
 
 type verdictRowOut struct {
-	Change      string `json:"change"`
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-	Protocol    string `json:"protocol"`
-	Port        uint16 `json:"port"`
-	Count       int    `json:"count"`
-	Explanation string `json:"explanation"`
+	BaselineAllowed  *bool  `json:"baselineAllowed,omitempty"`
+	CandidateAllowed *bool  `json:"candidateAllowed,omitempty"`
+	Change           string `json:"change"`
+	Source           string `json:"source"`
+	Destination      string `json:"destination"`
+	Protocol         string `json:"protocol"`
+	Port             uint16 `json:"port"`
+	Count            int    `json:"count"`
+	Explanation      string `json:"explanation"`
 	// Side/SourceLabels/DestinationLabels: see verdictRow.side/srcLabels/dstLabels.
 	Side              string   `json:"side,omitempty"`
 	SourceLabels      []string `json:"sourceLabels,omitempty"`
@@ -366,7 +441,7 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	comp, err := computeVerdict(s.logger, s.core, s.cilium, s.cfg, req.Namespace, filter, candidateRules, req.Last, req.ShowUnchanged)
+	comp, err := computeVerdictWithMode(s.logger, s.core, s.cilium, s.cfg, req.Namespace, filter, candidateRules, req.Last, req.ShowUnchanged, req.ReplaceExisting)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("computing verdict: %v", err), http.StatusInternalServerError)
 		return
@@ -394,13 +469,15 @@ func toCountsOut(c *verdictCounts) verdictCountsOut {
 
 func toRowOut(row *verdictRow, count int) verdictRowOut {
 	return verdictRowOut{
-		Change:      row.change,
-		Source:      row.src,
-		Destination: row.dst,
-		Protocol:    row.proto,
-		Port:        row.port,
-		Count:       count,
-		Explanation: changeExplanation(row.change),
+		BaselineAllowed:  row.baselineAllowed,
+		CandidateAllowed: row.candidateAllowed,
+		Change:           row.change,
+		Source:           row.src,
+		Destination:      row.dst,
+		Protocol:         row.proto,
+		Port:             row.port,
+		Count:            count,
+		Explanation:      changeExplanation(row.change),
 
 		Side:               row.side,
 		SourceLabels:       row.srcLabels,
@@ -442,6 +519,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	namespace := q.Get("namespace")
 	candidateYAML := q.Get("candidateYAML")
 	showUnchanged := q.Get("showUnchanged") == "true"
+	replaceExisting := q.Get("replaceExisting") == "true"
 	filter, err := flowFilterParamsFromQuery(q).filter(namespace)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -470,7 +548,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baselineRuleCount, skipped, baseline, candidate, err := buildVerdictEngines(s.logger, s.cilium, namespace, candidateRules)
+	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(s.logger, s.cilium, namespace, candidateRules, replaceExisting)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

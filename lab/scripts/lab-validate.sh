@@ -9,6 +9,12 @@
 # docs/guide/lab.md). The two candidates are the lab guide's own:
 #   looks-correct.yaml — must regress (exit 2, NEWLY_DROPPED present)
 #   merge-ready.yaml   — must pass clean (exit 0)
+# Then the connectivity tests, through the streaming endpoint the UI uses,
+# once per built-in vetted probe image (probes/images.yaml), so "vetted" is
+# re-proven against every pinned Cilium, not just claimed:
+#   netshoot: webapp → postgres:5432     must be ALLOWED → ALLOWED
+#   busybox:  prometheus → postgres:9187 must be ALLOWED → BLOCKED
+# The lab is disposable, so the ephemeral containers these add go with it.
 # Exit 3 (too few flows judged) means a freshly-created lab hasn't produced
 # enough traffic yet, so that one result is retried, never treated as a
 # pass.
@@ -29,6 +35,7 @@ NS="postgres"
 MIN_FLOWS=10
 RETRIES=6
 RETRY_SLEEP=15
+UI_ADDR="127.0.0.1:4799"
 
 bin=$(sed -n 's/.*const binName = "\(.*\)"/\1/p' globals.go)
 pinned=$(sed -n 's/.*pinnedCiliumVersion = "\(.*\)"/\1/p' globals.go)
@@ -43,8 +50,18 @@ fi
 
 kubeconfig=$(mktemp)
 export KUBECONFIG="$kubeconfig"
+ui_log=$(mktemp)
+ui_pid=""
 cleanup() {
 	local rc=$?
+	if [[ -n $ui_pid ]]; then
+		kill "$ui_pid" 2>/dev/null || true
+	fi
+	if [[ $rc -ne 0 && -s $ui_log ]]; then
+		echo "lab-validate: guardbee ui log:" >&2
+		cat "$ui_log" >&2
+	fi
+	rm -f "$ui_log"
 	# On failure, the lab is about to be deleted along with the only
 	# evidence of why — in CI there's no way to go look afterwards.
 	if [[ $rc -ne 0 ]]; then
@@ -99,4 +116,54 @@ echo "=== lab-validate: merge-ready.yaml must pass clean (exit 0) ==="
 expect_verdict lab/candidates/merge-ready.yaml 0
 
 echo
-echo "lab-validate: all lab verdicts matched against Cilium ${pinned}."
+echo "=== lab-validate: connectivity tests with the built-in probe images ==="
+command -v jq >/dev/null || { echo "lab-validate: jq is required for the connectivity checks" >&2; exit 1; }
+"./$bin" ui --kubeconfig "$kubeconfig" --addr "$UI_ADDR" --enable-probes >"$ui_log" 2>&1 &
+ui_pid=$!
+for ((i = 0; i < 30; i++)); do
+	curl -sf "http://$UI_ADDR/api/probes/capabilities" >/dev/null && break
+	sleep 1
+done
+
+# The same decision rule as the UI headline (ui/src/shared/connectivity.ts):
+# any missing, partial or mixed evidence is INCONCLUSIVE, never a pass.
+# shellcheck disable=SC2016
+decision='def side(f): if (map(f) | all(. == true)) then "ALLOWED" elif (map(f) | all(. == false)) then "BLOCKED" else "INCONCLUSIVE" end;
+	.result as $r | ($r.simulation // {}) as $s |
+	if ($r.flows | length) == 0 or (($s.rows // []) | length) == 0 or (($s.skippedPolicies // []) | length) > 0 or ($s.counts.notSimulated // 1) > 0
+	then "INCONCLUSIVE INCONCLUSIVE"
+	else ($s.rows | side(.baselineAllowed)) + " " + ($s.rows | side(.candidateAllowed)) end'
+
+# expect_probe <ns> <app> <host> <port> <image-id> <candidate> <want "BASELINE CANDIDATE">
+expect_probe() {
+	local ns=$1 app=$2 host=$3 port=$4 image=$5 candidate=$6 want=$7 pod uid body out got="" attempt
+	for ((attempt = 1; attempt <= 3; attempt++)); do
+		pod=$(kubectl -n "$ns" get pod -l "app=$app" -o jsonpath='{.items[0].metadata.name}')
+		uid=$(kubectl -n "$ns" get pod "$pod" -o jsonpath='{.metadata.uid}')
+		body=$(jq -n --arg ns "$ns" --arg pod "$pod" --arg uid "$uid" --arg host "$host" --argjson port "$port" \
+			--arg image "$image" --rawfile candidate "$candidate" \
+			'{namespace: $ns, pod: $pod, uid: $uid, host: $host, port: $port, protocol: "TCP", imageId: $image, candidateYAML: $candidate, candidateNamespace: "", replaceExisting: true}')
+		out=$(curl -sN -X POST "http://$UI_ADDR/api/probes/connection/stream" \
+			-H "Origin: http://$UI_ADDR" -H 'Content-Type: application/json' --data "$body")
+		if ! grep -q '"stage":"inject"' <<<"$out" || ! tail -n1 <<<"$out" | jq -e '.result' >/dev/null; then
+			echo "FAIL: $app → $host:$port ($image) did not stream stages and a result:" >&2
+			echo "$out" >&2
+			return 1
+		fi
+		got=$(tail -n1 <<<"$out" | jq -r "$decision")
+		[[ $got != *INCONCLUSIVE* ]] && break
+		echo "lab-validate: $app → $host:$port inconclusive (attempt $attempt/3): $(tail -n1 <<<"$out" | jq -c '.result.warnings')"
+		sleep 5
+	done
+	if [[ $got != "$want" ]]; then
+		echo "FAIL: $app → $host:$port with $image: baseline/candidate $got, expected $want" >&2
+		return 1
+	fi
+	echo "PASS: $app → $host:$port with $image: $got"
+}
+
+expect_probe webapp webapp postgres.postgres.svc.cluster.local 5432 netshoot lab/candidates/looks-correct.yaml "ALLOWED ALLOWED"
+expect_probe observability prometheus postgres.postgres.svc.cluster.local 9187 busybox lab/candidates/looks-correct.yaml "ALLOWED BLOCKED"
+
+echo
+echo "lab-validate: all lab verdicts and connectivity tests matched against Cilium ${pinned}."

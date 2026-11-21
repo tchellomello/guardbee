@@ -6,7 +6,9 @@ description: GuardBee's subcommands — policies, flows, blame, verdict, ui, and
 
 # Commands
 
-All of these are read-only against the cluster.
+All of these are read-only against the cluster by default. Explicitly opted-in
+UI connectivity tests in Verdict append ephemeral containers to generate TCP/UDP
+traffic for the loaded candidate; see [Connectivity tests](tcp-probes.html).
 
 ## `policies`
 
@@ -189,8 +191,13 @@ A pass only covers flows that were in Hubble's buffer at run time. Use `--min-fl
 A local web UI for the same engine — pick a namespace, build or paste a candidate, see the verdict as a graph.
 
 ```
-guardbee ui [--addr host:port]
+guardbee ui [--addr host:port] [--enable-probes [--probe-images-file catalog.yaml | --probe-image repository:tag]]
 ```
+
+`--enable-probes` turns on connectivity tests in Verdict. The browser picks
+the probe image from a catalog the server was started with: the built-in
+vetted one by default, `--probe-images-file` to replace it, or `--probe-image`
+for exactly one image. See [Connectivity tests](tcp-probes.html).
 
 > Calls the exact same `computeVerdict`/`fetchFlows`/`flowAttribution` functions the CLI uses — never a parallel implementation, so the UI and CLI can't disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via `go:embed` (the same pattern Argo CD's own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.
 
@@ -199,6 +206,19 @@ Your work in progress is kept in the browser (localStorage), never sent to the c
 To import a policy into the Policy Editor, paste it into **⤢ Expand / Edit**. The text stays exactly as you typed or pasted it, and the editor updates whenever it parses. **💾 Save** inside that box saves the text itself. That includes a policy the visual editor can't represent, and a paste with several `---`-separated policies; those are saved as-is and open in Verdict.
 
 To keep the browser responsive, a graph with more than 150 nodes or 300 edges isn't drawn automatically. You'll see a message instead, naming the filters that narrow the sample, and **Draw anyway** draws it. The table under the graph still lists every row. When runs are stacked, only the 3 newest expanded runs draw their graphs; older runs have a **Show graph** button. The header shows the binary's version and the Cilium engine it embeds.
+
+Both graphs (Verdict and Flows) draw each peer as a round node labelled by
+what it is: `POD`, `HOST`, `WORLD`, `API` (kube-apiserver), `NODE`, `IP`. A
+link that reaches its destination is drawn end to end. A blocked link stops
+at a ✕ on its port label, with a faint line showing where it was going. In
+Verdict, red links are `NEWLY_DROPPED`, amber `NEWLY_ALLOWED`, green still
+allowed, and grey still blocked. In Flows, green is `FORWARDED`, red
+`DROPPED`, and amber `AUDIT` (marked `!`). Only links that matter move:
+in Verdict the links the candidate changes, and in either graph every link of
+the node you select. Everything else stays still, and nothing moves at all
+with reduced motion turned on. The connectivity test result in Verdict uses
+the same picture for its single connection, with one lane for the live
+baseline and one for the candidate.
 
 The Verdict tab puts the scope and the candidate policy side by side, with results and graphs at full width below. Every tab also works at phone width.
 

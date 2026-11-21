@@ -266,12 +266,13 @@ function AppContent() {
       <VersionBanner />
 
       <main className="px-6 py-8 lg:px-10">
-        {/* All three panels stay mounted and are only hidden via CSS, not
+        {/* Panels stay mounted and are only hidden via CSS, not
             unmounted — switching tabs used to throw away in-progress work
             (a half-built policy in the editor, stacked verdict/flow runs)
             because each panel's state lives in local useState. */}
         <div className={tab === 'verdict' ? '' : 'hidden'}>
           <VerdictPanel
+            active={tab === 'verdict'}
             load={verdictLoad}
             onSavePolicy={handleSavePolicy}
             policyNamespace={policyModel.namespace}

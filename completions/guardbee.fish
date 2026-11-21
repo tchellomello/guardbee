@@ -8,6 +8,7 @@ complete -c guardbee -f -n "__fish_use_subcommand" -a "ui" -d "start a local web
 complete -c guardbee -f -n "__fish_use_subcommand" -a "version" -d "print binary, pinned engine and cluster Cilium versions"
 complete -c guardbee -f -n "__fish_use_subcommand" -a "compat" -d "list version-gated policy constructs, and why"
 
+complete -c guardbee -l debug -s D -d "enable debug logging to stderr"
 complete -c guardbee -n "__fish_seen_subcommand_from policies flows blame verdict ui version" -l kubeconfig -d "path to kubeconfig"
 complete -c guardbee -n "__fish_seen_subcommand_from version" -l client -d "don't contact the cluster"
 complete -c guardbee -n "__fish_seen_subcommand_from policies flows blame verdict" -l namespace -s n -d "namespace to scope the query to"
@@ -30,3 +31,6 @@ complete -c guardbee -n "__fish_seen_subcommand_from flows blame verdict" -l typ
 complete -c guardbee -n "__fish_seen_subcommand_from blame" -l format -x -a "table json markdown" -d "output format"
 complete -c guardbee -n "__fish_seen_subcommand_from verdict" -a "(__fish_complete_suffix .yaml)" -d "candidate policy YAML"
 complete -c guardbee -n "__fish_seen_subcommand_from ui" -l addr -d "address to listen on"
+complete -c guardbee -n "__fish_seen_subcommand_from ui" -l enable-probes -d "explicitly enable workload connectivity tests"
+complete -c guardbee -n "__fish_seen_subcommand_from ui" -l probe-image -r -d "offer only this connectivity test image (tag or digest)"
+complete -c guardbee -n "__fish_seen_subcommand_from ui" -l probe-images-file -r -F -d "catalog of probe images the UI may pick from"

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ConnectivityTestsPanel } from './ConnectivityTestsPanel'
 import { fetchPods, fetchPolicyWorkloads, runVerdict, type WorkloadsResult, type VerdictChange, type VerdictResponse, type VerdictRow } from '../api'
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { groupRows } from '../shared/groupRows'
@@ -27,24 +28,8 @@ import type { EgressRule, IngressRule, Protocol } from '../policy'
 import { runsWithLiveGraphs } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
 import { GraphNodeLink } from './GraphNodeLink'
-
-// Visual language matches the CLI's own colorize/changeColor (colors.go):
-// red for NEWLY_DROPPED, amber for NEWLY_ALLOWED, green for UNCHANGED —
-// same categories, same meaning, just rendered as chips instead of ANSI.
-const CHANGE_STYLES: Record<VerdictChange, string> = {
-  NEWLY_DROPPED: 'border-drop/40 bg-drop/10 text-drop',
-  NEWLY_ALLOWED: 'border-allow/40 bg-allow/10 text-allow',
-  UNCHANGED: 'border-unchanged/40 bg-unchanged/10 text-unchanged',
-}
-
-// Filled variants, reserved for the newly-dropped/newly-allowed summary
-// chips only — those are the actual answer this tool exists to give, so
-// they get the same solid-fill treatment as the primary "Run verdict"
-// button instead of the muted border+low-opacity look every other chip uses.
-const HEADLINE_CHIP_STYLES: Record<'NEWLY_DROPPED' | 'NEWLY_ALLOWED', string> = {
-  NEWLY_DROPPED: 'border-drop bg-drop text-void font-bold',
-  NEWLY_ALLOWED: 'border-allow bg-allow text-void font-bold',
-}
+import { CountChip, SectionLabel } from './Chips'
+import { CHANGE_STYLES, HEADLINE_CHIP_STYLES } from '../shared/chipStyles'
 
 const CATEGORY_ORDER: VerdictChange[] = ['NEWLY_DROPPED', 'NEWLY_ALLOWED', 'UNCHANGED']
 
@@ -72,6 +57,7 @@ const EMPTY_COUNTS = {
 }
 
 export interface VerdictRunItem {
+  replaceExisting: boolean
   id: string
   timestamp: Date
   namespace: string
@@ -101,6 +87,7 @@ export interface VerdictLoad {
 }
 
 export interface VerdictPanelProps {
+  active?: boolean
   load?: VerdictLoad | null
   onSavePolicy?: (entry: NewSavedPolicy) => boolean
   // The Policy Editor's in-progress draft namespace and a way to append a
@@ -112,6 +99,7 @@ export interface VerdictPanelProps {
 }
 
 export function VerdictPanel({
+  active = false,
   load,
   onSavePolicy,
   policyNamespace = '',
@@ -122,6 +110,9 @@ export function VerdictPanel({
   // exceptions included. Runs aren't restored: they're snapshots of live
   // traffic at that moment, and stale results would read as current.
   const [stored] = useState(loadVerdictForm)
+  const [replaceExisting, setReplaceExisting] = useState(stored.replaceExisting)
+  const [resetGeneration, setResetGeneration] = useState(0)
+  const [probeRunning, setProbeRunning] = useState(false)
   const [namespace, setNamespace] = useState(stored.namespace)
   const [allNamespaces, setAllNamespaces] = useState(stored.allNamespaces)
   const [last, setLast] = useState(stored.last)
@@ -149,6 +140,7 @@ export function VerdictPanel({
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const streamRunIdRef = useRef<string | null>(null)
+  const requestGenerationRef = useRef(0)
 
   useEffect(() => {
     if (!load) return
@@ -159,8 +151,8 @@ export function VerdictPanel({
   }, [load])
 
   useEffect(() => {
-    persistVerdictForm({ namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter })
-  }, [namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter])
+    persistVerdictForm({ namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter, replaceExisting })
+  }, [namespace, allNamespaces, last, showUnchanged, candidateYAML, savedName, filter, replaceExisting])
 
   function handleSave(name: string): boolean {
     const updated =
@@ -192,7 +184,13 @@ export function VerdictPanel({
   }
 
   function handleResetSession() {
+    if (probeRunning) return
+    setResetGeneration((generation) => generation + 1)
+    setReplaceExisting(true)
     stopStreaming()
+    requestGenerationRef.current++
+    setLoading(false)
+    setLoadingSince(null)
     setRuns([])
     setError(null)
     setNamespace('')
@@ -207,11 +205,15 @@ export function VerdictPanel({
 
   function handleClearResults() {
     stopStreaming()
+    requestGenerationRef.current++
+    setLoading(false)
+    setLoadingSince(null)
     setRuns([])
     setError(null)
   }
 
   function handleDuplicateToForm(run: VerdictRunItem) {
+    setReplaceExisting(run.replaceExisting)
     setNamespace(run.namespace)
     setAllNamespaces(run.allNamespaces)
     setLast(run.last)
@@ -248,6 +250,7 @@ export function VerdictPanel({
         allNamespaces,
         last,
         showUnchanged,
+        replaceExisting,
         candidateYAML,
         filter,
         isStreaming: true,
@@ -269,6 +272,7 @@ export function VerdictPanel({
         candidateYAML,
         last: String(last),
         showUnchanged: String(showUnchanged),
+        replaceExisting: String(replaceExisting),
       })
       if (ns) params.set('namespace', ns)
       appendFlowFilter(params, filter)
@@ -331,13 +335,14 @@ export function VerdictPanel({
       return
     }
 
-    await runOneShot({ namespace: ns, allNamespaces, last, showUnchanged, candidateYAML, filter }, stackRuns)
+    await runOneShot({ namespace: ns, allNamespaces, last, showUnchanged, candidateYAML, filter, replaceExisting }, stackRuns)
   }
 
   async function runOneShot(
-    params: Pick<VerdictRunItem, 'namespace' | 'allNamespaces' | 'last' | 'showUnchanged' | 'candidateYAML' | 'filter'>,
+    params: Pick<VerdictRunItem, 'namespace' | 'allNamespaces' | 'last' | 'showUnchanged' | 'candidateYAML' | 'filter' | 'replaceExisting'>,
     stack: boolean
   ) {
+    const generation = ++requestGenerationRef.current
     const startedAt = new Date()
     setLoading(true)
     setLoadingSince(startedAt.getTime())
@@ -348,8 +353,10 @@ export function VerdictPanel({
         candidateYAML: params.candidateYAML,
         last: params.last,
         showUnchanged: params.showUnchanged,
+        replaceExisting: params.replaceExisting,
         ...flowFilterParams(params.filter),
       })
+      if (generation !== requestGenerationRef.current) return
       const newRun: VerdictRunItem = {
         ...params,
         id: `run-${Date.now()}`,
@@ -360,10 +367,13 @@ export function VerdictPanel({
       }
       setRuns((prev) => (stack ? [newRun, ...prev] : [newRun]))
     } catch (err) {
+      if (generation !== requestGenerationRef.current) return
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setLoading(false)
-      setLoadingSince(null)
+      if (generation === requestGenerationRef.current) {
+        setLoading(false)
+        setLoadingSince(null)
+      }
     }
   }
 
@@ -424,10 +434,12 @@ export function VerdictPanel({
               </Field>
               <div className="flex flex-col gap-2 sm:pt-6">
                 <CheckRow label="Show unchanged" checked={showUnchanged} onChange={setShowUnchanged} />
+                <CheckRow label="Replace matching live policies" checked={replaceExisting} onChange={setReplaceExisting} />
                 <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
                 <CheckRow label="Stack runs" checked={stackRuns} onChange={setStackRuns} />
               </div>
             </div>
+            <p className="text-xs text-ink-dim">Replacement models an update to matching live policy names. Uncheck for additive simulation: keep live policies and add the candidate. Neither mode applies a policy.</p>
 
             <FlowFilterFields
               filter={filter}
@@ -483,6 +495,7 @@ export function VerdictPanel({
               <button
                 type="button"
                 onClick={handleResetSession}
+                disabled={probeRunning}
                 title="Clear all results and reset the form to start fresh"
                 className="border border-line bg-void/60 px-3 py-2.5 font-display text-xs font-semibold uppercase text-ink-dim hover:border-line-bright hover:text-ink transition-colors cursor-pointer"
               >
@@ -520,6 +533,7 @@ export function VerdictPanel({
                 modal — the old read-only <button> swallowed paste entirely.
                 The expand button still opens the wider editor. */}
             <textarea
+              aria-label="Candidate YAML"
               value={candidateYAML}
               onChange={(e) => setCandidateYAML(e.target.value)}
               required
@@ -576,6 +590,11 @@ export function VerdictPanel({
           </div>
         )}
 
+      </form>
+
+      <ConnectivityTestsPanel active={active} candidateYAML={candidateYAML} namespace={namespace} allNamespaces={allNamespaces} replaceExisting={replaceExisting} resetGeneration={resetGeneration} onRunningChange={setProbeRunning} onOpenHelp={openHelp} />
+
+      <div className="mt-6 space-y-6">
         {runs.length > 0 && (
           <div className="flex items-center justify-between border-b border-line pb-3">
             <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
@@ -617,7 +636,7 @@ export function VerdictPanel({
             onAddException={(yaml) => handleAddException(run, yaml)}
           />
         ))}
-      </form>
+      </div>
 
       {/* Informative Verdict Help Modal */}
       <VerdictHelpModal
@@ -736,6 +755,9 @@ function RunCard({
             {run.timestamp.toLocaleTimeString()}
           </span>
           <RunDuration run={run} />
+          <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
+            {run.replaceExisting ? 'mode: replace matching policies' : 'mode: additive'}
+          </span>
           {run.result.context && (
             <span
               title={`The cluster this run judged: kubeconfig context ${run.result.context}${
@@ -914,6 +936,8 @@ function RunCard({
               <p className="text-sm text-ink-dim">
                 No flows observed for this scope in Hubble's current buffer — nothing to simulate.
               </p>
+            ) : result.counts.notSimulated > 0 || result.counts.replySkipped > 0 || result.skippedPolicies?.length || result.counts.unchanged === 0 || result.counts.newlyDropped > 0 || result.counts.newlyAllowed > 0 ? (
+              <p className="text-sm text-ink-dim">Inconclusive sample — {result.counts.unchanged === 0 ? 'no unchanged modeled flows' : `${result.counts.unchanged} unchanged modeled flows`}; {result.counts.notSimulated} not simulated, {result.counts.replySkipped} replies skipped. {result.skippedPolicies?.length ? 'Baseline policies were skipped; the comparison is incomplete.' : 'No universal no-regression conclusion can be drawn from this sample.'}</p>
             ) : (
               <p className="text-sm text-unchanged">
                 ✓ No regressions — {result.flowsSampled} flow(s) sampled, all unchanged
@@ -995,16 +1019,6 @@ function RunCard({
           ))}
         </div>
       )}
-    </div>
-  )
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase w-full">
-      <span className="h-px flex-1 bg-line" />
-      {children}
-      <span className="h-px flex-1 bg-line" />
     </div>
   )
 }
@@ -1146,49 +1160,5 @@ function AddToPolicyButton({
         </div>
       )}
     </div>
-  )
-}
-
-
-function CountChip({
-  label,
-  value,
-  className,
-  filled,
-  onClick,
-}: {
-  label: string
-  value: number
-  className: string
-  // True for the filled (bg-drop/bg-allow) headline chips, whose base text
-  // is text-void — the glyph's own "dim" shade has to be void-based there
-  // too, or text-ink-faint (tuned for dark/void backgrounds) disappears
-  // against a bright solid fill.
-  filled?: boolean
-  onClick?: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={`Click to learn more about "${label}" flows`}
-      className={`group border px-2.5 py-1 text-xs font-medium ${className} cursor-pointer hover:brightness-110 active:scale-98 transition-all flex items-center gap-1.5`}
-    >
-      <span className="font-semibold">{value}</span>
-      <span>{label}</span>
-      {/* Deliberately not colored by the chip's own category color — this
-          is the one part of the chip that's actually clickable-for-info,
-          so it reads as a distinct affordance instead of blending into the
-          (non-interactive-looking) count + label. */}
-      <span
-        className={
-          filled
-            ? 'rounded-full text-void/50 transition-colors group-hover:text-void group-focus-visible:text-void group-focus-visible:ring-1 group-focus-visible:ring-void'
-            : 'rounded-full text-ink-faint transition-colors group-hover:text-signal group-focus-visible:text-signal group-focus-visible:ring-1 group-focus-visible:ring-signal'
-        }
-      >
-        ⓘ
-      </span>
-    </button>
   )
 }

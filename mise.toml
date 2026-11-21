@@ -103,6 +103,11 @@ description = "End-to-end UI tests (ui/e2e, Playwright) against the freshly buil
 depends = ["build"]
 run = "bash scripts/e2e.sh \"$@\""
 
+[tasks.docs-screenshots]
+description = "Regenerate docs/images screenshots (light theme) from the mocked Lab scenario (ui/e2e/docs/screenshots.docs.ts). Review the images before committing. Args go to playwright test, e.g. -g lab-04"
+depends = ["build"]
+run = "bash scripts/e2e.sh -c playwright.docs.config.ts \"$@\""
+
 [tasks.nix-hashes]
 description = "Recompute nix/package.nix's npmDepsHash and vendorHash after a dependency change (bump-cilium runs this for you). Needs nix; skips without it."
 run = "bash scripts/nix-hashes.sh"

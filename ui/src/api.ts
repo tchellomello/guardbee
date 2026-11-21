@@ -2,13 +2,15 @@
 // and shapes mirror ui.go's verdictRequest/verdictResponse/flowsResponse
 // exactly — these two files are the one contract, kept in sync by hand since
 // there's no shared schema generation for a project this size yet.
-
+import { isProbeStage, splitNDJSON, type ProbeStageId } from './shared/probeStages'
+import type { ProbeNote } from './shared/probeNotes'
 import type { EgressRule, IngressRule, PolicyModel } from './policy'
 import type { FlowFilterParams } from './shared/flowFilter'
 
 // The flow filter (shared/flowFilter.ts, ui.go's flowFilterParams) rides
 // along as the same top-level keys the CLI flags use: toPod, fromIp, verdict…
 export interface VerdictRequest extends FlowFilterParams {
+  replaceExisting?: boolean
   namespace: string // "" = all namespaces
   candidateYAML: string
   last: number
@@ -18,6 +20,8 @@ export interface VerdictRequest extends FlowFilterParams {
 export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'UNCHANGED'
 
 export interface VerdictRow {
+  baselineAllowed?: boolean
+  candidateAllowed?: boolean
   change: VerdictChange
   source: string
   destination: string
@@ -102,6 +106,144 @@ export interface FlowsResponse {
 
 export interface NamespacesResponse {
   namespaces: string[]
+}
+
+export interface ProbePod {
+  name: string
+  uid: string
+}
+
+export type ProbeProtocol = 'TCP' | 'UDP'
+
+export interface ConnectionProbeRequest {
+  replaceExisting: boolean
+  candidateNamespace: string
+  namespace: string
+  pod: string
+  uid: string
+  host: string
+  port: number
+  protocol: ProbeProtocol
+  candidateYAML: string
+  // A catalog entry id from ProbeCapabilities.images, never an image
+  // reference; omitted against a server without a catalog.
+  imageId?: string
+}
+
+export interface ConnectionProbeResponse {
+  uid?: string
+  context?: string
+  apiServer?: string
+  image?: string
+  imageId?: string
+  startedAt?: string
+  durationMs?: number
+  namespace: string
+  pod: string
+  host: string
+  port: number
+  protocol?: ProbeProtocol
+  outcome?: 'connected' | 'generated' | 'failed' | 'inconclusive'
+  message: string
+  containerName?: string
+  // count: identical trace events of one connection, folded server-side.
+  flows?: (Flow & { count?: number })[]
+  simulation?: VerdictResponse
+  // warnings: problems with this attempt. notes: standing caveats every
+  // attempt carries (ephemeral entry remains, simulation mode, …), each with
+  // a stable code (see shared/probeNotes.ts).
+  warnings?: string[]
+  notes?: ProbeNote[]
+}
+
+export interface ProbeImage {
+  id: string
+  name: string
+  image: string
+  protocols: ProbeProtocol[]
+  description?: string
+  // pinned: referenced by digest, so every test runs the same bytes.
+  pinned: boolean
+}
+
+export interface ProbeCapabilities {
+  enabled: boolean
+  protocols?: ProbeProtocol[]
+  context?: string
+  apiServer?: string
+  image?: string
+  images?: ProbeImage[]
+}
+
+export function fetchProbeCapabilities(): Promise<ProbeCapabilities> {
+  return fetch('/api/probes/capabilities').then((res) => parseErrorOrJSON<ProbeCapabilities>(res))
+}
+
+// Unlike /api/pods (label suggestions), this inventory contains only running
+// probe-eligible Pods and their UID, so replacement cannot target a namesake.
+export function fetchProbePods(namespace: string): Promise<{ pods: ProbePod[]; excluded?: Record<string, number> }> {
+  return fetch(`/api/probes/pods?${new URLSearchParams({ namespace })}`).then((res) =>
+    parseErrorOrJSON<{ pods: ProbePod[]; excluded?: Record<string, number> }>(res)
+  )
+}
+
+export function runConnectionProbe(req: ConnectionProbeRequest): Promise<ConnectionProbeResponse> {
+  return fetch('/api/probes/connection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  }).then(async (res) => {
+    if (!res.ok) throw new ConnectionProbeError(await res.text() || `request failed: ${res.status}`, res.status)
+    return res.json() as Promise<ConnectionProbeResponse>
+  })
+}
+
+// runConnectionProbeStream is runConnectionProbe reported as it happens:
+// onStage fires for each stage the server reaches, then the result resolves.
+// A rejection before anything happened is still a plain HTTP status; one
+// after the stream began arrives as an {"error","status"} line and keeps the
+// same definite-vs-uncertain meaning. A stream that ends without a terminal
+// line is uncertain (status 0): something may already have been injected.
+export async function runConnectionProbeStream(req: ConnectionProbeRequest, onStage: (stage: ProbeStageId) => void): Promise<ConnectionProbeResponse> {
+  const res = await fetch('/api/probes/connection/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new ConnectionProbeError(await res.text() || `request failed: ${res.status}`, res.status)
+  if (!res.body) throw new ConnectionProbeError('Connection test stream unavailable', 0)
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    let parsed: ReturnType<typeof splitNDJSON>
+    try {
+      parsed = splitNDJSON(done ? `${buffer}\n` : buffer)
+    } catch {
+      throw new ConnectionProbeError('Connection test stream was corrupted', 0)
+    }
+    buffer = parsed.rest
+    for (const line of parsed.lines) {
+      const event = line as { stage?: unknown; result?: ConnectionProbeResponse; error?: string; status?: number }
+      if (event.result) return event.result
+      if (event.error !== undefined) throw new ConnectionProbeError(event.error, event.status ?? 0)
+      if (isProbeStage(event.stage)) onStage(event.stage)
+    }
+    if (done) throw new ConnectionProbeError('Connection test ended before reporting a result', 0)
+  }
+}
+
+export class ConnectionProbeError extends Error {
+  readonly definiteRejection: boolean
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+    this.name = 'ConnectionProbeError'
+    this.definiteRejection = [400, 403, 405, 409, 413, 415, 429].includes(status)
+  }
 }
 
 async function parseErrorOrJSON<T>(res: Response): Promise<T> {
@@ -354,4 +496,3 @@ export interface CompatResponse {
 export function fetchCompat(): Promise<CompatResponse> {
   return fetch('/api/compat').then((res) => parseErrorOrJSON<CompatResponse>(res))
 }
-

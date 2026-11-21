@@ -348,7 +348,67 @@ categories means.
 
 ---
 
-## Step 5 — Tear down
+## Step 5 — Prove one connection with a connectivity test (optional)
+
+`verdict` predicts from traffic Hubble already saw. A connectivity test
+makes one fresh connection from a real Pod and judges *that* against the
+same candidate, which is handy when the flow you care about is rare (the
+Prometheus scrape here runs far less often than `webapp`'s polling).
+
+It's the one thing in this lab that changes the cluster: it appends a small
+ephemeral container to the source Pod. That's fine on this throwaway lab.
+
+```
+guardbee ui --enable-probes
+```
+
+In **Verdict**, paste `lab/candidates/looks-correct.yaml` as the candidate,
+then expand **Connectivity tests**:
+
+1. **Probe image** — pick **BusyBox 1.37**. It's one of the built-in vetted
+   images, pinned by digest, and only does TCP, so UDP is greyed out.
+2. Tick **All namespaces**, set **Source namespace** to `observability`,
+   and pick the `prometheus-…` Pod.
+3. **Host or IP** `postgres.postgres.svc.cluster.local`, **Port** `9187`.
+4. **Review & run connection test**, then confirm.
+
+<div class="expect" markdown="1">
+<div class="expect-titlebar"><span class="expect-dot red"></span><span class="expect-dot yellow"></span><span class="expect-dot green"></span><span class="expect-label">Expected result</span></div>
+<div class="expect-body" markdown="1">
+
+The stepper ticks through **Authorize → Hubble capture → Inject probe →
+Run probe → Collect flows → Simulate candidate** as the server reports each
+stage. Then the path diagram shows the **baseline** lane flowing through the
+policy gate and the **candidate** lane stopped at it:
+
+```
+PREDICTED WITH CANDIDATE   BLOCKED
+Baseline model  ALLOWED    With candidate  BLOCKED
+Observed TCP transport: connected
+```
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict — connectivity test</span></div>
+<img src="../images/ui-connectivity-test.png" alt="Connectivity test from prometheus to postgres:9187 with the BusyBox image: every stage done, a red banner saying the connection would break, and the path diagram with the baseline lane flowing through the policy gate and the candidate lane stopped at a cross" />
+</div>
+
+The scrape the Step 3 verdict flagged, reproduced on demand: the connection
+works today (no policy yet) and the candidate would cut it. Run the same
+test from the `webapp` Pod to port `5432` and both lanes flow: **ALLOWED →
+ALLOWED**. Then load `merge-ready.yaml` and re-run the 9187 test: the
+candidate lane now flows too.
+
+</div>
+</div>
+
+`mise run lab-validate` runs exactly these two tests (one per built-in
+image) on a fresh lab, so the vetted images are re-checked against every
+pinned Cilium. See [Connectivity tests](tcp-probes.html) for the image
+catalog, `--probe-images-file`, and the safety model.
+
+---
+
+## Step 6 — Tear down
 
 ```
 mise run lab-down

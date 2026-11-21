@@ -35,7 +35,17 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
   UI and CLI can't disagree on a verdict for the same input, only present it
   differently.
 
-All five are read-only against the cluster, by design, in v1.
+All five are read-only against the cluster by default. The UI's explicit
+`--enable-probes` opt-in is the exception (images come from a server-side
+catalog — built-in `probes/images.yaml`, `--probe-images-file`, or one
+`--probe-image` — that the browser picks from by id, never by reference):
+bounded TCP/UDP connectivity tests in Verdict append a restricted ephemeral
+container to an existing Pod. UDP emission alone never proves reachability.
+They never change workload labels, apply a candidate, or delete/restart Pods.
+Terminated entries remain until normal Pod replacement. See
+`docs/guide/tcp-probes.md` and the separate `kubernetes/probes-rbac.yaml`.
+Probe simulation must withhold conclusions for unverified agent-side semantics
+or incomplete capture; do not replace Cilium's engine with a custom matcher.
 
 ## Architecture principle that overrides convenience
 
@@ -182,6 +192,7 @@ flake.nix, nix/package.nix  Nix flake users install from (docs/guide/install.md)
 kubernetes/rbac.yaml  read-only ServiceAccount/ClusterRole for the CLI's own access, validated live
 templates/        generic/ingress/egress CiliumNetworkPolicy YAML presets (real, standalone CNPs)
 examples/         ready-to-run candidate policies matching the self-paced Lab's scenario, plus generic patterns
+probes/images.yaml  built-in vetted probe image catalog (probeimages.go embeds it; --probe-images-file replaces it). List only protocols an image passed live
 ui/               React + TypeScript + Vite + Tailwind + @xyflow/react frontend (milestone 1 web UI)
 ```
 
@@ -213,6 +224,7 @@ mise run completions  # regenerate shell completions after a rename or flag/subc
 mise run compat-scan <from-version> <to-version>  # discover new compat.go gate candidates; manual, see above
 mise run e2e       # end-to-end UI tests in a real browser (ui/e2e, Playwright); args go to playwright, e.g. -- flows
 mise run coverage  # coverage ratchet: fails if Go or UI unit coverage drops below coverage-baseline.json
+mise run docs-screenshots  # regenerate docs/images (light theme) from the mocked Lab scenario; review before committing
 ```
 
 `mise run build` **always rebuilds the frontend first** — the Go binary
