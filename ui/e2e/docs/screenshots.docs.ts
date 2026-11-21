@@ -208,6 +208,8 @@ test('ui-mobile-filters', async ({ page }) => {
   const form = visibleForm(page)
   await form.getByText(/Filters/).first().click()
   await form.getByRole('button', { name: 'Dropped', exact: true }).click()
+  // Off the pill, so it shows as active rather than hovered.
+  await page.mouse.move(0, 0)
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: out('ui-mobile-filters') })
 })
