@@ -11,23 +11,20 @@
 //   traffic paths never cut through text.
 // - Labels are staggered along the cubic bezier curve to eliminate visual bottlenecks.
 // - Multi-port flows between the same endpoints are consolidated into single clean badges.
+//
+// Look: the connectivity test's path diagram (GraphPathParts.tsx) — round
+// endpoint nodes; links that flow through, or stop at a ✕ gate when the
+// candidate blocks them. Only changed links (and the selected node's) move.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
-  BaseEdge,
   Controls,
-  EdgeLabelRenderer,
-  getBezierPath,
-  Handle,
   Position,
   ReactFlow,
-  type Edge,
-  type EdgeProps,
   type Node,
   type NodeChange,
-  type NodeProps,
   type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -36,22 +33,24 @@ import { useTheme } from '../theme'
 import { graphTooLarge } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
 import { NodeLabelsPanel } from './NodeLabelsPanel'
+import { EndpointNode, makePathEdge, type EndpointData, type PathEdgeData, type PathEdgeType } from './GraphPathParts'
 
-const EDGE_COLORS: Record<'dark' | 'light', Record<VerdictChange, string>> = {
+const EDGE_COLORS: Record<'dark' | 'light', Record<VerdictChange | 'BLOCKED', string>> = {
   dark: {
     NEWLY_DROPPED: '#ff5d5d',
     NEWLY_ALLOWED: '#ffb648',
     UNCHANGED: '#5ee8a5',
+    BLOCKED: '#7b9799',
   },
   light: {
     NEWLY_DROPPED: '#dc2626',
     NEWLY_ALLOWED: '#b45309',
     UNCHANGED: '#15803d',
+    BLOCKED: '#527072',
   },
 }
 
-const BASE_NODE_CLASS =
-  '!w-[240px] !whitespace-normal !break-words !rounded-none !border !px-3 !py-2.5 !text-xs !font-mono cursor-pointer transition-all duration-200 select-none'
+const NODE_CLASS = 'cursor-pointer select-none'
 
 const ROW_HEIGHT = 130
 const NODE_WIDTH = 240
@@ -62,166 +61,21 @@ const FALLBACK_COLUMN_GAP = 780
 // span close to the full canvas instead of a fixed, viewport-independent gap.
 const COLUMN_MARGIN_FRACTION = 0.04
 
-interface VerdictEdgeData {
-  change: VerdictChange
-  label: string
-  color: string
-  labelT: number
-  isDimmed: boolean
-  [key: string]: unknown
-}
+type CustomEdge = PathEdgeType
 
-type CustomEdge = Edge<VerdictEdgeData, 'verdict'>
-
-// Calculates an explicit coordinate along a cubic bezier curve given parameter t in [0, 1]
-function getBezierPoint(
-  sourceX: number,
-  sourceY: number,
-  targetX: number,
-  targetY: number,
-  t: number,
-  curvature: number = 0.25
-): [number, number] {
-  const dx = (targetX - sourceX) * curvature
-  const p0 = [sourceX, sourceY]
-  const p1 = [sourceX + dx, sourceY]
-  const p2 = [targetX - dx, targetY]
-  const p3 = [targetX, targetY]
-
-  const mt = 1 - t
-  const mt2 = mt * mt
-  const mt3 = mt2 * mt
-  const t2 = t * t
-  const t3 = t2 * t
-
-  const x = mt3 * p0[0] + 3 * mt2 * t * p1[0] + 3 * mt * t2 * p2[0] + t3 * p3[0]
-  const y = mt3 * p0[1] + 3 * mt2 * t * p1[1] + 3 * mt * t2 * p2[1] + t3 * p3[1]
-
-  return [x, y]
-}
-
-// Edges spanning many rows get more curvature so they sweep around the
-// dense horizontal midline instead of cutting straight through it, reducing
-// crossing density on graphs with many flows — a straight/near-straight edge
-// between adjacent rows keeps its curvature small.
-function computeCurvature(sourceY: number, targetY: number): number {
-  const rowDistance = Math.abs(targetY - sourceY) / ROW_HEIGHT
-  return Math.min(0.6, 0.15 + rowDistance * 0.08)
-}
-
-function VerdictEdgeComponent({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition = Position.Right,
-  targetPosition = Position.Left,
-  style = {},
-  data,
-}: EdgeProps<CustomEdge>) {
-  const curvature = computeCurvature(sourceY, targetY)
-
-  const [edgePath] = getBezierPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-    curvature,
-  })
-
-  const t = data?.labelT ?? 0.5
-  const [labelX, labelY] = getBezierPoint(sourceX, sourceY, targetX, targetY, t, curvature)
-  const isDimmed = data?.isDimmed ?? false
-  const color = data?.color ?? '#5ee8a5'
-
-  return (
-    <>
-      <BaseEdge
-        id={id}
-        path={edgePath}
-        style={{
-          ...style,
-          stroke: color,
-          strokeWidth: isDimmed ? 1 : 2,
-          opacity: isDimmed ? 0.08 : 1,
-          transition: 'opacity 0.2s ease, stroke-width 0.2s ease',
-        }}
-      />
-      {data?.label && (
-        <EdgeLabelRenderer>
-          <div
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: isDimmed ? 'none' : 'all',
-              opacity: isDimmed ? 0.05 : 1,
-              transition: 'opacity 0.2s ease',
-            }}
-            className={`z-10 flex items-center gap-1 rounded-sm border px-2 py-0.5 font-mono text-[11px] font-semibold tracking-tight shadow-xs select-none backdrop-blur-xs ${
-              data.change === 'NEWLY_DROPPED'
-                ? 'border-drop/40 bg-panel text-drop shadow-[0_1px_3px_rgba(220,38,38,0.1)]'
-                : data.change === 'NEWLY_ALLOWED'
-                ? 'border-allow/40 bg-panel text-allow shadow-[0_1px_3px_rgba(217,119,6,0.1)]'
-                : 'border-unchanged/40 bg-panel text-unchanged shadow-[0_1px_3px_rgba(22,163,74,0.1)]'
-            }`}
-          >
-            {data.label}
-          </div>
-        </EdgeLabelRenderer>
-      )}
-    </>
-  )
+const BADGE_CLASSES: Record<VerdictChange | 'BLOCKED', string> = {
+  NEWLY_DROPPED: 'border-drop/40 text-drop',
+  NEWLY_ALLOWED: 'border-allow/40 text-allow',
+  UNCHANGED: 'border-unchanged/40 text-unchanged',
+  BLOCKED: 'border-line-bright text-ink-dim',
 }
 
 const edgeTypes = {
-  verdict: VerdictEdgeComponent,
-}
-
-// Kubernetes pod names follow <workload>-<10-char-replicaset-hash>-<5-char-pod-hash>;
-// detect that shape so only the generated suffix gets truncated, rather than
-// a fixed character count that would mis-truncate short, hand-picked names.
-const POD_HASH_SUFFIX = /^(.+)-([a-z0-9]{8,10})-([a-z0-9]{5})$/
-
-function truncateWorkloadName(name: string): string {
-  const match = name.match(POD_HASH_SUFFIX)
-  if (!match) return name
-  const [, prefix, , podHash] = match
-  return `${prefix}-…${podHash.slice(-4)}`
-}
-
-function parseNodeLabel(raw: string): { namespace: string | null; workload: string } {
-  const slashIndex = raw.indexOf('/')
-  if (slashIndex === -1) return { namespace: null, workload: raw }
-  return { namespace: raw.slice(0, slashIndex), workload: raw.slice(slashIndex + 1) }
-}
-
-// Custom node renderer so a real label like
-// "observability/prometheus-snmp-exporter-76b49d99df-rgq8m" gets visual
-// hierarchy (dim namespace, bold workload name, truncated hash) instead of
-// one undifferentiated string — the full label stays available via `title`
-// for hover. Handles are drawn manually since overriding the node type opts
-// out of xyflow's default node rendering (which draws them automatically).
-function WorkloadNode({ data, sourcePosition, targetPosition }: NodeProps) {
-  const label = (data as { label?: string }).label ?? ''
-  const { namespace, workload } = parseNodeLabel(label)
-
-  return (
-    <>
-      <Handle type="target" position={targetPosition ?? Position.Left} />
-      <div title={label} className="flex flex-col gap-0.5">
-        {namespace && <span className="block text-ink-dim text-[10px] leading-tight">{namespace}</span>}
-        <span className="block text-ink font-semibold leading-tight">{truncateWorkloadName(workload)}</span>
-      </div>
-      <Handle type="source" position={sourcePosition ?? Position.Right} />
-    </>
-  )
+  path: makePathEdge(ROW_HEIGHT),
 }
 
 const nodeTypes = {
-  workload: WorkloadNode,
+  endpoint: EndpointNode,
 }
 
 interface VerdictGraphProps {
@@ -357,37 +211,25 @@ function VerdictGraphCanvas({ rows, selectedNodeId, onSelectNode }: VerdictGraph
     const selectedNode = initialNodes.find((n) => n.id === selectedNodeId)
     const selectedNodeName = (selectedNode?.data as { label?: string })?.label || selectedNodeId
 
-    const updatedNodes = initialNodes.map((node) => {
-      const isSelected = node.id === selectedNodeId
-      const isConnected = connectedNodeIds.has(node.id)
-
-      let className = BASE_NODE_CLASS
-      if (isSelected) {
-        className +=
-          ' !border-signal !bg-[var(--color-panel-raised)] !text-[var(--color-ink)] ring-2 ring-signal shadow-[0_0_12px_var(--color-signal-glow)] z-20'
-      } else if (isConnected) {
-        className +=
-          ' !border-[var(--color-line-bright)] !bg-[var(--color-panel-raised)] !text-[var(--color-ink)] shadow-[0_0_0_1px_var(--color-signal-glow)] z-10'
-      } else {
-        className +=
-          ' !border-[var(--color-line)] !bg-[var(--color-panel)] !text-[var(--color-ink-faint)] opacity-20 filter grayscale'
-      }
-
-      return {
-        ...node,
-        className,
-      }
-    })
+    const updatedNodes = initialNodes.map((node) => ({
+      ...node,
+      data: {
+        ...(node.data as EndpointData),
+        state: node.id === selectedNodeId ? 'selected' : connectedNodeIds.has(node.id) ? 'connected' : 'dimmed',
+      },
+      zIndex: node.id === selectedNodeId ? 20 : connectedNodeIds.has(node.id) ? 10 : 0,
+    }))
 
     const updatedEdges = initialEdges.map((edge) => {
       const isConnected = connectedEdgeIds.has(edge.id)
       return {
         ...edge,
-        animated: isConnected && edge.data?.change !== 'UNCHANGED',
         zIndex: isConnected ? 10 : 0,
         data: {
           ...edge.data!,
           isDimmed: !isConnected,
+          // Everything touching the selected node moves; the rest is dimmed.
+          animate: isConnected,
         },
       }
     })
@@ -480,9 +322,6 @@ function buildGraph(
   const sources = Array.from(new Set(rows.map((r) => r.source))).sort()
   const destinations = Array.from(new Set(rows.map((r) => r.destination))).sort()
 
-  const defaultNodeClass =
-    BASE_NODE_CLASS +
-    ' !border-[var(--color-line-bright)] !bg-[var(--color-panel-raised)] !text-[var(--color-ink)] !shadow-[0_0_0_1px_var(--color-signal-glow)]'
 
   // Source column near the left edge, destination column near the right
   // edge, both as fractions of the measured container width so the graph
@@ -498,19 +337,19 @@ function buildGraph(
   const initialNodes: Node[] = [
     ...sources.map((name, i) => ({
       id: `src:${name}`,
-      type: 'workload',
+      type: 'endpoint',
       position: { x: sourceX, y: i * ROW_HEIGHT },
-      data: { label: name },
-      className: defaultNodeClass,
+      data: { label: name, side: 'src', state: 'normal' } satisfies EndpointData,
+      className: NODE_CLASS,
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
     })),
     ...destinations.map((name, i) => ({
       id: `dst:${name}`,
-      type: 'workload',
+      type: 'endpoint',
       position: { x: destX, y: i * ROW_HEIGHT },
-      data: { label: name },
-      className: defaultNodeClass,
+      data: { label: name, side: 'dst', state: 'normal' } satisfies EndpointData,
+      className: NODE_CLASS,
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
     })),
@@ -523,6 +362,9 @@ function buildGraph(
     source: string
     destination: string
     ports: Map<string, number> // e.g. "TCP:80" -> count
+    // UNCHANGED covers "still allowed" and "still blocked"; the link only
+    // stops at a gate when the candidate blocks every row it aggregates.
+    stillBlocked: boolean
   }
 
   const edgeMap = new Map<string, AggregatedEdge>()
@@ -533,6 +375,7 @@ function buildGraph(
     const portKey = `${row.protocol}:${row.port}`
     if (existing) {
       existing.ports.set(portKey, (existing.ports.get(portKey) || 0) + row.count)
+      existing.stillBlocked &&= row.candidateAllowed === false
     } else {
       const ports = new Map<string, number>()
       ports.set(portKey, row.count)
@@ -541,6 +384,7 @@ function buildGraph(
         source: row.source,
         destination: row.destination,
         ports,
+        stillBlocked: row.candidateAllowed === false,
       })
     }
   }
@@ -555,19 +399,24 @@ function buildGraph(
     const label = labelParts.join(', ')
     const labelT = STAGGER_OFFSETS[index % STAGGER_OFFSETS.length]
 
+    const look: VerdictChange | 'BLOCKED' = agg.change === 'UNCHANGED' && agg.stillBlocked ? 'BLOCKED' : agg.change
+    const data: PathEdgeData = {
+      outcome: look === 'NEWLY_DROPPED' || look === 'BLOCKED' ? 'stop' : 'pass',
+      color: colors[look],
+      gate: look === 'NEWLY_DROPPED' || look === 'BLOCKED' ? '✕' : look === 'NEWLY_ALLOWED' ? '✓' : undefined,
+      badgeClass: BADGE_CLASSES[look],
+      label,
+      labelT,
+      isDimmed: false,
+      // Only what the candidate changes moves; unchanged links stay still.
+      animate: agg.change !== 'UNCHANGED',
+    }
     return {
       id: `edge-${key}`,
-      type: 'verdict',
+      type: 'path',
       source: `src:${agg.source}`,
       target: `dst:${agg.destination}`,
-      animated: agg.change !== 'UNCHANGED',
-      data: {
-        change: agg.change,
-        label,
-        color: colors[agg.change],
-        labelT,
-        isDimmed: false,
-      },
+      data,
     }
   })
 
