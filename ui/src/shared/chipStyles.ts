@@ -21,6 +21,22 @@ export const HEADLINE_CHIP_STYLES: Record<'NEWLY_DROPPED' | 'NEWLY_ALLOWED', str
   NEWLY_ALLOWED: 'border-allow bg-allow text-void font-bold',
 }
 
+// Housekeeping actions on a run card or panel header (Duplicate, Copy, CSV,
+// Collapse, Expand…): plain uppercase text, no box, so they never compete
+// with the verdict counts. ink-dim rather than ink-faint keeps them above
+// 4.5:1 contrast in the light theme.
+export const TEXT_ACTION =
+  'font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim transition-colors hover:text-signal focus-visible:text-signal focus-visible:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-40'
+
+// Pushes a column of checkboxes or buttons down by one field label's height
+// (0.65rem text at line-height 1.5 plus Field's mb-1.5), so it lines up with
+// the inputs beside it instead of with their labels. Single-column (phone)
+// layouts stack, so the offset only applies from sm up.
+export const FIELD_ROW_OFFSET = 'sm:pt-[1.35rem]'
+
+// Read-only run context (namespace, last, context…) in a run card header.
+export const META_CHIP = 'border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem]'
+
 // Matches the CLI's own flowVerdictColor (colors.go): green for FORWARDED,
 // red for DROPPED, amber for AUDIT.
 export const VERDICT_STYLES: Record<string, string> = {

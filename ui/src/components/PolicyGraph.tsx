@@ -590,7 +590,7 @@ function SelectedNodeEditorPanel({
                   : 'border-drop/40 text-drop hover:bg-drop/10')
               }
             >
-              {policy.egressDenyAll ? '↺ Allow editing egress rules again' : '⛔ Deny all egress (egressDeny)'}
+              {policy.egressDenyAll ? '↺ Allow editing egress rules again' : 'Deny all egress (egressDeny)'}
             </button>
           )}
         </div>
@@ -806,22 +806,29 @@ function ingressBadge(policy: PolicyModel): string {
   return policy.ingressUnmanaged ? 'Default Allow' : 'Default Deny'
 }
 
+function directionBadgeClass(badge: string): string {
+  return badge === 'Default Allow'
+    ? 'border border-line bg-panel px-1 text-ink-dim'
+    : 'border border-signal/40 bg-signal/5 px-1 text-signal'
+}
+
 function egressBadge(policy: PolicyModel): string {
   if (policy.egressRules.some((r) => !r.deny)) return 'Managed'
   return policy.egressRules.length > 0 ? 'Blocks listed' : 'Default Allow'
 }
 
-// Small icon badges summarizing what kinds of peers a rule has configured —
-// {} for workload/pod labels, 🌐 for world/CIDR (anything outside the
-// cluster), ⎈ for the cluster entity, 🖥 for the host entity — echoing
+// Small badges summarizing what kinds of peers a rule has configured —
+// {} for workload/pod labels, WORLD for world/CIDR (anything outside the
+// cluster), ⎈ for the cluster entity, HOST for the host entity (the same
+// words the flow graphs' endpoint nodes use) — echoing
 // editor.networkpolicy.io's "Outside Cluster / In Namespace / In Cluster"
 // card vocabulary within this app's own node boxes.
 function peerIcons(hasPeers: boolean, entities: string[], hasCidrs: boolean): string {
   const icons: string[] = []
   if (hasPeers) icons.push('{}')
   if (entities.includes('cluster')) icons.push('⎈')
-  if (entities.includes('host')) icons.push('🖥')
-  if (entities.includes('world') || hasCidrs) icons.push('🌐')
+  if (entities.includes('host')) icons.push('HOST')
+  if (entities.includes('world') || hasCidrs) icons.push('WORLD')
   return icons.join(' ')
 }
 
@@ -849,7 +856,7 @@ function buildGraph(
   const targetLabel = (
     <div>
       <div className="flex items-center justify-between text-[0.65rem] font-semibold uppercase tracking-wider text-signal mb-1">
-        <span>🎯 Target Workload</span>
+        <span>Target Workload</span>
         <span className="text-ink-faint normal-case">✎ edit</span>
       </div>
       <div className="text-xs font-bold text-ink">{targetLabels}</div>
@@ -857,10 +864,10 @@ function buildGraph(
         <div className="text-[0.65rem] text-ink-dim mt-0.5">ns: {policy.namespace}</div>
       )}
       <div className="mt-1.5 flex gap-1 text-[0.6rem]">
-        <span className="border border-drop/30 bg-drop/10 px-1 text-drop">
-          Ingress: {ingressBadge(policy)}
-        </span>
-        <span className="border border-line bg-panel px-1 text-ink-dim">
+        {/* Signal when a side is governed by this policy, neutral when it's
+            left default-allow — never red, which means a dropped flow. */}
+        <span className={directionBadgeClass(ingressBadge(policy))}>Ingress: {ingressBadge(policy)}</span>
+        <span className={directionBadgeClass(policy.egressDenyAll ? 'Default Deny' : egressBadge(policy))}>
           Egress: {policy.egressDenyAll ? 'Default Deny' : egressBadge(policy)}
         </span>
       </div>
@@ -930,7 +937,7 @@ function buildGraph(
           <div>
             <div className="text-[0.65rem] font-semibold text-signal uppercase tracking-wider mb-0.5">
               {icons && <span className="mr-1">{icons}</span>}Ingress Source #{idx + 1}
-              {rule.deny && <span className="ml-1.5 text-drop">⛔ Block</span>}
+              {rule.deny && <span className="ml-1.5 text-drop">Block</span>}
             </div>
             <div className="text-xs font-semibold text-ink line-clamp-2">{desc}</div>
             {warning && (
@@ -1039,7 +1046,7 @@ function buildGraph(
           <div>
             <div className="text-[0.65rem] font-semibold text-signal uppercase tracking-wider mb-0.5">
               {icons && <span className="mr-1">{icons}</span>}Egress Dest #{idx + 1}
-              {rule.deny && <span className="ml-1.5 text-drop">⛔ Block</span>}
+              {rule.deny && <span className="ml-1.5 text-drop">Block</span>}
             </div>
             <div className="text-xs font-semibold text-ink line-clamp-2">{desc}</div>
             {warning && (
@@ -1092,7 +1099,7 @@ function buildGraph(
           {policy.egressDenyAll ? (
             <>
               <div className="text-[0.65rem] font-semibold uppercase tracking-wider mb-0.5">Egress Traffic</div>
-              <div className="text-xs">🔒 Default Deny — click to re-enable rules</div>
+              <div className="text-xs">Default Deny — click to re-enable rules</div>
             </>
           ) : policy.egressRules.length === 0 ? (
             <>

@@ -1,12 +1,54 @@
-// Small presentational pieces shared by the Verdict and connectivity-test
-// views, so section headers and count chips look the same everywhere.
+// Small presentational pieces shared by every tab, so section headers, run
+// stacks, empty states and count chips look the same everywhere.
 
-export function SectionLabel({ children }: { children: React.ReactNode }) {
+import { TEXT_ACTION } from '../shared/chipStyles'
+
+// The one heading style for every panel and region in every tab, so a panel
+// reads the same whether it's Verdict's scope or the Policy Editor's output.
+// Actions (Save, Expand, Presets…) sit after the closing rule rather than in
+// a second header row, keeping the label centred on the rule either way.
+export function SectionLabel({ children, actions }: { children: React.ReactNode; actions?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase w-full">
-      <span className="h-px flex-1 bg-line" />
-      {children}
-      <span className="h-px flex-1 bg-line" />
+    <div className="flex w-full items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase">
+        <span className="h-px flex-1 bg-line" />
+        <span className="text-center">{children}</span>
+        <span className="h-px flex-1 bg-line" />
+      </div>
+      {actions && <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">{actions}</div>}
+    </div>
+  )
+}
+
+// Heading over the stack of run cards, shared by Verdict and Flows.
+export function ResultsHeader({
+  title,
+  clearLabel,
+  onClear,
+}: {
+  title: string
+  clearLabel?: string
+  onClear?: () => void
+}) {
+  return (
+    <div className="flex min-h-[1.75rem] items-center justify-between gap-3 border-b border-line pb-3">
+      <h2 className="font-display text-xs font-bold tracking-wider text-ink uppercase">{title}</h2>
+      {onClear && (
+        <button type="button" onClick={onClear} className={`${TEXT_ACTION} hover:text-drop`}>
+          {clearLabel}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// The "nothing run yet" panel every tab shows before its first result.
+export function EmptyState({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-3 border border-line bg-panel p-8 text-center text-ink-dim">
+      <p className="font-mono text-2xl text-signal" aria-hidden="true">{'>_'}</p>
+      <p className="font-display text-xs tracking-wider text-ink uppercase">{title}</p>
+      <p className="mx-auto max-w-md text-xs leading-relaxed">{children}</p>
     </div>
   )
 }

@@ -16,7 +16,8 @@ import { runsWithLiveGraphs } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
 import { GraphNodeLink } from './GraphNodeLink'
 import { DecidedBy } from './DecidedBy'
-import { VERDICT_STYLES } from '../shared/chipStyles'
+import { FIELD_ROW_OFFSET, META_CHIP, TEXT_ACTION, VERDICT_STYLES } from '../shared/chipStyles'
+import { EmptyState, ResultsHeader, SectionLabel } from './Chips'
 import { FlowFilterFields } from './FlowFilterFields'
 import {
   describeFlowFilter,
@@ -221,19 +222,19 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
 
   return (
     <div className="space-y-6">
-      <form
-        onSubmit={handleSubmit}
-        className="rise-in flex flex-wrap items-end gap-5 border border-line bg-panel p-5"
-      >
-        <div className="w-64">
+      <form onSubmit={handleSubmit} className="rise-in space-y-5 border border-line bg-panel p-5">
+        <SectionLabel>Scope</SectionLabel>
+        {/* Same grid as Verdict's scope panel, so the fields sit in the same
+            places on both tabs; the actions take the last column, aligned
+            to the inputs' top edge (FIELD_ROW_OFFSET) rather than to the
+            bottom of whichever column happens to be tallest. */}
+        <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[minmax(0,16rem)_6.5rem_minmax(0,1fr)] xl:grid-cols-[minmax(0,16rem)_6.5rem_minmax(0,1fr)_auto]">
           <NamespaceScope
             namespace={namespace}
             onNamespaceChange={setNamespace}
             allNamespaces={allNamespaces}
             onAllNamespacesChange={setAllNamespaces}
           />
-        </div>
-        <div className="w-28">
           <Field label="Last">
             <input
               type="number"
@@ -243,16 +244,15 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
               className="w-full border border-line bg-void px-3 py-2 text-sm text-ink focus:border-signal focus:outline-none"
             />
           </Field>
-        </div>
-        <div className="flex flex-col gap-1.5 pb-1">
-          <CheckRow
-            label="Stack runs (keep previous flows)"
-            checked={stackRuns}
-            onChange={setStackRuns}
-          />
-          <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
-        </div>
-        <div className="flex gap-2">
+          <div className={`flex flex-col gap-2 ${FIELD_ROW_OFFSET}`}>
+            <CheckRow
+              label="Stack runs (keep previous flows)"
+              checked={stackRuns}
+              onChange={setStackRuns}
+            />
+            <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
+          </div>
+          <div className={`flex gap-2 sm:col-span-3 xl:col-span-1 ${FIELD_ROW_OFFSET}`}>
           {/* Separate keys, so React swaps in a different element instead of
               turning one button into the other. Re-rendered in place, the
               Stop click's default action ran after the swap, on what was by
@@ -266,7 +266,7 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
                 e.preventDefault()
                 stopStreaming()
               }}
-              className="border border-signal bg-signal/10 px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-signal uppercase transition-colors hover:bg-signal hover:text-void cursor-pointer"
+              className="border border-signal bg-signal/10 px-5 py-2.5 font-display text-xs font-bold tracking-[0.1em] text-signal uppercase transition-colors hover:bg-signal hover:text-void cursor-pointer"
             >
               Stop following
             </button>
@@ -275,7 +275,7 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
               key="fetch"
               type="submit"
               disabled={loading}
-              className="bg-signal px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+              className="bg-signal px-5 py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
             >
               {loading ? 'Fetching…' : follow ? 'Follow flows' : 'Fetch flows'}
             </button>
@@ -284,19 +284,18 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
             type="button"
             onClick={handleResetSession}
             disabled={loading}
-            className="border border-line bg-void px-4 py-2 font-display text-xs font-bold tracking-[0.1em] text-ink-dim uppercase transition-colors hover:border-drop hover:text-drop disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            className="border border-line bg-void/60 px-4 py-2.5 font-display text-xs font-semibold tracking-[0.1em] text-ink-dim uppercase transition-colors hover:border-line-bright hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
           >
             Reset
           </button>
         </div>
-        <div className="min-w-0 basis-full">
-          <FlowFilterFields
-            filter={filter}
-            onChange={setFilter}
-            suggestions={flowSuggestions(runs.flatMap((r) => r.result.flows))}
-            intro="Show only the flows you care about."
-          />
         </div>
+        <FlowFilterFields
+          filter={filter}
+          onChange={setFilter}
+          suggestions={flowSuggestions(runs.flatMap((r) => r.result.flows))}
+          intro="Show only the flows you care about."
+        />
       </form>
 
       {error && (
@@ -314,30 +313,17 @@ export function FlowsPanel({ policyNamespace = '', onAppendRuleToPolicy, onCreat
       )}
 
       {runs.length > 0 && (
-        <div className="flex items-center justify-between border-b border-line pb-3">
-          <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
-            {runs.length === 1 ? 'Flows Result' : `Stacked Flows (${runs.length})`}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleClearResults}
-              className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop transition-colors cursor-pointer"
-            >
-              Clear all flows
-            </button>
-          </div>
-        </div>
+        <ResultsHeader
+          title={runs.length === 1 ? 'Flows result' : `Stacked flows (${runs.length})`}
+          clearLabel="Clear all flows"
+          onClear={handleClearResults}
+        />
       )}
 
       {runs.length === 0 && !loading && (
-        <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
-          <p className="font-mono text-2xl text-signal" aria-hidden="true">{'>_'}</p>
-          <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to inspect flows</p>
-          <p className="text-xs max-w-md mx-auto leading-relaxed">
-            Pick a namespace scope, set how many recent flows to sample, and click <strong className="text-signal">Fetch flows</strong> to observe live Hubble traffic.
-          </p>
-        </div>
+        <EmptyState title="Ready to inspect flows">
+          Pick a namespace scope, set how many recent flows to sample, and click <strong className="text-signal">Fetch flows</strong> to observe live Hubble traffic.
+        </EmptyState>
       )}
 
       {runs.map((run, index) => (
@@ -423,18 +409,16 @@ function FlowRunCard({
     <div className="border border-line bg-panel p-5 space-y-5 rise-in">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
         <div className="flex flex-wrap items-center gap-2.5">
-          <span className="font-display text-xs font-bold text-signal">
+          <span className="font-display text-xs font-bold uppercase tracking-wider text-signal">
             Run #{runNumber}
           </span>
           <span className="text-[0.7rem] font-mono text-ink-faint">
             {run.timestamp.toLocaleTimeString()}
           </span>
-          <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink">
+          <span className={`${META_CHIP} text-ink`}>
             {run.namespace ? `namespace: ${run.namespace}` : 'all namespaces'}
           </span>
-          <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
-            last: {run.last}
-          </span>
+          <span className={`${META_CHIP} text-ink-dim`}>last: {run.last}</span>
           {!isFlowFilterEmpty(run.filter) && (
             <span
               title="Only matching flows were fetched"
@@ -451,27 +435,46 @@ function FlowRunCard({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Housekeeping as plain text, the same as a Verdict run card, so it
+            never competes with the forwarded/dropped counts below. */}
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={() => onDuplicate(run)}
             title="Load this run's parameters back into the form"
-            className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-signal hover:text-signal transition-colors cursor-pointer"
+            className={TEXT_ACTION}
           >
             Duplicate to form
           </button>
-          <button
-            type="button"
-            onClick={() => onToggleCollapse(run.id)}
-            className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-ink transition-colors cursor-pointer"
-          >
+          {flows.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={handleCopy}
+                title="Copy this table as tab-separated text (pastes into spreadsheets)"
+                className={TEXT_ACTION}
+              >
+                {copied ? '✓ Copied!' : 'Copy'}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadCSV}
+                title="Download this table as a CSV file"
+                className={TEXT_ACTION}
+              >
+                Download CSV
+              </button>
+            </>
+          )}
+          <button type="button" onClick={() => onToggleCollapse(run.id)} className={TEXT_ACTION}>
             {run.isCollapsed ? 'Expand' : 'Collapse'}
           </button>
           <button
             type="button"
             onClick={() => onRemove(run.id)}
             title="Remove this run"
-            className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-drop hover:text-drop transition-colors cursor-pointer"
+            aria-label="Remove this run"
+            className={`${TEXT_ACTION} text-sm hover:text-drop`}
           >
             ✕
           </button>
@@ -541,27 +544,6 @@ function FlowRunCard({
                 buffer.
               </p>
             ))}
-
-          {flows.length > 0 && (
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleCopy}
-                title="Copy this table as tab-separated text (pastes into spreadsheets)"
-                className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-signal hover:text-signal transition-colors cursor-pointer"
-              >
-                {copied ? '✓ Copied!' : 'Copy'}
-              </button>
-              <button
-                type="button"
-                onClick={handleDownloadCSV}
-                title="Download this table as a CSV file"
-                className="border border-line bg-void/60 px-2 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:border-signal hover:text-signal transition-colors cursor-pointer"
-              >
-                Download CSV
-              </button>
-            </div>
-          )}
 
           {flows.length > 0 && (
             <div className="overflow-x-auto border border-line">
@@ -760,9 +742,12 @@ function CreateBlockPolicyButton({
         onClick={handleClick}
         disabled={busy}
         title={`Create a new policy that blocks this flow at ${target.namespace}/${target.podName}'s ${side}${l4 ? ` (${l4.protocol}/${l4.port})` : ''}. Replaces the current Policy Editor draft.`}
-        className="whitespace-nowrap border border-drop/60 bg-drop/10 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-drop hover:bg-drop/20 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+        // Quiet signal text, not a red button: it's on every row, and red is
+        // reserved for verdicts (DROPPED), so six red buttons drowned out
+        // the one row that actually dropped.
+        className="whitespace-nowrap font-display text-[0.65rem] font-semibold uppercase tracking-wider text-signal underline-offset-4 transition-colors hover:underline focus-visible:underline focus-visible:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {busy ? '…' : '⛔ New block policy'}
+        {busy ? '…' : 'New block policy'}
       </button>
       {error && (
         <div role="alert" className="absolute right-0 top-full z-10 mt-1 w-56 border border-drop/40 bg-panel p-2 text-[0.65rem] text-drop shadow-lg">
@@ -873,13 +858,11 @@ function AddFlowToPolicyButton({
             ? `Already added to the in-progress policy`
             : `${deny ? 'Block' : 'Allow'} this ${direction === 'ingress' ? 'source' : 'destination'}${l4 ? ` on ${l4.protocol}/${l4.port}` : ''} — adds a ${deny ? (direction === 'ingress' ? 'ingressDeny' : 'egressDeny') : direction} rule to the in-progress policy (${policyNamespace})`
         }
-        className={`whitespace-nowrap border px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-          deny
-            ? 'border-drop/40 bg-drop/5 text-drop hover:bg-drop/10'
-            : 'border-signal/40 bg-signal/5 text-signal hover:bg-signal/10'
-        }`}
+        // Signal for both: this edits the draft, it isn't a verdict, so
+        // Block doesn't borrow the DROPPED red.
+        className="whitespace-nowrap border border-signal/40 bg-signal/5 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-signal hover:bg-signal/10 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {added ? `✓ ${deny ? 'Blocked' : 'Allowed'}` : busy ? '…' : deny ? '⛔ Block' : '✓ Allow'}
+        {added ? `✓ ${deny ? 'Blocked' : 'Allowed'}` : busy ? '…' : deny ? 'Block' : 'Allow'}
       </button>
       {error && (
         <div

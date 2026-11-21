@@ -25,7 +25,7 @@ export function ProbeImagePicker({ images, value, protocol, onChange }: {
               </span>
               {image.description && <span className="text-xs text-ink-dim">{image.description}</span>}
               <span className="flex min-w-0 items-center gap-1.5 font-mono text-[0.6rem] text-ink-faint" title={image.image}>
-                <span aria-hidden="true">{image.pinned ? '🔒' : '⚠'}</span>
+                {!image.pinned && <span aria-hidden="true">⚠</span>}
                 <span className="sr-only">{image.pinned ? 'Pinned by digest' : 'Tag only, re-pulled on every test'}</span>
                 <span className="truncate">{image.image}</span>
               </span>

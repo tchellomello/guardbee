@@ -321,7 +321,8 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-sm px-4 py-1.5 font-display text-xs font-semibold tracking-wide uppercase transition-colors cursor-pointer ${
+      aria-current={active ? 'page' : undefined}
+      className={`rounded-sm px-4 py-1.5 font-display text-xs font-semibold tracking-wide uppercase transition-colors cursor-pointer focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-signal ${
         active ? 'bg-signal text-void' : 'text-ink-dim hover:text-ink'
       }`}
     >

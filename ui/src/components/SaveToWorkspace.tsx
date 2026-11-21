@@ -5,6 +5,7 @@
 // a new entry or updated an existing one.
 
 import { useEffect, useRef, useState } from 'react'
+import { TEXT_ACTION } from '../shared/chipStyles'
 
 export function SaveToWorkspace({
   defaultName,
@@ -87,9 +88,9 @@ export function SaveToWorkspace({
         setEditing(true)
       }}
       title="Save this policy to your workspace (header ▸ Saved policies) so you can come back to it"
-      className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+      className={TEXT_ACTION}
     >
-      {flash ?? '💾 Save'}
+      {flash ?? 'Save'}
     </button>
   )
 }

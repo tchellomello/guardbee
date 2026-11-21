@@ -75,9 +75,10 @@ export function PresetMenu({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="border border-signal bg-signal/10 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-signal hover:bg-signal hover:text-void transition-colors cursor-pointer"
+        aria-expanded={open}
+        className="border border-signal/60 bg-signal/10 px-2.5 py-1 font-display text-[0.65rem] font-bold uppercase tracking-wider text-signal hover:bg-signal hover:text-void transition-colors cursor-pointer"
       >
-        📦 Presets & Starters ▾
+        Presets & Starters ▾
       </button>
       {open && pos && (
         <>

@@ -154,6 +154,22 @@ body::before {
   color: var(--color-ink);
 }
 
+/* React Flow's own dark mode paints the canvas a warm neutral grey
+   (#141414), which sat off-palette inside every graph frame. The frames
+   already draw void behind it, so the canvas stays transparent, and the
+   library's grey node/handle defaults take the console tokens instead. */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-node-background-color: var(--color-panel-raised);
+  --xy-node-border: 1px solid var(--color-line-bright);
+  --xy-node-color: var(--color-ink);
+  --xy-handle-background-color: var(--color-line-bright);
+  --xy-handle-border-color: var(--color-panel);
+  --xy-edge-stroke: var(--color-line-bright);
+  --xy-selection-background-color: var(--theme-radial);
+  --xy-selection-border: 1px dotted var(--color-signal);
+}
+
 /* Scrollbars: thin, hairline, console-tinted instead of the OS default. */
 * {
   scrollbar-width: thin;

@@ -126,7 +126,7 @@ export function WorkspaceModal({
 
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
           <p className="text-xs text-ink-dim leading-relaxed">
-            Policies you've saved with <span className="font-semibold text-ink">💾 Save</span> in the Verdict tab or
+            Policies you've saved with <span className="font-semibold text-ink">Save</span> in the Verdict tab or
             the Policy Editor. They're stored in this browser only: never sent to the cluster, and not shared
             with other browsers. Download one as .yaml to keep it anywhere else.
           </p>
@@ -143,7 +143,7 @@ export function WorkspaceModal({
 
           {policies.length === 0 && (
             <p className="border border-dashed border-line px-4 py-6 text-center text-xs text-ink-faint">
-              Nothing saved yet. Use 💾 Save next to the candidate YAML in the Verdict tab, or next to Copy YAML in
+              Nothing saved yet. Use Save next to the candidate YAML in the Verdict tab, or next to Copy YAML in
               the Policy Editor.
             </p>
           )}

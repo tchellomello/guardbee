@@ -274,7 +274,7 @@ export function RuleEditorCard({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-line/60">
         <div>
           <label className="block mb-1.5 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
-            ⎈ Entities ({isIngress ? 'fromEntities' : 'toEntities'})
+            Entities ({isIngress ? 'fromEntities' : 'toEntities'})
           </label>
           <div className="flex flex-wrap gap-2 text-xs">
             {['world', 'cluster', 'host'].map((ent) => (
@@ -305,7 +305,7 @@ export function RuleEditorCard({
 
         <div>
           <label className="block mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
-            🌐 CIDR Subnets ({isIngress ? 'fromCIDR' : 'toCIDR'})
+            CIDR Subnets ({isIngress ? 'fromCIDR' : 'toCIDR'})
           </label>
           <CommaListInput
             values={cidrs}

@@ -1,0 +1,413 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-21T17:30:00Z",
+  "title": "Design System: GuardBee",
+  "extensions": {
+    "colorMeta": {
+      "signal": {
+        "role": "primary",
+        "displayName": "Phosphor Signal",
+        "canonical": "oklch(83.7% 0.151 176.6)",
+        "lightValue": "#0891b2",
+        "tonalRamp": [
+          "#00130a",
+          "#003123",
+          "#00513e",
+          "#00745c",
+          "#00987b",
+          "#00b99c",
+          "#68dcc2",
+          "#acffed"
+        ]
+      },
+      "signal-dim": {
+        "role": "primary",
+        "displayName": "Signal Shadow",
+        "canonical": "oklch(48.1% 0.084 179.3)",
+        "lightValue": "#cffafe",
+        "tonalRamp": [
+          "#00100c",
+          "#002c25",
+          "#0e4a40",
+          "#256b5f",
+          "#3c8d7e",
+          "#68ae9f",
+          "#98d2c5",
+          "#ccfaef"
+        ]
+      },
+      "drop": {
+        "role": "semantic",
+        "displayName": "Breach Red",
+        "canonical": "oklch(69.2% 0.198 23.8)",
+        "lightValue": "#dc2626",
+        "tonalRamp": [
+          "#270000",
+          "#4f0003",
+          "#7a0715",
+          "#a9222a",
+          "#d93a40",
+          "#f86a68",
+          "#ff9c95",
+          "#ffd0c9"
+        ]
+      },
+      "allow": {
+        "role": "semantic",
+        "displayName": "Caution Amber",
+        "canonical": "oklch(82.6% 0.148 73.8)",
+        "lightValue": "#b45309",
+        "tonalRamp": [
+          "#1b0400",
+          "#3c1a00",
+          "#603300",
+          "#874f00",
+          "#b06c00",
+          "#ce9030",
+          "#efb970",
+          "#ffe6ad"
+        ]
+      },
+      "unchanged": {
+        "role": "semantic",
+        "displayName": "Steady Green",
+        "canonical": "oklch(83.8% 0.154 159.1)",
+        "lightValue": "#15803d",
+        "tonalRamp": [
+          "#001302",
+          "#003012",
+          "#005028",
+          "#007341",
+          "#00975b",
+          "#3fb87f",
+          "#7edba9",
+          "#b9ffd9"
+        ]
+      },
+      "void": {
+        "role": "neutral",
+        "displayName": "Void",
+        "canonical": "oklch(13.6% 0.006 217.1)",
+        "lightValue": "#f6f8f8",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#222425",
+          "#3d4041",
+          "#5a5e60",
+          "#797e80",
+          "#9b9fa1",
+          "#c1c5c6",
+          "#eceff0"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Console Panel",
+        "canonical": "oklch(16.9% 0.009 224.1)",
+        "lightValue": "#ffffff",
+        "tonalRamp": [
+          "#090c0c",
+          "#212526",
+          "#3c4142",
+          "#595f61",
+          "#787e81",
+          "#99a0a2",
+          "#c0c5c7",
+          "#ebeff1"
+        ]
+      },
+      "panel-raised": {
+        "role": "neutral",
+        "displayName": "Raised Panel",
+        "canonical": "oklch(19.4% 0.012 225.9)",
+        "lightValue": "#edf2f2",
+        "tonalRamp": [
+          "#090c0d",
+          "#202527",
+          "#3b4143",
+          "#585f62",
+          "#767f83",
+          "#98a0a4",
+          "#bec5c9",
+          "#eaf0f2"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(27.6% 0.020 201.3)",
+        "lightValue": "#d0dddc",
+        "tonalRamp": [
+          "#070c0d",
+          "#1d2626",
+          "#374243",
+          "#536162",
+          "#708182",
+          "#92a2a3",
+          "#bac7c8",
+          "#e6f1f2"
+        ]
+      },
+      "line-bright": {
+        "role": "neutral",
+        "displayName": "Bright Hairline",
+        "canonical": "oklch(36.3% 0.031 202.3)",
+        "lightValue": "#9eb5b3",
+        "tonalRamp": [
+          "#050d0e",
+          "#192728",
+          "#324345",
+          "#4c6264",
+          "#688385",
+          "#8ba4a6",
+          "#b4c9ca",
+          "#e1f2f4"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Phosphor Ink",
+        "canonical": "oklch(91.2% 0.027 185.1)",
+        "lightValue": "#091617",
+        "tonalRamp": [
+          "#060d0c",
+          "#1b2725",
+          "#344341",
+          "#4f625f",
+          "#6c837f",
+          "#8fa4a0",
+          "#b7c9c6",
+          "#e3f2f0"
+        ]
+      },
+      "ink-dim": {
+        "role": "neutral",
+        "displayName": "Dim Ink",
+        "canonical": "oklch(60.6% 0.030 190.6)",
+        "lightValue": "#43605e",
+        "tonalRamp": [
+          "#050d0c",
+          "#1a2726",
+          "#334442",
+          "#4d6261",
+          "#6a8381",
+          "#8ca4a2",
+          "#b5c9c7",
+          "#e2f3f1"
+        ]
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Faint Ink",
+        "canonical": "oklch(44.8% 0.025 200.1)",
+        "lightValue": "#7b9795",
+        "tonalRamp": [
+          "#060d0d",
+          "#1c2627",
+          "#354343",
+          "#506162",
+          "#6d8283",
+          "#90a3a4",
+          "#b7c8c9",
+          "#e4f2f2"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The GUARDBEE wordmark in the app header only."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Tabs, buttons, panel and empty-state headings; uppercase, tracked."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default for tables, flow rows, YAML editors and help text."
+      },
+      "body-lg": {
+        "displayName": "Body Large",
+        "purpose": "Form inputs, error and status banners."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Section labels, column headers, verdict chips; uppercase, widely tracked."
+      }
+    },
+    "shadows": [
+      {
+        "name": "overlay-popover",
+        "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        "purpose": "Popovers and dropdown menus (Tailwind shadow-lg), paired with the bright hairline."
+      },
+      {
+        "name": "overlay-modal",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Modals (Tailwind shadow-2xl), paired with the bright hairline."
+      },
+      {
+        "name": "signal-glow",
+        "value": "0 0 8px var(--color-signal-glow)",
+        "purpose": "Halo on live status dots only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "rise-in",
+        "value": "rise-in 0.42s cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Panel and modal entry: 6px rise plus fade. No fill mode, so fixed-position children aren't trapped."
+      },
+      {
+        "name": "glow-pulse",
+        "value": "glow-pulse 1.6s ease-in-out infinite",
+        "purpose": "In-progress indicators. Disabled under reduced motion."
+      },
+      {
+        "name": "probe-flow",
+        "value": "probe-flow 0.9s linear infinite",
+        "purpose": "Dashes travelling along an allowed connectivity lane. Disabled under reduced motion."
+      },
+      {
+        "name": "state-transition",
+        "value": "color/border/opacity 150ms (Tailwind transition-colors)",
+        "purpose": "Hover and focus changes on buttons, tabs and chips."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The answer action: Run verdict, modal confirm. The only filled button.",
+      "html": "<button class=\"ds-btn-primary\">Run verdict</button>",
+      "css": ".ds-btn-primary { background: var(--color-signal, #22e9c7); color: var(--color-void, #06090a); border: none; border-radius: 0; padding: 10px 16px; font-family: 'Martian Mono', ui-monospace, monospace; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: opacity 150ms; } .ds-btn-primary:hover { opacity: 0.9; } .ds-btn-primary:focus-visible { outline: 1px solid var(--color-signal, #22e9c7); outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }"
+    },
+    {
+      "name": "Signal Outline Button",
+      "kind": "button",
+      "refersTo": "button-signal-outline",
+      "description": "Secondary signal action (Presets, workspace actions); fills on hover.",
+      "html": "<button class=\"ds-btn-outline\">Presets ▾</button>",
+      "css": ".ds-btn-outline { background: color-mix(in srgb, var(--color-signal, #22e9c7) 10%, transparent); color: var(--color-signal, #22e9c7); border: 1px solid var(--color-signal, #22e9c7); border-radius: 0; padding: 6px 12px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; transition: background 150ms, color 150ms; } .ds-btn-outline:hover, .ds-btn-outline:focus-visible { background: var(--color-signal, #22e9c7); color: var(--color-void, #06090a); outline: none; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Hairline key: border shifts to signal on hover.",
+      "html": "<button class=\"ds-btn-secondary\">Load from cluster</button>",
+      "css": ".ds-btn-secondary { background: color-mix(in srgb, var(--color-void, #06090a) 60%, transparent); color: var(--color-ink, #cfe8e4); border: 1px solid var(--color-line, #1c2b2c); border-radius: 0; padding: 8px 12px; font-family: 'Martian Mono', ui-monospace, monospace; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; transition: border-color 150ms, color 150ms; } .ds-btn-secondary:hover, .ds-btn-secondary:focus-visible { border-color: var(--color-signal, #22e9c7); color: var(--color-signal, #22e9c7); outline: none; }"
+    },
+    {
+      "name": "Tab Strip",
+      "kind": "nav",
+      "refersTo": "tab-active",
+      "description": "Header navigation; the active tab is filled signal.",
+      "html": "<nav class=\"ds-tabs\"><button class=\"ds-tab ds-tab-active\">Verdict</button><button class=\"ds-tab\">Flows</button><button class=\"ds-tab\">Policies</button><button class=\"ds-tab\">Editor</button></nav>",
+      "css": ".ds-tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--color-line, #1c2b2c); background: color-mix(in srgb, var(--color-void, #06090a) 60%, transparent); border-radius: 2px; } .ds-tab { background: transparent; border: none; border-radius: 2px; padding: 6px 16px; color: var(--color-ink-dim, #6e8886); font-family: 'Martian Mono', ui-monospace, monospace; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.025em; text-transform: uppercase; cursor: pointer; transition: color 150ms; } .ds-tab:hover, .ds-tab:focus-visible { color: var(--color-ink, #cfe8e4); outline: none; } .ds-tab-active, .ds-tab-active:hover { background: var(--color-signal, #22e9c7); color: var(--color-void, #06090a); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Void well with a hairline border; focus switches the border to signal.",
+      "html": "<input class=\"ds-input\" placeholder=\"namespace\" />",
+      "css": ".ds-input { background: var(--color-void, #06090a); color: var(--color-ink, #cfe8e4); border: 1px solid var(--color-line, #1c2b2c); border-radius: 0; padding: 8px 12px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.875rem; width: 240px; transition: border-color 150ms; } .ds-input::placeholder { color: var(--color-ink-faint, #45595a); } .ds-input:focus { border-color: var(--color-signal, #22e9c7); outline: none; }"
+    },
+    {
+      "name": "Verdict Chips",
+      "kind": "chip",
+      "refersTo": "chip-headline-drop",
+      "description": "Filled headline counts for the answer; tinted chips for everything else.",
+      "html": "<div class=\"ds-chip-row\"><button class=\"ds-chip ds-chip-ok\"><b>15</b> unchanged <span class=\"ds-i\">ⓘ</span></button><button class=\"ds-chip ds-chip-drop-fill\"><b>17</b> newly dropped <span class=\"ds-i ds-i-fill\">ⓘ</span></button><button class=\"ds-chip ds-chip-allow-fill\"><b>0</b> newly allowed <span class=\"ds-i ds-i-fill\">ⓘ</span></button><span class=\"ds-tag ds-tag-drop\">NEWLY_DROPPED</span></div>",
+      "css": ".ds-chip-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; } .ds-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid; border-radius: 0; padding: 4px 10px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.75rem; font-weight: 500; cursor: pointer; transition: filter 150ms, transform 150ms; } .ds-chip:hover { filter: brightness(1.1); } .ds-chip:active { transform: scale(0.98); } .ds-chip-ok { color: var(--color-unchanged, #5ee8a5); border-color: color-mix(in srgb, var(--color-unchanged, #5ee8a5) 40%, transparent); background: color-mix(in srgb, var(--color-unchanged, #5ee8a5) 10%, transparent); } .ds-chip-drop-fill { background: var(--color-drop, #ff5d5d); border-color: var(--color-drop, #ff5d5d); color: var(--color-void, #06090a); font-weight: 700; } .ds-chip-allow-fill { background: var(--color-allow, #ffb648); border-color: var(--color-allow, #ffb648); color: var(--color-void, #06090a); font-weight: 700; } .ds-i { color: var(--color-ink-faint, #45595a); } .ds-chip:hover .ds-i { color: var(--color-signal, #22e9c7); } .ds-i-fill { color: color-mix(in srgb, var(--color-void, #06090a) 50%, transparent); } .ds-chip:hover .ds-i-fill { color: var(--color-void, #06090a); } .ds-tag { border: 1px solid; padding: 2px 8px; font-family: 'Martian Mono', ui-monospace, monospace; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; } .ds-tag-drop { color: var(--color-drop, #ff5d5d); border-color: color-mix(in srgb, var(--color-drop, #ff5d5d) 40%, transparent); background: color-mix(in srgb, var(--color-drop, #ff5d5d) 10%, transparent); }"
+    },
+    {
+      "name": "Panel with Section Label",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Flat hairline panel; a signal section label divides named regions.",
+      "html": "<section class=\"ds-panel\"><div class=\"ds-section\"><span></span>FLOW GRAPH<span></span></div><p class=\"ds-panel-body\">candidate 1 rule(s) · baseline 0 rule(s) in postgres · 32/50 flows sampled</p></section>",
+      "css": ".ds-panel { background: var(--color-panel, #0b1012); border: 1px solid var(--color-line, #1c2b2c); border-radius: 0; padding: 20px; max-width: 520px; } .ds-section { display: flex; align-items: center; gap: 8px; color: var(--color-signal, #22e9c7); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; } .ds-section span { flex: 1; height: 1px; background: var(--color-line, #1c2b2c); } .ds-panel-body { margin: 16px 0 0; color: var(--color-ink-dim, #6e8886); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.75rem; }"
+    },
+    {
+      "name": "Meta Chip",
+      "kind": "chip",
+      "refersTo": "chip-meta",
+      "description": "Run context readouts in a run header.",
+      "html": "<div class=\"ds-meta-row\"><span class=\"ds-meta\">context: kind-guardbee-lab</span><span class=\"ds-meta\">namespace: postgres</span><span class=\"ds-meta ds-meta-signal\">mode: replace matching policies</span></div>",
+      "css": ".ds-meta-row { display: flex; flex-wrap: wrap; gap: 8px; } .ds-meta { border: 1px solid var(--color-line, #1c2b2c); background: var(--color-panel-raised, #0f1619); color: var(--color-ink-dim, #6e8886); padding: 2px 8px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.7rem; } .ds-meta-signal { border-color: color-mix(in srgb, var(--color-signal, #22e9c7) 40%, transparent); background: color-mix(in srgb, var(--color-signal, #22e9c7) 5%, transparent); color: var(--color-signal, #22e9c7); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Console",
+    "overview": "GuardBee is a CLI wearing a browser, and the design leans into that instead of hiding it behind product chrome. Everything is set in monospace. Panels are drawn with 1px hairlines and square corners, like a terminal UI. Labels are uppercase and widely tracked, like an instrument readout. The dark theme is a phosphor CRT: near-black void, cyan-green ink, a faint scanline texture. The light theme is a technical lab console: white panels on cool grey, cyan accent, the same texture retuned so it is still visible. Both themes are first-class.\n\nDensity is high and deliberate. The primary user is a platform engineer reading flows, so rows are tight, type is small (0.75rem body), and metadata appears as chips. Colour is rationed. One electric signal accent marks what you can act on and where you are. Three verdict colours (drop red, allow amber, unchanged green) carry meaning and nothing else. Filled colour goes only on the answer: the Run verdict button and the newly-dropped and newly-allowed headline chips.\n\nControls should feel terminal-tactile, like keys and readouts on an instrument. A press gives a crisp response (the active:scale-98 nudge on chips, a border shifting to signal on hover). There is no soft lift.",
+    "keyCharacteristics": [
+      "Monospace throughout: Martian Mono for display and labels, IBM Plex Mono for everything else.",
+      "1px hairline borders, square corners, flat surfaces.",
+      "One signal accent, kept apart from the three verdict colours.",
+      "Dark phosphor and light lab-console themes, equally maintained.",
+      "Ambient scanlines and a radar wash fixed to the viewport, never tiled into components."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Is Not a Verdict Rule",
+        "body": "The signal cyan never stands in for drop, allow or unchanged. Red, amber and green are never used decoratively. If a colour on screen doesn't mean a verdict, it is signal or a neutral.",
+        "section": "colors"
+      },
+      {
+        "name": "The Filled Answer Rule",
+        "body": "Solid colour fills are reserved for the answer GuardBee exists to give: the primary Run button and the newly-dropped and newly-allowed headline chips. Every other chip or tag is a 40%-opacity border over a 10% tint.",
+        "section": "colors"
+      },
+      {
+        "name": "The Words-Not-Emoji Rule",
+        "body": "Controls and graph nodes carry words or the console's text symbols (✓ ✕ ✎ ⚠ ⎈ ⤢ ▾), never emoji. ui/e2e/design.e2e.ts checks every tab.",
+        "section": "typography"
+      },
+      {
+        "name": "The Readout Rule",
+        "body": "Anything that labels, rather than says, is uppercase and tracked. Anything the user reads as data (identities, ports, YAML, counts) keeps its own case.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-Until-Floating Rule",
+        "body": "A surface that sits in the page flow never gets a shadow. Only overlays (popovers, menus, modals) lift, and when they lift they also brighten their border.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do set every surface in monospace: Martian Mono for display and title roles, IBM Plex Mono for body and data.",
+      "Do draw structure with 1px hairlines (line, line-bright on overlays) and keep corners square.",
+      "Do keep signal cyan for action, focus and \"you are here\", and keep drop, allow and unchanged strictly for verdict meaning, matching colors.go.",
+      "Do reserve solid fills for the answer: the primary Run button and the newly-dropped and newly-allowed headline chips.",
+      "Do define every new colour as a --theme-* pair in both the dark and light blocks of index.css, and check it in both themes before shipping.",
+      "Do honour prefers-reduced-motion for any looping animation."
+    ],
+    "donts": [
+      "Don't add SaaS chrome: no soft rounded cards, pastel gradients, drop-shadowed tiles or generic dashboard styling.",
+      "Don't use signal cyan to mean allowed or OK, and don't use red, amber or green as decoration or brand colour.",
+      "Don't ship an effect that only works in dark mode. Light mode needs its own tuned values (as the scanline alpha does), not a copy.",
+      "Don't put shadows on in-flow panels. Only popovers, menus and modals lift.",
+      "Don't put emoji in controls, labels or graph nodes. Use words or the console's text symbols.",
+      "Don't invent a new panel heading style. Every panel and region uses the Section Label, with actions in its slot.",
+      "Don't tile the scanline or grid texture into components. It lives once, fixed to the viewport, on body::before."
+    ]
+  }
+}
