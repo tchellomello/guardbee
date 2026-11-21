@@ -113,11 +113,36 @@ type connectionProbeResponse struct {
 	Flows         []probeFlowOut   `json:"flows"`
 	Simulation    *verdictResponse `json:"simulation,omitempty"`
 	// Warnings are problems with this particular attempt (lost capture,
-	// skipped policies, no evidence…). Notices are the standing caveats every
+	// skipped policies, no evidence…). Notes are the standing caveats every
 	// attempt carries (ephemeral entry stays, simulation mode, best-effort
 	// correlation), kept apart so the attempt's real problem isn't buried.
-	Warnings []string `json:"warnings"`
-	Notices  []string `json:"notices"`
+	Warnings []string    `json:"warnings"`
+	Notes    []probeNote `json:"notes"`
+}
+
+// probeNote is one standing caveat. Code is stable (the UI picks its icon
+// and short title from it, never by parsing Text); Text is the full,
+// human-readable sentence, which may carry this attempt's specifics.
+type probeNote struct {
+	Code string `json:"code"`
+	Text string `json:"text"`
+}
+
+const (
+	noteUDPMarker             = "udp-marker"
+	noteServiceMatch          = "service-match"
+	noteHostnameBestEffort    = "hostname-best-effort"
+	noteEphemeralEntry        = "ephemeral-entry"
+	noteRuntimeBound          = "runtime-bound"
+	noteBestEffortCorrelation = "best-effort-correlation"
+	noteNodesOffPath          = "nodes-off-path"
+	noteReplaceMode           = "replace-mode"
+	noteAdditiveMode          = "additive-mode"
+	notePolicyReplaced        = "policy-replaced"
+)
+
+func (r *connectionProbeResponse) note(code, text string) {
+	r.Notes = append(r.Notes, probeNote{code, text})
 }
 
 // Keep the legacy TCP boundary compatible while callers migrate to connection.
@@ -612,24 +637,24 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		out.fail("Previous GuardBee container "+name+" is pending or running; inspect that attempt before starting another", http.StatusConflict)
 		return
 	}
-	resp := connectionProbeResponse{UID: req.UID, Context: s.target.context, APIServer: s.target.apiServer, Image: img.Image, ImageID: img.ID, StartedAt: requestStart.UTC().Format(time.RFC3339Nano), Namespace: req.Namespace, Pod: req.Pod, Host: req.Host, Port: req.Port, Protocol: req.Protocol, Outcome: "inconclusive", Flows: []probeFlowOut{}, Warnings: []string{}, Notices: []string{}}
+	resp := connectionProbeResponse{UID: req.UID, Context: s.target.context, APIServer: s.target.apiServer, Image: img.Image, ImageID: img.ID, StartedAt: requestStart.UTC().Format(time.RFC3339Nano), Namespace: req.Namespace, Pod: req.Pod, Host: req.Host, Port: req.Port, Protocol: req.Protocol, Outcome: "inconclusive", Flows: []probeFlowOut{}, Warnings: []string{}, Notes: []probeNote{}}
 	respond := func() {
 		resp.DurationMs = time.Since(requestStart).Milliseconds()
 		out.result(resp)
 	}
 	if req.Protocol == "UDP" {
-		resp.Notices = append(resp.Notices, "UDP sends one fixed 27-byte guardbee-connectivity-probe marker to the selected target, with no reply wait or retry. Even a successful send does not prove delivery or policy allowance; the target may treat the unexpected payload as invalid application traffic.")
+		resp.note(noteUDPMarker, "UDP sends one fixed 27-byte guardbee-connectivity-probe marker to the selected target, with no reply wait or retry. Even a successful send does not prove delivery or policy allowance; the target may treat the unexpected payload as invalid application traffic.")
 	}
 	if _, err := netip.ParseAddr(req.Host); err != nil {
 		svc, note := s.resolveProbeService(ctx, req)
 		req.service = svc
 		switch {
 		case svc != nil:
-			resp.Notices = append(resp.Notices, fmt.Sprintf("Hostname matched Service %s/%s: flows to its ClusterIPs or its %d current backend addresses on the mapped target port count as evidence. DNS resolves inside the Pod, not on the GuardBee server.", svc.namespace, svc.name, len(svc.addrs)))
+			resp.note(noteServiceMatch, fmt.Sprintf("Hostname matched Service %s/%s: flows to its ClusterIPs or its %d current backend addresses on the mapped target port count as evidence. DNS resolves inside the Pod, not on the GuardBee server.", svc.namespace, svc.name, len(svc.addrs)))
 		case note != "":
 			resp.Warnings = append(resp.Warnings, note)
 		default:
-			resp.Notices = append(resp.Notices, "Hostname capture is best-effort: unless Hubble reports the destination name (DNS visibility), flows to a non-Service hostname cannot be correlated and the result stays inconclusive. Use an IP literal for external targets. DNS resolves inside the Pod, not on the GuardBee server.")
+			resp.note(noteHostnameBestEffort, "Hostname capture is best-effort: unless Hubble reports the destination name (DNS visibility), flows to a non-Service hostname cannot be correlated and the result stays inconclusive. Use an IP literal for external targets. DNS resolves inside the Pod, not on the GuardBee server.")
 		}
 	}
 	req.nodeName = p.Spec.NodeName
@@ -703,7 +728,9 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 		return
 	}
 	resp.ContainerName = name
-	resp.Notices = append(resp.Notices, "The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced. No Pod is removed or restarted.", "HTTP cancellation cannot kill the injected container; the image's timeout bounds command runtime to 8 seconds (plus at most 1 second to force-kill).", "Hubble correlation is best-effort: concurrent workload traffic to the same destination/port in this window cannot be distinguished from the probe. Relay NODE_CONNECTED does not guarantee the source-node collector has subscribed before injection.")
+	resp.note(noteEphemeralEntry, "The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced. No Pod is removed or restarted.")
+	resp.note(noteRuntimeBound, "HTTP cancellation cannot kill the injected container; the image's timeout bounds command runtime to 8 seconds (plus at most 1 second to force-kill).")
+	resp.note(noteBestEffortCorrelation, "Hubble correlation is best-effort: concurrent workload traffic to the same destination/port in this window cannot be distinguished from the probe. Relay NODE_CONNECTED does not guarantee the source-node collector has subscribed before injection.")
 	out.stage(probeStageRun)
 	terminated, waitErr := s.waitProbe(ctx, req, name)
 	if terminated != nil {
@@ -766,7 +793,7 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 				resp.Warnings = append(resp.Warnings, "Hubble capture incomplete: "+captureErr.Error())
 			}
 		} else {
-			resp.Notices = append(resp.Notices, "Hubble node(s) "+strings.Join(down, ", ")+" were unavailable during capture but are not on this test's path.")
+			resp.note(noteNodesOffPath, "Hubble node(s) "+strings.Join(down, ", ")+" were unavailable during capture but are not on this test's path.")
 		}
 	}
 	if debugLogging {
@@ -1311,9 +1338,9 @@ func (s *uiServer) simulateProbe(ctx context.Context, rules api.Rules, rawCandid
 
 func (s *uiServer) simulateProbeWithMode(ctx context.Context, rules api.Rules, rawCandidate string, flows []*flowpb.Flow, resp *connectionProbeResponse, replaceExisting bool) {
 	if replaceExisting {
-		resp.Notices = append(resp.Notices, "Candidate simulation replaces live policies with the same kind/namespace/name; baseline remains original. Nothing is applied to the cluster; this sample is not policy sign-off.")
+		resp.note(noteReplaceMode, "Candidate simulation replaces live policies with the same kind/namespace/name; baseline remains original. Nothing is applied to the cluster; this sample is not policy sign-off.")
 	} else {
-		resp.Notices = append(resp.Notices, "Additive simulation keeps matching live policies alongside the candidate; removed permissions can remain allowed. Nothing is applied to the cluster; this sample is not policy sign-off.")
+		resp.note(noteAdditiveMode, "Additive simulation keeps matching live policies alongside the candidate; removed permissions can remain allowed. Nothing is applied to the cluster; this sample is not policy sign-off.")
 	}
 	if len(flows) == 0 {
 		return
@@ -1429,7 +1456,7 @@ func (s *uiServer) simulateProbeWithMode(ctx context.Context, rules api.Rules, r
 	defer base.close(s.logger)
 	defer candidate.close(s.logger)
 	for _, name := range replaced {
-		resp.Notices = append(resp.Notices, "Simulation replaces live "+name+" with the candidate")
+		resp.note(notePolicyReplaced, "Simulation replaces live "+name+" with the candidate")
 	}
 	if len(skipped) > 0 {
 		resp.Warnings = append(resp.Warnings, "Simulation inconclusive: baseline policies were skipped: "+strings.Join(skipped, ", "))

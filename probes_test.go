@@ -683,7 +683,7 @@ func TestProbeSimulationNetworkPolicyAndReplacement(t *testing.T) {
 	resp := tcpProbeResponse{Namespace: "app"}
 	flows := []*flowpb.Flow{testProbeFlow(time.Now())}
 	s.simulateProbe(context.Background(), rules, candidate, flows, &resp)
-	if resp.Simulation == nil || resp.Simulation.Counts.NewlyDropped != 1 || !strings.Contains(strings.Join(resp.Notices, " "), "replaces live") {
+	if resp.Simulation == nil || resp.Simulation.Counts.NewlyDropped != 1 || !strings.Contains(noteText(resp), "replaces live") {
 		t.Fatalf("narrowed edit hidden: %+v %+v", resp, resp.Simulation)
 	}
 	row := resp.Simulation.Rows[0]
@@ -692,7 +692,7 @@ func TestProbeSimulationNetworkPolicyAndReplacement(t *testing.T) {
 	}
 	additive := tcpProbeResponse{Namespace: "app"}
 	s.simulateProbeWithMode(context.Background(), rules, candidate, flows, &additive, false)
-	if additive.Simulation == nil || additive.Simulation.Counts.Unchanged != 1 || additive.Simulation.Counts.NewlyDropped != 0 || !strings.Contains(strings.Join(additive.Notices, " "), "Additive simulation") {
+	if additive.Simulation == nil || additive.Simulation.Counts.Unchanged != 1 || additive.Simulation.Counts.NewlyDropped != 0 || !strings.Contains(noteText(additive), "Additive simulation") {
 		t.Fatalf("explicit additive mode not honored: %+v", additive)
 	}
 	// A NetworkPolicy only selects Pods in its own namespace: one elsewhere in

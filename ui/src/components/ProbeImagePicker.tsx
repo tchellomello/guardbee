@@ -8,18 +8,18 @@ export function ProbeImagePicker({ images, value, protocol, onChange }: {
 }) {
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-2 font-display text-[0.65rem] font-bold tracking-widest text-ink-dim uppercase">Probe image</legend>
+      <legend className="sr-only">Probe image</legend>
       <div role="radiogroup" aria-label="Probe image" className="grid min-w-0 gap-2 sm:grid-cols-2">
         {images.map((image) => {
           const selected = image.id === value
           return (
-            <label key={image.id} className={`flex min-w-0 cursor-pointer flex-col gap-1.5 rounded-sm border p-3 transition-colors ${selected ? 'border-signal bg-signal/10' : 'border-line hover:border-line-bright'}`}>
+            <label key={image.id} className={`flex min-w-0 cursor-pointer flex-col gap-1.5 border p-3 transition-colors ${selected ? 'border-signal bg-signal/10' : 'border-line hover:border-line-bright'}`}>
               <span className="flex min-w-0 items-center gap-2">
                 <input type="radio" name="probe-image" value={image.id} checked={selected} onChange={() => onChange(image)} className="accent-signal" />
                 <span className="min-w-0 truncate font-display text-sm font-bold text-ink">{image.name}</span>
                 <span className="ml-auto flex shrink-0 gap-1">
                   {(['TCP', 'UDP'] as const).map((p) => (
-                    <span key={p} className={`rounded-sm border px-1.5 font-mono text-[0.6rem] ${image.protocols.includes(p) ? (p === protocol && selected ? 'border-signal text-signal' : 'border-line text-ink-dim') : 'border-transparent text-ink-faint line-through'}`}>{p}</span>
+                    <span key={p} className={`border px-1.5 font-mono text-[0.6rem] ${image.protocols.includes(p) ? (p === protocol && selected ? 'border-signal text-signal' : 'border-line text-ink-dim') : 'border-transparent text-ink-faint line-through'}`}>{p}</span>
                   ))}
                 </span>
               </span>

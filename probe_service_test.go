@@ -224,3 +224,27 @@ func TestProbeDownOnPath(t *testing.T) {
 		t.Fatal("outage with no evidence ignored")
 	}
 }
+
+func noteText(resp connectionProbeResponse) string {
+	var parts []string
+	for _, n := range resp.Notes {
+		parts = append(parts, n.Text)
+	}
+	return strings.Join(parts, " ")
+}
+
+// Every note carries a stable code the UI maps to an icon and short title.
+func TestProbeNotesCarryStableCodes(t *testing.T) {
+	s, _ := testProbeServer(t)
+	s.cilium = ciliumfake.NewSimpleClientset()
+	const candidate = "apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: allow\n  namespace: database\nspec:\n  endpointSelector:\n    matchLabels:\n      app: server\n  ingress:\n    - fromEntities: [all]\n"
+	rules, err := parseCandidateYAML(s.logger, []byte(candidate), "database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := connectionProbeResponse{Namespace: "app"}
+	s.simulateProbeWithMode(context.Background(), rules, candidate, []*flowpb.Flow{testProbeFlow(time.Now())}, &resp, false)
+	if len(resp.Notes) == 0 || resp.Notes[0].Code != noteAdditiveMode || resp.Notes[0].Text == "" {
+		t.Fatalf("notes without codes: %+v", resp.Notes)
+	}
+}

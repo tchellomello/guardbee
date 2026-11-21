@@ -13,15 +13,21 @@ import { ProbeImagePicker } from './ProbeImagePicker'
 import { ProbePath } from './ProbePath'
 import { ProbeStepper } from './ProbeStepper'
 import { downloadTextFile } from '../shared/tableExport'
+import { CountChip, SectionLabel } from './Chips'
+import { DecidedBy } from './DecidedBy'
+import { CHANGE_STYLES, HEADLINE_CHIP_STYLES, VERDICT_STYLES } from '../shared/chipStyles'
+import { noteDisplay, warningDisplay } from '../shared/probeNotes'
 
-const inputClass = 'w-full min-w-0 rounded-sm border border-line bg-void px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none disabled:cursor-not-allowed disabled:opacity-50'
-const buttonClass = 'rounded-sm bg-signal px-5 py-2.5 font-display text-xs font-bold tracking-wide text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer'
+const inputClass = 'w-full min-w-0 border border-line bg-void px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-signal focus:outline-none disabled:cursor-not-allowed disabled:opacity-50'
+const buttonClass = 'bg-signal px-5 py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer'
+// The Flows tab's outline button, for secondary actions.
+const outlineButtonClass = 'border border-line bg-void px-4 py-2 font-display text-xs font-bold tracking-[0.1em] text-ink-dim uppercase transition-colors hover:border-signal hover:text-signal cursor-pointer'
 const errorText = (err: unknown) => err instanceof Error ? err.message : String(err)
 type RequestSnapshot = Readonly<ConnectionProbeRequest>
 type Attempt = { request: RequestSnapshot; allNamespaces: boolean; submittedAt: string; capabilities: ProbeCapabilities; stages: ProbeStageId[]; response?: ConnectionProbeResponse; error?: string; definiteRejection?: boolean; errorStatus?: number }
 
-export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdictNamespace, allNamespaces, replaceExisting, resetGeneration, onRunningChange }: {
-  active: boolean; candidateYAML: string; namespace: string; allNamespaces: boolean; replaceExisting: boolean; resetGeneration: number; onRunningChange: (running: boolean) => void
+export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdictNamespace, allNamespaces, replaceExisting, resetGeneration, onRunningChange, onOpenHelp }: {
+  active: boolean; candidateYAML: string; namespace: string; allNamespaces: boolean; replaceExisting: boolean; resetGeneration: number; onRunningChange: (running: boolean) => void; onOpenHelp?: (category: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [capability, setCapability] = useState({ enabled: false, message: 'Checking test availability…' })
@@ -174,7 +180,9 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
         </div>}
         <form aria-label="Connection test configuration" onSubmit={handleSubmit} className="min-w-0 space-y-4">
           <fieldset disabled={running || !capability.enabled} className="min-w-0 space-y-4">
+            {images.length > 0 && selectedImage && <SectionLabel>Probe image</SectionLabel>}
             {images.length > 0 && selectedImage && <ProbeImagePicker images={images} value={selectedImage.id} protocol={protocol} onChange={pickImage} />}
+            <SectionLabel>Target</SectionLabel>
             <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {allNamespaces && <Field label="Source namespace">
                 <input value={sourceNamespace} list="connection-namespaces" required maxLength={63} pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" className={inputClass} placeholder="Choose a namespace" onChange={(e) => setSourceNamespace(e.target.value)} />
@@ -204,16 +212,19 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
         {attempt && <section aria-label="Submitted connection test" className="rise-in min-w-0 space-y-4 border-t border-line pt-5 break-words">
           <div className="flex flex-wrap items-center gap-2"><Badge>{attempt.request.protocol}</Badge><Badge>{attempt.request.namespace}/{attempt.request.pod}</Badge><span aria-hidden="true" className="text-ink-faint">→</span><Badge>{attempt.request.host} · port {attempt.request.port}</Badge>{attempt.request.imageId && <Badge>{attempt.capabilities.images?.find((image) => image.id === attempt.request.imageId)?.name ?? attempt.request.imageId}</Badge>}</div>
           {stale && <p role="status" className="text-xs text-allow">Inputs changed since this test. Results are stale and refer only to the submitted Pod, target, image, scope, and candidate snapshot, not the current Verdict form.</p>}
+          {(running || attempt.stages.length > 0) && <SectionLabel>Progress</SectionLabel>}
           {(running || attempt.stages.length > 0) && <ProbeStepper reached={attempt.stages} run={running ? 'running' : attempt.error !== undefined ? 'failed' : 'done'} />}
           {running && <p role="status" className="text-xs text-ink-dim">Switching tabs does not cancel or repeat this test.</p>}
-          {attempt.response && <ConnectionResult response={attempt.response} request={attempt.request} />}
-          {attempt.error !== undefined && <div role="alert" className="space-y-2 rounded-sm border border-drop/40 bg-drop/10 p-4 text-sm text-drop">
+          {attempt.response && <SectionLabel>Result</SectionLabel>}
+          {attempt.response && <ConnectionResult response={attempt.response} request={attempt.request} onOpenHelp={onOpenHelp} />}
+          {attempt.error !== undefined && <div role="alert" className="space-y-2 border border-drop/40 bg-drop/10 p-4 text-sm text-drop">
             <p className="font-bold">{attempt.definiteRejection ? 'Test not started' : 'Predicted candidate: INCONCLUSIVE'}</p><p>{attempt.error}</p>
             {attempt.definiteRejection ? <p>The server rejected this request before adding an ephemeral container. Fix the error before running a new confirmed test.</p> : <p>An ephemeral container may already have been added to the original Pod {attempt.request.namespace}/{attempt.request.pod} (UID {attempt.request.uid}). Inspect that Pod before deciding to run again. GuardBee does not automatically retry, restart, or delete it.</p>}
           </div>}
           {!running && <div className="flex flex-wrap gap-4">
-            <button type="button" className="cursor-pointer text-xs text-signal" onClick={() => downloadTextFile(`guardbee-connectivity-${candidateFingerprint(attempt.request.candidateYAML)}.json`, JSON.stringify({ schemaVersion: 1, ...attempt }, null, 2), 'application/json')}>Download test report (JSON)</button>
-            <button type="button" className="cursor-pointer text-xs text-ink-dim" onClick={() => setAttempt(null)}>Clear completed test</button>
+            {/* schemaVersion 2: response.notes ({code, text}) replaced notices (strings). */}
+            <button type="button" className={outlineButtonClass} onClick={() => downloadTextFile(`guardbee-connectivity-${candidateFingerprint(attempt.request.candidateYAML)}.json`, JSON.stringify({ schemaVersion: 2, ...attempt }, null, 2), 'application/json')}>Download test report (JSON)</button>
+            <button type="button" className={outlineButtonClass} onClick={() => setAttempt(null)}>Clear completed test</button>
           </div>}
           <details><summary className="cursor-pointer text-xs text-ink-dim">Submitted candidate snapshot {candidateFingerprint(attempt.request.candidateYAML)}</summary>
             <p className="mt-3 text-xs text-ink-dim">Original Pod UID: {attempt.request.uid} · {attempt.allNamespaces ? 'All namespaces' : 'Single namespace'}</p>
@@ -226,56 +237,116 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
 }
 
 function Badge({ children }: { children: React.ReactNode }) {
-  return <span className="max-w-full break-words rounded-sm border border-line bg-void/50 px-2 py-1 font-mono text-[0.65rem] text-ink-dim">{children}</span>
+  return <span className="max-w-full break-words border border-line bg-void/50 px-2 py-1 font-mono text-[0.65rem] text-ink-dim">{children}</span>
 }
 
-const decisionTone: Record<ConnectivityDecision, string> = { ALLOWED: 'text-signal', BLOCKED: 'text-drop', INCONCLUSIVE: 'text-ink-dim' }
+const decisionTone: Record<ConnectivityDecision, string> = { ALLOWED: 'text-unchanged', BLOCKED: 'text-drop', INCONCLUSIVE: 'text-ink-dim' }
+const decisionChip = (d: boolean | undefined) => d === true ? <span className="text-unchanged">✓ allowed</span> : d === false ? <span className="text-drop">✕ blocked</span> : <span className="text-ink-faint">? unknown</span>
 
 function Decision({ label, decision }: { label: string; decision: ConnectivityDecision }) {
-  return <div className="space-y-0.5"><p className="text-[0.65rem] tracking-wide text-ink-dim uppercase">{label}</p><p className={`font-display text-sm font-bold ${decisionTone[decision]}`}>{decision}</p></div>
+  return <div className="space-y-0.5"><p className="text-[0.65rem] tracking-[0.12em] text-ink-dim uppercase">{label}</p><p className={`font-display text-sm font-bold ${decisionTone[decision]}`}>{decision}</p></div>
 }
 
-function ConnectionResult({ response, request }: { response: ConnectionProbeResponse; request: RequestSnapshot }) {
+// The headline banner, in the same words and colors as Verdict's own
+// "would BREAK" banner, so both answers to "is this candidate safe?" read alike.
+function ResultBanner({ baseline, candidate }: { baseline: ConnectivityDecision; candidate: ConnectivityDecision }) {
+  if (candidate === 'INCONCLUSIVE' || baseline === 'INCONCLUSIVE') return null
+  if (baseline === 'ALLOWED' && candidate === 'BLOCKED') return <p className="border border-drop/40 bg-drop/10 px-4 py-3 text-sm font-semibold text-drop">This connection would BREAK if the candidate merged as-is.</p>
+  if (baseline === 'BLOCKED' && candidate === 'ALLOWED') return <p className="border border-allow/40 bg-allow/10 px-4 py-3 text-sm font-semibold text-allow">The candidate would newly ALLOW this connection.</p>
+  if (candidate === 'ALLOWED') return <p className="border border-unchanged/40 bg-unchanged/10 px-4 py-3 text-sm font-semibold text-unchanged">Still allowed with the candidate.</p>
+  return <p className="border border-line bg-void/40 px-4 py-3 text-sm font-semibold text-ink-dim">Blocked today and with the candidate.</p>
+}
+
+// A small square chip for run metadata; copyable ones copy their full value.
+function MetaChip({ icon, label, title, copy }: { icon: string; label: string; title?: string; copy?: string }) {
+  const content = <><span aria-hidden="true">{icon}</span><span className="truncate">{label}</span></>
+  const className = 'flex min-w-0 max-w-full items-center gap-1.5 border border-line bg-void/50 px-2 py-1 font-mono text-[0.65rem] text-ink-dim'
+  return copy
+    ? <button type="button" title={`${title ?? copy} — click to copy`} onClick={() => { void navigator.clipboard?.writeText(copy) }} className={`${className} cursor-pointer hover:border-signal hover:text-signal`}>{content}</button>
+    : <span title={title} className={className}>{content}</span>
+}
+
+const th = 'px-3 py-2 text-[0.65rem] font-semibold tracking-[0.1em] text-ink-dim uppercase'
+const td = 'px-3 py-2 font-mono text-xs text-ink'
+
+function ConnectionResult({ response, request, onOpenHelp }: { response: ConnectionProbeResponse; request: RequestSnapshot; onOpenHelp?: (category: string) => void }) {
   const simulation = response.simulation
   const protocolMatches = !response.protocol || response.protocol === request.protocol
   const baseline = protocolMatches ? connectivityDecision(response, 'baselineAllowed') : 'INCONCLUSIVE'
   const candidate = protocolMatches ? connectivityDecision(response, 'candidateAllowed') : 'INCONCLUSIVE'
-  // Warnings are this attempt's own problems and stay visible; notices are the
+  // Warnings are this attempt's own problems and stay visible; notes are the
   // caveats every attempt carries and live behind a disclosure, so the one
   // thing that went wrong isn't buried among them.
   const warnings = [...new Set([...(response.warnings ?? []), ...(simulation?.skippedPolicies ?? []).map((policy) => `Baseline policy skipped: ${policy}. Simulation does not account for it.`)])]
-  const notices = [...new Set(response.notices ?? [])]
+  const notes = response.notes ?? []
   const flows = response.flows ?? []
+  const rows = simulation?.rows ?? []
   const events = flows.reduce((total, flow) => total + (flow.count ?? 1), 0)
+  const changeCount = (change: string) => rows.filter((row) => row.change === change).length
   const transport = request.protocol === 'UDP' ? 'Traffic generation' : 'Observed TCP transport'
   const outcome = response.outcome ?? 'inconclusive'
+  const imageName = response.image?.split('@')[0].split('/').pop()
   return <div className="min-w-0 space-y-4" aria-live="polite">
-    <section aria-label="Candidate prediction" className="grid min-w-0 items-center gap-4 rounded-sm border border-line bg-void/40 p-4 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+    <ResultBanner baseline={baseline} candidate={candidate} />
+    <section aria-label="Candidate prediction" className="grid min-w-0 items-center gap-4 border border-line bg-void/40 p-4 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
       <div className="min-w-0 space-y-3">
-        <div><p className="text-[0.65rem] tracking-wide text-ink-dim uppercase">Predicted with candidate</p><h3 className={`mt-1 font-display text-2xl font-bold ${decisionTone[candidate]}`}>{candidate}</h3></div>
+        <div><p className="text-[0.65rem] tracking-[0.12em] text-ink-dim uppercase">Predicted with candidate</p><h3 className={`mt-1 font-display text-2xl font-bold ${decisionTone[candidate]}`}>{candidate}</h3></div>
         <div className="flex flex-wrap gap-5"><Decision label="Baseline model" decision={baseline} /><Decision label="With candidate" decision={candidate} /></div>
-        <p title={request.protocol === 'UDP' ? 'A generated datagram does not prove reachability or delivery.' : 'Connected proves TCP transport only, not application authentication. Failure does not by itself prove policy denial.'} className={`inline-block rounded-sm border px-2 py-1 font-mono text-[0.65rem] ${outcome === 'connected' || outcome === 'generated' ? 'border-signal/50 text-signal' : outcome === 'failed' ? 'border-drop/50 text-drop' : 'border-line text-ink-dim'}`}>{transport}: {outcome}</p>
       </div>
-      <ProbePath source={`${request.namespace}/${request.pod}`} destination={flows[0]?.destination || request.host} l4={`${request.protocol} ${request.port}`} baseline={baseline} candidate={candidate} />
+      {/* Below ~30rem the drawing would shrink its labels past legibility;
+          it scrolls inside its own box instead, never the page. */}
+      <div className="min-w-0 overflow-x-auto"><ProbePath source={`${request.namespace}/${request.pod}`} destination={flows[0]?.destination || request.host} l4={`${request.protocol} ${request.port}`} baseline={baseline} candidate={candidate} /></div>
       {candidate === 'INCONCLUSIVE' && <p className="text-sm text-ink-dim md:col-span-2">{warnings.find((warning) => warning.startsWith('Simulation inconclusive:')) ?? warnings[0] ?? (!flows.length ? 'No matching Hubble evidence was captured for this attempt.' : 'The sample does not provide one complete, consistent candidate decision. Expand the evidence below for details.')}</p>}
-      <p className="text-[0.65rem] text-ink-faint md:col-span-2">Simulated with Cilium's engine against the captured flows; the candidate is never applied. {response.message}</p>
     </section>
-    {warnings.length > 0 && <ul aria-label="Attempt warnings" className="space-y-1 text-xs text-allow">{warnings.map((warning, i) => <li key={i}>Warning: {warning}</li>)}</ul>}
-    <details><summary className="cursor-pointer text-xs text-ink-dim">Evidence & limitations · {flows.length} distinct {flows.length === 1 ? 'flow' : 'flows'}{events > flows.length && ` (${events} Hubble events)`}{notices.length > 0 && ` · ${notices.length} notes`}</summary>
-      <div className="mt-3 min-w-0 space-y-4 text-xs text-ink-dim">
-        <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[auto_minmax(0,1fr)]">
-          {response.containerName && <><dt>Ephemeral container</dt><dd className="break-all text-ink">{response.containerName}</dd></>}
-          {(response.context || response.apiServer) && <><dt>Cluster</dt><dd className="break-all text-ink">{response.context ?? 'unknown context'}{response.apiServer && ` · ${response.apiServer}`}</dd></>}
-          {response.startedAt && <><dt>Started</dt><dd className="text-ink">{response.startedAt}{response.durationMs !== undefined && ` · ${response.durationMs} ms`}</dd></>}
-          {response.image && <><dt>Probe image</dt><dd className="break-all text-ink">{response.image}</dd></>}
-        </dl>
-        <section aria-label="Observed Hubble flows" className="space-y-2"><h4 className="font-display font-bold text-ink">Observed under current policy</h4>
-          {!flows.length ? <p>No Hubble flows observed. Observation is unavailable or inconclusive.</p> : flows.map((flow, i) => <div key={i} className="space-y-1 border border-line p-3"><p>{flow.source} → {flow.destination} · {flow.l4}{(flow.count ?? 1) > 1 && <span className="text-ink-faint"> · ×{flow.count} events</span>}</p><p>Hubble verdict: {flow.verdict}{flow.dropReason && ` · ${flow.dropReason}`}</p><p>{flow.time}{flow.direction && ` · ${flow.direction}`}</p>{flow.decision && <p>Observed policy decision: {flow.decision}</p>}{flow.allowedBy?.map((policy, j) => <p key={`allow-${j}`}>Hubble allowed by: {policy.display}</p>)}{flow.deniedBy?.map((policy, j) => <p key={`deny-${j}`}>Hubble denied by: {policy.display}</p>)}</div>)}
+    <div className="flex flex-wrap items-center gap-2">
+      <span title={`${response.message} — ${request.protocol === 'UDP' ? 'a generated datagram does not prove reachability or delivery.' : 'connected proves TCP transport only, not application authentication; failure does not by itself prove policy denial.'}`} className={`border px-2.5 py-1 text-xs font-medium ${outcome === 'connected' || outcome === 'generated' ? VERDICT_STYLES.FORWARDED : outcome === 'failed' ? VERDICT_STYLES.DROPPED : 'border-line text-ink-dim'}`}>{transport}: {outcome}</span>
+      {/* Distinct flows, like the "N flows" chip beside them: one connection's
+          trace events are one row here, not N separate regressions. */}
+      {changeCount('NEWLY_DROPPED') > 0 && <CountChip label="newly dropped" value={changeCount('NEWLY_DROPPED')} className={HEADLINE_CHIP_STYLES.NEWLY_DROPPED} filled onClick={() => onOpenHelp?.('newly dropped')} />}
+      {changeCount('NEWLY_ALLOWED') > 0 && <CountChip label="newly allowed" value={changeCount('NEWLY_ALLOWED')} className={HEADLINE_CHIP_STYLES.NEWLY_ALLOWED} filled onClick={() => onOpenHelp?.('newly allowed')} />}
+      {changeCount('UNCHANGED') > 0 && <CountChip label="unchanged" value={changeCount('UNCHANGED')} className={CHANGE_STYLES.UNCHANGED} onClick={() => onOpenHelp?.('unchanged')} />}
+      {simulation && simulation.counts.notSimulated > 0 && <CountChip label="not simulated" value={simulation.counts.notSimulated} className="border-line-bright bg-panel-raised text-ink-dim" onClick={() => onOpenHelp?.('not simulated')} />}
+      <span className="border border-line px-2.5 py-1 text-xs text-ink-dim"><span className="font-semibold text-ink">{flows.length}</span> {flows.length === 1 ? 'flow' : 'flows'}{events > flows.length && <> · <span className="font-semibold text-ink">{events}</span> Hubble events</>}</span>
+    </div>
+    <div aria-label="Run details" className="flex min-w-0 flex-wrap gap-2">
+      {response.durationMs !== undefined && <MetaChip icon="⏱" label={`${(response.durationMs / 1000).toFixed(1)} s`} title={response.startedAt ? `Started ${response.startedAt}` : undefined} />}
+      {response.image && <MetaChip icon={response.image.includes('@sha256:') ? '🔒' : '⚠'} label={imageName ?? response.image} title={response.image} copy={response.image} />}
+      {response.containerName && <MetaChip icon="⧉" label={response.containerName} title="Ephemeral container, kept until normal Pod replacement" copy={response.containerName} />}
+      {(response.context || response.apiServer) && <MetaChip icon="⎈" label={response.context ?? 'unknown context'} title={`Cluster: ${response.context ?? 'unknown context'}${response.apiServer ? ` · ${response.apiServer}` : ''}`} />}
+    </div>
+    {warnings.length > 0 && <ul aria-label="Attempt warnings" className="space-y-1.5">{warnings.map((warning, i) => {
+      const w = warningDisplay(warning)
+      return <li key={i} className="flex gap-2 border border-allow/40 bg-allow/5 px-3 py-2 text-xs text-allow"><span aria-hidden="true">⚠</span><span className="min-w-0"><span className="font-semibold">Warning: {w.title}</span>{w.detail !== w.title && <span className="block text-ink-dim">{w.detail}</span>}</span></li>
+    })}</ul>}
+    <details className="border border-line"><summary className="cursor-pointer px-3 py-2 text-[0.65rem] font-semibold tracking-[0.1em] text-ink-dim uppercase">Evidence & limitations · {flows.length} distinct {flows.length === 1 ? 'flow' : 'flows'}{events > flows.length && ` (${events} Hubble events)`} · {rows.length} simulated {rows.length === 1 ? 'row' : 'rows'}{notes.length > 0 && ` · ${notes.length} notes`}</summary>
+      <div className="min-w-0 space-y-4 border-t border-line p-3 text-xs text-ink-dim">
+        <section aria-label="Observed Hubble flows" className="min-w-0 space-y-2"><h4 className={th + ' px-0'}>Observed under current policy</h4>
+          {!flows.length ? <p>No Hubble flows observed. Observation is unavailable or inconclusive.</p> : <div className="overflow-x-auto border border-line"><table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="border-b border-line bg-panel-raised"><tr>{['Verdict', 'Source', 'Destination', 'Port', 'Direction', 'Seen', 'Decided by'].map((h) => <th key={h} className={th}>{h}</th>)}</tr></thead>
+            <tbody className="divide-y divide-line">{flows.map((flow, i) => <tr key={i} className="hover:bg-panel-raised/60" title={flow.time}>
+              <td className="px-3 py-2"><span className={`border px-2 py-0.5 text-[0.65rem] font-semibold ${VERDICT_STYLES[flow.verdict] ?? 'border-line-bright bg-panel-raised text-ink-dim'}`}>{flow.verdict}</span>{flow.dropReason && <span className="ml-1 text-[0.65rem] text-drop">{flow.dropReason}</span>}</td>
+              <td className={td}>{flow.source}</td><td className={td}>{flow.destination}</td><td className={td}>{flow.l4}</td>
+              <td className="px-3 py-2 text-xs text-ink-dim">{flow.direction ?? '—'}</td>
+              <td className="px-3 py-2 text-xs text-ink-faint">{(flow.count ?? 1) > 1 ? `×${flow.count} events` : '—'}</td>
+              <td className="px-3 py-2"><DecidedBy flow={flow} /></td>
+            </tr>)}</tbody>
+          </table></div>}
         </section>
-        <section aria-label="Candidate simulation" className="space-y-2"><h4 className="font-display font-bold text-ink">Candidate simulation evidence</h4>
-          {!simulation?.rows?.length ? <p>No modeled result rows; candidate impact is inconclusive.</p> : simulation.rows.map((row, i) => <div key={i} className="space-y-1 border border-line p-3"><p>{row.change} · {row.source} → {row.destination} · {row.protocol}:{row.port}{row.count > 1 && <span className="text-ink-faint"> · ×{row.count} events</span>}</p><p>Baseline: {row.baselineAllowed === true ? 'ALLOWED' : row.baselineAllowed === false ? 'BLOCKED' : 'INCONCLUSIVE'} · Candidate: {row.candidateAllowed === true ? 'ALLOWED' : row.candidateAllowed === false ? 'BLOCKED' : 'INCONCLUSIVE'}</p><p>{row.explanation}</p></div>)}
+        <section aria-label="Candidate simulation" className="min-w-0 space-y-2"><h4 className={th + ' px-0'}>Candidate simulation evidence</h4>
+          {!rows.length ? <p>No modeled result rows; candidate impact is inconclusive.</p> : <div className="overflow-x-auto border border-line"><table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="border-b border-line bg-panel-raised"><tr>{['Change', 'Source', 'Destination', 'Port', 'Baseline', 'Candidate', 'Seen'].map((h) => <th key={h} className={th}>{h}</th>)}</tr></thead>
+            <tbody className="divide-y divide-line">{rows.map((row, i) => <tr key={i} className="hover:bg-panel-raised/60" title={row.explanation}>
+              <td className="px-3 py-2"><span className={`border px-2 py-0.5 text-[0.65rem] font-semibold ${CHANGE_STYLES[row.change]}`}>{row.change}</span></td>
+              <td className={td}>{row.source}</td><td className={td}>{row.destination}</td><td className={td}>{row.protocol}:{row.port}</td>
+              <td className="px-3 py-2 text-xs">{decisionChip(row.baselineAllowed)}</td><td className="px-3 py-2 text-xs">{decisionChip(row.candidateAllowed)}</td>
+              <td className="px-3 py-2 text-xs text-ink-faint">{row.count > 1 ? `×${row.count} events` : '—'}</td>
+            </tr>)}</tbody>
+          </table></div>}
         </section>
-        {notices.length > 0 && <section aria-label="Test notes" className="space-y-1"><h4 className="font-display font-bold text-ink">About this test</h4>{notices.map((notice, i) => <p key={i}>{notice}</p>)}</section>}
+        {notes.length > 0 && <section aria-label="Test notes" className="space-y-1"><h4 className={th + ' px-0'}>About this test</h4>{notes.map((note, i) => {
+          const n = noteDisplay(note)
+          return <details key={i} className="group"><summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 hover:text-ink"><span aria-hidden="true" className="w-4 text-center text-signal">{n.icon}</span><span>{n.title}</span><span aria-hidden="true" className="text-ink-faint group-open:rotate-90">›</span></summary><p className="mt-1 ml-6 text-ink-faint">{note.text}</p></details>
+        })}</section>}
       </div>
     </details>
   </div>

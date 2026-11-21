@@ -11,7 +11,7 @@ export function ProbePath({ source, destination, l4, baseline, candidate }: {
   source: string; destination: string; l4: string; baseline: ConnectivityDecision; candidate: ConnectivityDecision
 }) {
   return (
-    <svg role="img" aria-label={`${source} to ${destination}: baseline ${baseline.toLowerCase()}, candidate ${candidate.toLowerCase()}`} viewBox="-12 0 624 204" className="block h-auto w-full max-w-2xl">
+    <svg role="img" aria-label={`${source} to ${destination}: baseline ${baseline.toLowerCase()}, candidate ${candidate.toLowerCase()}`} viewBox="-12 0 624 204" className="block h-auto w-full max-w-2xl min-w-[30rem]">
       <Lane y={62} label="BASELINE" decision={baseline} />
       <Lane y={138} label="CANDIDATE" decision={candidate} />
       <Gate />
@@ -21,7 +21,7 @@ export function ProbePath({ source, destination, l4, baseline, candidate }: {
   )
 }
 
-const tone: Record<ConnectivityDecision, string> = { ALLOWED: 'text-signal', BLOCKED: 'text-drop', INCONCLUSIVE: 'text-ink-faint' }
+const tone: Record<ConnectivityDecision, string> = { ALLOWED: 'text-unchanged', BLOCKED: 'text-drop', INCONCLUSIVE: 'text-ink-faint' }
 
 function Lane({ y, label, decision }: { y: number; label: string; decision: ConnectivityDecision }) {
   const full = `M94 100 C150 100 150 ${y} 200 ${y} L400 ${y} C450 ${y} 450 100 506 100`

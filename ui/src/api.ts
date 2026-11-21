@@ -3,6 +3,7 @@
 // exactly — these two files are the one contract, kept in sync by hand since
 // there's no shared schema generation for a project this size yet.
 import { isProbeStage, splitNDJSON, type ProbeStageId } from './shared/probeStages'
+import type { ProbeNote } from './shared/probeNotes'
 import type { EgressRule, IngressRule, PolicyModel } from './policy'
 import type { FlowFilterParams } from './shared/flowFilter'
 
@@ -148,10 +149,11 @@ export interface ConnectionProbeResponse {
   // count: identical trace events of one connection, folded server-side.
   flows?: (Flow & { count?: number })[]
   simulation?: VerdictResponse
-  // warnings: problems with this attempt. notices: standing caveats every
-  // attempt carries (ephemeral entry remains, simulation mode, …).
+  // warnings: problems with this attempt. notes: standing caveats every
+  // attempt carries (ephemeral entry remains, simulation mode, …), each with
+  // a stable code (see shared/probeNotes.ts).
   warnings?: string[]
-  notices?: string[]
+  notes?: ProbeNote[]
 }
 
 export interface ProbeImage {

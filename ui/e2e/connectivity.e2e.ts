@@ -133,12 +133,12 @@ test.describe('Connectivity tests', () => {
     expect(Object.keys(request!)).toEqual(['namespace', 'pod', 'uid', 'host', 'port', 'protocol', 'candidateYAML', 'replaceExisting', 'candidateNamespace'])
   })
 
-  test('attempt warnings stay visible; standing notices and repeated trace events are folded away', async ({ page }) => {
+  test('attempt warnings stay visible; coded notes and repeated trace events are folded away', async ({ page }) => {
     const result: ConnectionProbeResponse = {
       ...response,
       flows: [{ ...response.flows![0], count: 8 }, { ...response.flows![0], verdict: 'DROPPED', count: 1 }],
       warnings: ['Simulation inconclusive: Kubernetes NetworkPolicy objects in namespace postgres are not included in this probe engine baseline'],
-      notices: ['The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced.'],
+      notes: [{ code: 'ephemeral-entry', text: 'The terminated ephemeral-container entry cannot be removed or restarted and remains until the Pod is replaced.' }, { code: 'brand-new-code', text: 'A note this UI has no title for yet. Detail.' }],
       simulation: undefined,
     }
     await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(result)))
@@ -146,12 +146,21 @@ test.describe('Connectivity tests', () => {
     await submit(page)
     await expect(prediction(page).getByRole('heading')).toHaveText('INCONCLUSIVE')
     await expect(page.getByRole('list', { name: 'Attempt warnings' })).toBeVisible()
+    await expect(page.getByRole('list', { name: 'Attempt warnings' })).toContainText('Warning: Simulation inconclusive')
     await expect(page.getByRole('list', { name: 'Attempt warnings' })).toContainText('namespace postgres')
     await expect(page.getByRole('region', { name: 'Test notes' })).not.toBeVisible()
-    await expect(panel(page).getByText(/Evidence & limitations/)).toContainText('2 distinct flows (9 Hubble events) · 1 notes')
+    await expect(panel(page).getByText(/Evidence & limitations/)).toContainText('2 distinct flows (9 Hubble events) · 0 simulated rows · 2 notes')
     await panel(page).getByText(/Evidence & limitations/).click()
     await expect(page.getByRole('region', { name: 'Observed Hubble flows' })).toContainText('×8 events')
-    await expect(page.getByRole('region', { name: 'Test notes' })).toContainText('entry cannot be removed')
+    const notes = page.getByRole('region', { name: 'Test notes' })
+    await expect(notes).toContainText('Ephemeral entry stays until Pod replacement')
+    await expect(notes).toContainText('A note this UI has no title for yet')
+    await expect(notes.getByText('entry cannot be removed or restarted')).not.toBeVisible()
+    await notes.getByText('Ephemeral entry stays until Pod replacement').click()
+    await expect(notes.getByText('entry cannot be removed or restarted')).toBeVisible()
+    const observed = page.getByRole('region', { name: 'Observed Hubble flows' })
+    await expect(observed.getByRole('columnheader')).toHaveText(['Verdict', 'Source', 'Destination', 'Port', 'Direction', 'Seen', 'Decided by'])
+    await expect(observed.getByRole('row')).toHaveCount(3)
   })
 
   for (const scenario of ['missing decisions', 'mixed decisions', 'not simulated', 'missing flows', 'skipped baseline', 'missing simulation'] as const) {
@@ -481,6 +490,8 @@ test.describe('Connectivity tests', () => {
       for (let i = 0; i < 5; i++) await expect(steps.nth(i)).toHaveAttribute('data-state', 'done')
       await expect(steps.nth(5)).toHaveAttribute('data-state', 'skipped')
       await expect(prediction(page).getByRole('img')).toHaveAttribute('aria-label', 'webapp/webapp-123 to postgres/postgres-0: baseline allowed, candidate blocked')
+    await expect(panel(page).getByText('This connection would BREAK if the candidate merged as-is.')).toBeVisible()
+    await expect(panel(page).getByRole('button', { name: /1\s*newly dropped/ })).toBeVisible()
     })
 
     test('a rejection after the stream began keeps its definite status and fails the current stage', async ({ page }) => {

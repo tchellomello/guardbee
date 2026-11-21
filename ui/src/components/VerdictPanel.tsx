@@ -28,24 +28,8 @@ import type { EgressRule, IngressRule, Protocol } from '../policy'
 import { runsWithLiveGraphs } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
 import { GraphNodeLink } from './GraphNodeLink'
-
-// Visual language matches the CLI's own colorize/changeColor (colors.go):
-// red for NEWLY_DROPPED, amber for NEWLY_ALLOWED, green for UNCHANGED —
-// same categories, same meaning, just rendered as chips instead of ANSI.
-const CHANGE_STYLES: Record<VerdictChange, string> = {
-  NEWLY_DROPPED: 'border-drop/40 bg-drop/10 text-drop',
-  NEWLY_ALLOWED: 'border-allow/40 bg-allow/10 text-allow',
-  UNCHANGED: 'border-unchanged/40 bg-unchanged/10 text-unchanged',
-}
-
-// Filled variants, reserved for the newly-dropped/newly-allowed summary
-// chips only — those are the actual answer this tool exists to give, so
-// they get the same solid-fill treatment as the primary "Run verdict"
-// button instead of the muted border+low-opacity look every other chip uses.
-const HEADLINE_CHIP_STYLES: Record<'NEWLY_DROPPED' | 'NEWLY_ALLOWED', string> = {
-  NEWLY_DROPPED: 'border-drop bg-drop text-void font-bold',
-  NEWLY_ALLOWED: 'border-allow bg-allow text-void font-bold',
-}
+import { CountChip, SectionLabel } from './Chips'
+import { CHANGE_STYLES, HEADLINE_CHIP_STYLES } from '../shared/chipStyles'
 
 const CATEGORY_ORDER: VerdictChange[] = ['NEWLY_DROPPED', 'NEWLY_ALLOWED', 'UNCHANGED']
 
@@ -608,7 +592,7 @@ export function VerdictPanel({
 
       </form>
 
-      <ConnectivityTestsPanel active={active} candidateYAML={candidateYAML} namespace={namespace} allNamespaces={allNamespaces} replaceExisting={replaceExisting} resetGeneration={resetGeneration} onRunningChange={setProbeRunning} />
+      <ConnectivityTestsPanel active={active} candidateYAML={candidateYAML} namespace={namespace} allNamespaces={allNamespaces} replaceExisting={replaceExisting} resetGeneration={resetGeneration} onRunningChange={setProbeRunning} onOpenHelp={openHelp} />
 
       <div className="mt-6 space-y-6">
         {runs.length > 0 && (
@@ -1039,16 +1023,6 @@ function RunCard({
   )
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase w-full">
-      <span className="h-px flex-1 bg-line" />
-      {children}
-      <span className="h-px flex-1 bg-line" />
-    </div>
-  )
-}
-
 // Makes a table cell's source/destination text clickable, selecting the
 // matching node in the VerdictGraph above — the same isolation effect as
 // clicking the box directly, triggered from the row instead.
@@ -1186,49 +1160,5 @@ function AddToPolicyButton({
         </div>
       )}
     </div>
-  )
-}
-
-
-function CountChip({
-  label,
-  value,
-  className,
-  filled,
-  onClick,
-}: {
-  label: string
-  value: number
-  className: string
-  // True for the filled (bg-drop/bg-allow) headline chips, whose base text
-  // is text-void — the glyph's own "dim" shade has to be void-based there
-  // too, or text-ink-faint (tuned for dark/void backgrounds) disappears
-  // against a bright solid fill.
-  filled?: boolean
-  onClick?: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={`Click to learn more about "${label}" flows`}
-      className={`group border px-2.5 py-1 text-xs font-medium ${className} cursor-pointer hover:brightness-110 active:scale-98 transition-all flex items-center gap-1.5`}
-    >
-      <span className="font-semibold">{value}</span>
-      <span>{label}</span>
-      {/* Deliberately not colored by the chip's own category color — this
-          is the one part of the chip that's actually clickable-for-info,
-          so it reads as a distinct affordance instead of blending into the
-          (non-interactive-looking) count + label. */}
-      <span
-        className={
-          filled
-            ? 'rounded-full text-void/50 transition-colors group-hover:text-void group-focus-visible:text-void group-focus-visible:ring-1 group-focus-visible:ring-void'
-            : 'rounded-full text-ink-faint transition-colors group-hover:text-signal group-focus-visible:text-signal group-focus-visible:ring-1 group-focus-visible:ring-signal'
-        }
-      >
-        ⓘ
-      </span>
-    </button>
   )
 }
