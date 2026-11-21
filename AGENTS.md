@@ -224,6 +224,7 @@ mise run completions  # regenerate shell completions after a rename or flag/subc
 mise run compat-scan <from-version> <to-version>  # discover new compat.go gate candidates; manual, see above
 mise run e2e       # end-to-end UI tests in a real browser (ui/e2e, Playwright); args go to playwright, e.g. -- flows
 mise run coverage  # coverage ratchet: fails if Go or UI unit coverage drops below coverage-baseline.json
+mise run docs-screenshots  # regenerate docs/images (light theme) from the mocked Lab scenario; review before committing
 ```
 
 `mise run build` **always rebuilds the frontend first** — the Go binary

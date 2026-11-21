@@ -387,6 +387,11 @@ Baseline model  ALLOWED    With candidate  BLOCKED
 Observed TCP transport: connected
 ```
 
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict — connectivity test</span></div>
+<img src="../images/ui-connectivity-test.png" alt="Connectivity test from prometheus to postgres:9187 with the BusyBox image: every stage done, a red banner saying the connection would break, and the path diagram with the baseline lane flowing through the policy gate and the candidate lane stopped at a cross" />
+</div>
+
 The scrape the Step 3 verdict flagged, reproduced on demand: the connection
 works today (no policy yet) and the candidate would cut it. Run the same
 test from the `webapp` Pod to port `5432` and both lanes flow: **ALLOWED →

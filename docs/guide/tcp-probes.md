@@ -316,6 +316,11 @@ gate, and the destination, with one lane for the live baseline and one for
 the candidate. An allowed lane flows end to end, a blocked lane stops at the
 gate, and an inconclusive lane is dashed with a "?".
 
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict — connectivity test</span></div>
+<img src="../images/ui-connectivity-test.png" alt="Connectivity test from prometheus to postgres:9187 with the BusyBox image: every stage done, a red banner saying the connection would break, and the path diagram with the baseline lane flowing through the policy gate and the candidate lane stopped at a cross" />
+</div>
+
 ## Troubleshooting an inconclusive test
 
 Start the server with `--debug` (`guardbee ui --debug --enable-probes …`). For
