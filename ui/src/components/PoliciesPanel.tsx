@@ -7,6 +7,8 @@
 import { useState } from 'react'
 import { fetchPolicies, fetchPolicyForEdit, type EditablePolicyModel, type PolicyListItem } from '../api'
 import { NamespaceScope } from './NamespaceScope'
+import { EmptyState, ResultsHeader, SectionLabel } from './Chips'
+import { FIELD_ROW_OFFSET } from '../shared/chipStyles'
 
 export interface PoliciesPanelProps {
   // Loads a live policy straight into the Policy Editor tab for iteration —
@@ -70,25 +72,26 @@ export function PoliciesPanel({ onEditPolicy }: PoliciesPanelProps = {}) {
 
   return (
     <div className="space-y-6">
-      <form
-        onSubmit={handleSubmit}
-        className="rise-in flex flex-wrap items-end gap-5 border border-line bg-panel p-5"
-      >
-        <div className="w-64">
+      <form onSubmit={handleSubmit} className="rise-in space-y-5 border border-line bg-panel p-5">
+        <SectionLabel>Scope</SectionLabel>
+        {/* Same column widths as the Flows and Verdict scope rows. */}
+        <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[minmax(0,16rem)_auto]">
           <NamespaceScope
             namespace={namespace}
             onNamespaceChange={setNamespace}
             allNamespaces={allNamespaces}
             onAllNamespacesChange={setAllNamespaces}
           />
+          <div className={FIELD_ROW_OFFSET}>
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-signal px-5 py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            >
+              {loading ? 'Loading…' : 'List policies'}
+            </button>
+          </div>
         </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="bg-signal px-5 py-2 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-        >
-          {loading ? 'Loading…' : 'List policies'}
-        </button>
       </form>
 
       {error && (
@@ -106,16 +109,10 @@ export function PoliciesPanel({ onEditPolicy }: PoliciesPanelProps = {}) {
       )}
 
       {fetchedNamespace === null && !loading && (
-        <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
-          <p className="font-mono text-2xl text-signal" aria-hidden="true">
-            {'>_'}
-          </p>
-          <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to list policies</p>
-          <p className="text-xs max-w-md mx-auto leading-relaxed">
-            Pick a namespace scope and click <strong className="text-signal">List policies</strong> to see what's
-            actually enforced on the cluster right now.
-          </p>
-        </div>
+        <EmptyState title="Ready to list policies">
+          Pick a namespace scope and click <strong className="text-signal">List policies</strong> to see what's
+          actually enforced on the cluster right now.
+        </EmptyState>
       )}
 
       {editError && (
@@ -129,6 +126,10 @@ export function PoliciesPanel({ onEditPolicy }: PoliciesPanelProps = {}) {
             Dismiss
           </button>
         </div>
+      )}
+
+      {fetchedNamespace !== null && (
+        <ResultsHeader title="Live policies" />
       )}
 
       {fetchedNamespace !== null && (
@@ -167,8 +168,10 @@ export function PoliciesPanel({ onEditPolicy }: PoliciesPanelProps = {}) {
                       <td className="px-3 py-2">
                         <span
                           className={`border px-2 py-0.5 text-[0.65rem] font-semibold ${
+                            // Signal, not amber: amber means NEWLY_ALLOWED
+                            // everywhere else, and a CCNP is just wider in scope.
                             p.kind === 'CiliumClusterwideNetworkPolicy'
-                              ? 'border-allow/40 bg-allow/10 text-allow'
+                              ? 'border-signal/40 bg-signal/5 text-signal'
                               : 'border-line-bright bg-panel-raised text-ink-dim'
                           }`}
                         >

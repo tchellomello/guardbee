@@ -28,8 +28,8 @@ import type { EgressRule, IngressRule, Protocol } from '../policy'
 import { runsWithLiveGraphs } from '../shared/graphBudget'
 import { GraphPlaceholder } from './GraphPlaceholder'
 import { GraphNodeLink } from './GraphNodeLink'
-import { CountChip, SectionLabel } from './Chips'
-import { CHANGE_STYLES, HEADLINE_CHIP_STYLES } from '../shared/chipStyles'
+import { CountChip, EmptyState, ResultsHeader, SectionLabel } from './Chips'
+import { CHANGE_STYLES, FIELD_ROW_OFFSET, HEADLINE_CHIP_STYLES, META_CHIP, TEXT_ACTION } from '../shared/chipStyles'
 
 const CATEGORY_ORDER: VerdictChange[] = ['NEWLY_DROPPED', 'NEWLY_ALLOWED', 'UNCHANGED']
 
@@ -412,9 +412,7 @@ export function VerdictPanel({
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
           <div className="rise-in min-w-0 space-y-5 border border-line bg-panel p-5">
-            <div className="flex items-center justify-between">
-              <SectionLabel>Scope</SectionLabel>
-            </div>
+            <SectionLabel>Scope</SectionLabel>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_6.5rem_auto]">
               <NamespaceScope
@@ -432,7 +430,7 @@ export function VerdictPanel({
                   className="w-full border border-line bg-void px-3 py-2 text-sm text-ink focus:border-signal focus:outline-none"
                 />
               </Field>
-              <div className="flex flex-col gap-2 sm:pt-6">
+              <div className={`flex flex-col gap-2 ${FIELD_ROW_OFFSET}`}>
                 <CheckRow label="Show unchanged" checked={showUnchanged} onChange={setShowUnchanged} />
                 <CheckRow label="Replace matching live policies" checked={replaceExisting} onChange={setReplaceExisting} />
                 <CheckRow label="Follow (live)" checked={follow} onChange={setFollow} />
@@ -451,9 +449,9 @@ export function VerdictPanel({
 
           {/* Candidate policy YAML & run actions */}
           <div className="rise-in flex min-w-0 flex-col gap-3 border border-line bg-panel p-5">
-            <div className="flex items-center justify-between">
-              <SectionLabel>Candidate policy</SectionLabel>
-              <div className="flex shrink-0 items-center gap-3 pl-3">
+            <SectionLabel
+              actions={
+                <>
                 {onSavePolicy && (
                   <SaveToWorkspace
                     defaultName={savedName || firstPolicyName(candidateYAML) || 'candidate'}
@@ -465,16 +463,19 @@ export function VerdictPanel({
                   type="button"
                   onClick={() => setExpandedEditorOpen(true)}
                   title="Open a wider editor to hand-edit this policy"
-                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer"
+                  className={TEXT_ACTION}
                 >
                   ⤢ Expand
                 </button>
-              </div>
-            </div>
+                </>
+              }
+            >
+              Candidate policy
+            </SectionLabel>
             {savedName && (
               <p className="-mt-1 text-[0.65rem] text-ink-faint">
                 Workspace entry: <span className="font-mono text-ink-dim">{savedName}</span> (edits auto-save
-                in this browser; 💾 Save updates the entry)
+                in this browser; Save updates the entry)
               </p>
             )}
 
@@ -550,16 +551,19 @@ export function VerdictPanel({
 
         {workloads && (
           <div className="rise-in space-y-3 border border-line bg-panel p-5">
-            <div className="flex items-center justify-between">
-              <SectionLabel>Selected workloads</SectionLabel>
+            <SectionLabel
+              actions={
               <button
                 type="button"
                 onClick={() => setWorkloads(null)}
-                className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop cursor-pointer"
+                className={TEXT_ACTION}
               >
                 Dismiss
               </button>
-            </div>
+              }
+            >
+              Selected workloads
+            </SectionLabel>
             {!workloads.valid ? (
               <p className="text-sm text-drop">{workloads.error}</p>
             ) : (
@@ -596,29 +600,17 @@ export function VerdictPanel({
 
       <div className="mt-6 space-y-6">
         {runs.length > 0 && (
-          <div className="flex items-center justify-between border-b border-line pb-3">
-            <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
-              {runs.length === 1 ? 'Analysis Result' : `Stacked Analyses (${runs.length})`}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleClearResults}
-                className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop transition-colors cursor-pointer"
-              >
-                Clear all results
-              </button>
-            </div>
-          </div>
+          <ResultsHeader
+            title={runs.length === 1 ? 'Verdict result' : `Stacked verdicts (${runs.length})`}
+            clearLabel="Clear all results"
+            onClear={handleClearResults}
+          />
         )}
 
         {runs.length === 0 && !loading && (
-          <div className="border border-line bg-panel p-8 text-center text-ink-dim space-y-3">
-            <p className="font-display text-xs uppercase tracking-wider text-ink">Ready to simulate</p>
-            <p className="text-xs max-w-md mx-auto leading-relaxed">
-              Pick a namespace scope, paste your candidate CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy, and click <strong className="text-signal">Run verdict</strong> to evaluate against live cluster traffic.
-            </p>
-          </div>
+          <EmptyState title="Ready to simulate">
+            Pick a namespace scope, paste your candidate CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy, and click <strong className="text-signal">Run verdict</strong> to evaluate against live cluster traffic.
+          </EmptyState>
         )}
 
         {runs.map((run, runIndex) => (
@@ -666,7 +658,7 @@ function RunDuration({ run }: { run: VerdictRunItem }) {
       title={live ? 'Running for' : 'Wall-clock time this run took, from request to result'}
       className={`font-mono text-[0.7rem] tabular-nums ${live ? 'text-signal' : 'text-ink-faint'}`}
     >
-      ⏱ {formatElapsed(ms)}
+      {formatElapsed(ms)}
     </span>
   )
 }
@@ -755,7 +747,7 @@ function RunCard({
             {run.timestamp.toLocaleTimeString()}
           </span>
           <RunDuration run={run} />
-          <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
+          <span className={`${META_CHIP} text-ink-dim`}>
             {run.replaceExisting ? 'mode: replace matching policies' : 'mode: additive'}
           </span>
           {run.result.context && (
@@ -763,15 +755,15 @@ function RunCard({
               title={`The cluster this run judged: kubeconfig context ${run.result.context}${
                 run.result.apiServer ? ` (${run.result.apiServer})` : ''
               }`}
-              className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink"
+              className={`${META_CHIP} text-ink`}
             >
               context: {run.result.context}
             </span>
           )}
-          <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink">
+          <span className={`${META_CHIP} text-ink`}>
             {run.namespace ? `namespace: ${run.namespace}` : 'all namespaces'}
           </span>
-          <span className="border border-line bg-panel-raised px-2 py-0.5 font-mono text-[0.7rem] text-ink-dim">
+          <span className={`${META_CHIP} text-ink-dim`}>
             last: {run.last}
           </span>
           {!isFlowFilterEmpty(run.filter) && (
@@ -793,7 +785,7 @@ function RunCard({
             type="button"
             onClick={() => onDuplicate(run)}
             title="Load this run's YAML and parameters back into the form"
-            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer"
+            className={TEXT_ACTION}
           >
             Duplicate to form
           </button>
@@ -802,9 +794,7 @@ function RunCard({
             onClick={() => setGrouped((g) => !g)}
             aria-pressed={grouped}
             title="Collapse rows with the same change, source, destination and port into one, with a count in the Seen column"
-            className={`font-display text-[0.65rem] font-semibold uppercase tracking-wider transition-colors cursor-pointer ${
-              grouped ? 'text-signal' : 'text-ink-faint hover:text-signal'
-            }`}
+            className={`${TEXT_ACTION} ${grouped ? 'text-signal' : ''}`}
           >
             {grouped ? '✓ Grouped' : 'Group traffic patterns'}
           </button>
@@ -812,7 +802,7 @@ function RunCard({
             type="button"
             onClick={handleExportMarkdown}
             title="Copy the results table as Markdown, for pasting into a PR description or ticket"
-            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer"
+            className={TEXT_ACTION}
           >
             {exportCopied ? '✓ Copied!' : 'Export'}
           </button>
@@ -821,7 +811,7 @@ function RunCard({
             onClick={handleCopyTable}
             disabled={rowsByCategory.length === 0}
             title="Copy the results table as tab-separated text (pastes into a spreadsheet)"
-            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className={TEXT_ACTION}
           >
             {tableCopied ? '✓ Copied!' : 'Copy'}
           </button>
@@ -830,14 +820,14 @@ function RunCard({
             onClick={handleDownloadCSV}
             disabled={rowsByCategory.length === 0}
             title="Download the results table as a CSV file"
-            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-signal transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className={TEXT_ACTION}
           >
             CSV
           </button>
           <button
             type="button"
             onClick={() => onToggleCollapse(run.id)}
-            className="font-display text-[0.65rem] font-semibold uppercase tracking-wider text-ink-faint hover:text-ink transition-colors cursor-pointer"
+            className={TEXT_ACTION}
           >
             {run.isCollapsed ? 'Expand' : 'Collapse'}
           </button>
@@ -845,7 +835,8 @@ function RunCard({
             type="button"
             onClick={() => onRemove(run.id)}
             title="Remove this analysis run"
-            className="text-sm text-ink-faint hover:text-drop transition-colors cursor-pointer"
+            aria-label="Remove this analysis run"
+            className={`${TEXT_ACTION} text-sm hover:text-drop`}
           >
             ✕
           </button>

@@ -159,9 +159,9 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
   }
 
   return (
-    <section aria-label="Connectivity tests" className="mt-6 min-w-0 rounded-sm border border-line bg-panel">
+    <section aria-label="Connectivity tests" className="mt-6 min-w-0 border border-line bg-panel">
       <button type="button" aria-expanded={expanded} aria-controls="connectivity-tests-content" onClick={() => setExpanded(!expanded)} className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-3 p-5 text-left hover:bg-void/30">
-        <span><span className="block font-display text-sm font-bold tracking-wide text-ink">Connectivity tests</span><span className="mt-1 block text-xs text-ink-dim">Test a specific connection against your loaded candidate.</span></span>
+        <span><span className="block text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase">Connectivity tests</span><span className="mt-1 block text-xs text-ink-dim">Test a specific connection against your loaded candidate.</span></span>
         <span className="flex items-center gap-3"><Badge>Bounded · opt-in</Badge><span aria-hidden="true" className="text-ink-dim">{expanded ? '−' : '+'}</span></span>
       </button>
       <div id="connectivity-tests-content" hidden={!expanded} className="min-w-0 space-y-5 border-t border-line p-5">
@@ -259,7 +259,7 @@ function ResultBanner({ baseline, candidate }: { baseline: ConnectivityDecision;
 
 // A small square chip for run metadata; copyable ones copy their full value.
 function MetaChip({ icon, label, title, copy }: { icon: string; label: string; title?: string; copy?: string }) {
-  const content = <><span aria-hidden="true">{icon}</span><span className="truncate">{label}</span></>
+  const content = <>{icon && <span aria-hidden="true">{icon}</span>}<span className="truncate">{label}</span></>
   const className = 'flex min-w-0 max-w-full items-center gap-1.5 border border-line bg-void/50 px-2 py-1 font-mono text-[0.65rem] text-ink-dim'
   return copy
     ? <button type="button" title={`${title ?? copy} — click to copy`} onClick={() => { void navigator.clipboard?.writeText(copy) }} className={`${className} cursor-pointer hover:border-signal hover:text-signal`}>{content}</button>
@@ -309,8 +309,8 @@ function ConnectionResult({ response, request, onOpenHelp }: { response: Connect
       <span className="border border-line px-2.5 py-1 text-xs text-ink-dim"><span className="font-semibold text-ink">{flows.length}</span> {flows.length === 1 ? 'flow' : 'flows'}{events > flows.length && <> · <span className="font-semibold text-ink">{events}</span> Hubble events</>}</span>
     </div>
     <div aria-label="Run details" className="flex min-w-0 flex-wrap gap-2">
-      {response.durationMs !== undefined && <MetaChip icon="⏱" label={`${(response.durationMs / 1000).toFixed(1)} s`} title={response.startedAt ? `Started ${response.startedAt}` : undefined} />}
-      {response.image && <MetaChip icon={response.image.includes('@sha256:') ? '🔒' : '⚠'} label={imageName ?? response.image} title={response.image} copy={response.image} />}
+      {response.durationMs !== undefined && <MetaChip icon="" label={`${(response.durationMs / 1000).toFixed(1)} s`} title={response.startedAt ? `Started ${response.startedAt}` : undefined} />}
+      {response.image && <MetaChip icon={response.image.includes('@sha256:') ? '' : '⚠'} label={imageName ?? response.image} title={response.image} copy={response.image} />}
       {response.containerName && <MetaChip icon="⧉" label={response.containerName} title="Ephemeral container, kept until normal Pod replacement" copy={response.containerName} />}
       {(response.context || response.apiServer) && <MetaChip icon="⎈" label={response.context ?? 'unknown context'} title={`Cluster: ${response.context ?? 'unknown context'}${response.apiServer ? ` · ${response.apiServer}` : ''}`} />}
     </div>

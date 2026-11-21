@@ -7,6 +7,8 @@ import { PolicyGraph } from './PolicyGraph'
 import { PresetMenu, type PresetMenuItem } from './PresetMenu'
 import { PolicyTextModal } from './PolicyTextModal'
 import { SaveToWorkspace } from './SaveToWorkspace'
+import { SectionLabel } from './Chips'
+import { TEXT_ACTION } from '../shared/chipStyles'
 
 // The "Blank Policy"/"Reset form" option is always available locally (no
 // fetch needed) — every other generic template comes from useTemplates().
@@ -446,23 +448,24 @@ export function PolicyEditorPanel({
                 of one dropdown button, so it's folded into this card's own
                 header instead: still a one-click dropdown, just not
                 claiming a whole row for it. */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-2">
-              <span className="font-display text-xs font-bold uppercase tracking-wider text-signal">
-                Policy Metadata & Scope
-              </span>
-              <div className="flex items-center gap-3">
-                <PresetMenu presets={presetMenuItems} onSelect={handleLoadPreset} />
-                <button
-                  type="button"
-                  onClick={() => handleLoadPreset('blank')}
-                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-drop transition-colors cursor-pointer"
-                >
-                  Reset form
-                </button>
-              </div>
-            </div>
+            <SectionLabel
+              actions={
+                <>
+                  <PresetMenu presets={presetMenuItems} onSelect={handleLoadPreset} />
+                  <button
+                    type="button"
+                    onClick={() => handleLoadPreset('blank')}
+                    className={`${TEXT_ACTION} hover:text-drop`}
+                  >
+                    Reset form
+                  </button>
+                </>
+              }
+            >
+              Policy metadata & scope
+            </SectionLabel>
             <div>
-              <label className="block mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
+              <label className="mb-1.5 block text-[0.65rem] font-semibold tracking-[0.12em] text-ink-dim uppercase">
                 Policy Kind
               </label>
               <div className="inline-flex border border-line">
@@ -493,7 +496,7 @@ export function PolicyEditorPanel({
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
+                <label className="mb-1.5 block text-[0.65rem] font-semibold tracking-[0.12em] text-ink-dim uppercase">
                   Policy Name
                 </label>
                 <input
@@ -505,7 +508,7 @@ export function PolicyEditorPanel({
                 />
               </div>
               <div>
-                <label className="block mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
+                <label className="mb-1.5 block text-[0.65rem] font-semibold tracking-[0.12em] text-ink-dim uppercase">
                   {model.kind === 'CiliumClusterwideNetworkPolicy' ? 'Target Namespace (optional)' : 'Namespace'}
                 </label>
                 <input
@@ -524,7 +527,7 @@ export function PolicyEditorPanel({
               </div>
             </div>
             <div>
-              <label className="block mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-ink-dim">
+              <label className="mb-1.5 block text-[0.65rem] font-semibold tracking-[0.12em] text-ink-dim uppercase">
                 Description (Optional)
               </label>
               <input
@@ -562,30 +565,29 @@ export function PolicyEditorPanel({
 
         {/* Live YAML Output & Action Buttons */}
         <div className="space-y-4 2xl:sticky 2xl:top-6">
-          <div className="border border-line bg-panel p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="font-display text-xs font-bold uppercase tracking-wider text-ink">
-                Candidate Policy Output
-              </span>
-              <div className="flex items-center gap-2">
-                {onSavePolicy && <SaveToWorkspace defaultName={model.name} onSave={onSavePolicy} />}
-                <button
-                  type="button"
-                  onClick={handleOpenYamlEditor}
-                  title="Open an editable view — hand-edit the YAML directly, or paste a full policy over it to import"
-                  className="font-display text-[0.65rem] font-bold uppercase tracking-wider text-ink-dim hover:text-signal cursor-pointer"
-                >
-                  ⤢ Expand / Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopyYAML}
-                  className="border border-line bg-void px-2.5 py-1 text-[0.7rem] font-bold uppercase tracking-wider text-ink-dim hover:text-ink transition-colors cursor-pointer"
-                >
-                  {copied ? '✓ Copied!' : 'Copy YAML'}
-                </button>
-              </div>
-            </div>
+          {/* One panel for the output: status, the Verdict hand-off and the
+              YAML itself, the same shape as Verdict's candidate panel. */}
+          <div className="rise-in space-y-3 border border-line bg-panel p-5">
+            <SectionLabel
+              actions={
+                <>
+                  {onSavePolicy && <SaveToWorkspace defaultName={model.name} onSave={onSavePolicy} />}
+                  <button
+                    type="button"
+                    onClick={handleOpenYamlEditor}
+                    title="Open an editable view — hand-edit the YAML directly, or paste a full policy over it to import"
+                    className={TEXT_ACTION}
+                  >
+                    ⤢ Expand / Edit
+                  </button>
+                  <button type="button" onClick={handleCopyYAML} className={TEXT_ACTION}>
+                    {copied ? '✓ Copied!' : 'Copy YAML'}
+                  </button>
+                </>
+              }
+            >
+              Candidate policy
+            </SectionLabel>
 
             {/* Diff against the live policy this draft was loaded from
                 (see diffAgainstOriginal above) — only present while editing
@@ -643,7 +645,9 @@ export function PolicyEditorPanel({
             )}
 
             {!isValidating && validation && validation.valid && (
-              <div className="flex items-center gap-2 border border-unchanged/40 bg-unchanged/10 px-3 py-2 text-xs text-unchanged font-semibold">
+              // Signal, not green: green means UNCHANGED/FORWARDED, and a
+              // parse result isn't a verdict.
+              <div className="flex items-center gap-2 border border-signal/40 bg-signal/5 px-3 py-2 text-xs font-semibold text-signal">
                 <span>✓</span>
                 <span>Valid {model.kind} spec ({validation.ruleCount} rule(s) parsed)</span>
               </div>
@@ -652,7 +656,7 @@ export function PolicyEditorPanel({
             {!isValidating && validation && !validation.valid && (
               <div className="border border-drop/40 bg-drop/10 p-3 text-xs text-drop space-y-1">
                 <div className="flex items-center gap-1.5 font-bold">
-                  <span>⚠️</span>
+                  <span aria-hidden="true">⚠</span>
                   <span>Invalid Policy Spec</span>
                 </div>
                 <p className="font-mono text-[11px] leading-relaxed break-words">{validation.error}</p>
@@ -683,24 +687,21 @@ export function PolicyEditorPanel({
               disabled={validation !== null && !validation.valid}
               onClick={() => onSendToVerdict(model.namespace, generatedYAML)}
               title={validation && !validation.valid ? validation.error : 'Test this policy against live cluster flows'}
-              className="w-full bg-signal py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 shadow-sm cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full bg-signal py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <span>🚀</span>
-              <span>Test in Verdict Simulator</span>
+              Test in Verdict Simulator
             </button>
-            <p className="text-[0.68rem] text-ink-faint text-center">
+            <p className="text-center text-[0.65rem] text-ink-dim">
               Loads this candidate policy straight into the Verdict tab to test against live cluster flows.
             </p>
-          </div>
 
-          {/* Formatted YAML code box — sized up from the original text-xs/
-              p-4/max-h-[600px] (see the screenshot that prompted this: a lot
-              of surrounding whitespace around small, cramped text once the
-              right column had real room to use). */}
+          {/* The YAML, set like Verdict's candidate textarea (text-xs,
+              relaxed leading) so the same policy reads the same on both
+              tabs. Read-only here; a click opens the editable view. */}
           <div
             onClick={handleOpenYamlEditor}
             title="Click to open an editable view"
-            className="cursor-pointer border border-line bg-void p-5 font-mono text-sm overflow-x-auto max-h-[760px] shadow-inner text-ink leading-loose"
+            className="max-h-[760px] cursor-pointer overflow-x-auto border border-line bg-void px-3 py-2.5 font-mono text-xs leading-relaxed text-ink transition-colors hover:border-line-bright"
             style={{
               // Right-edge fade so a long line (e.g. a long `description:`)
               // visually signals there's more to scroll to instead of just
@@ -711,6 +712,7 @@ export function PolicyEditorPanel({
             }}
           >
             <pre className="text-ink selection:bg-signal/30 whitespace-pre">{generatedYAML}</pre>
+          </div>
           </div>
         </div>
       </div>
@@ -726,8 +728,8 @@ export function PolicyEditorPanel({
             ? {
                 message:
                   yamlEditLossy.documents > 1
-                    ? `Valid, but this paste holds ${yamlEditLossy.documents} policies and the visual editor shows one at a time. The graph is unchanged and your text is kept as-is: 💾 Save it below, or test it in Verdict.`
-                    : "Valid policy, but the visual editor can't represent it faithfully (e.g. a scoped deny without enableDefaultDeny, an ICMP deny, or an enableDefaultDeny override it would drop). The graph is unchanged and your text is kept as-is: 💾 Save it below, or test it in Verdict.",
+                    ? `Valid, but this paste holds ${yamlEditLossy.documents} policies and the visual editor shows one at a time. The graph is unchanged and your text is kept as-is: Save it below, or test it in Verdict.`
+                    : "Valid policy, but the visual editor can't represent it faithfully (e.g. a scoped deny without enableDefaultDeny, an ICMP deny, or an enableDefaultDeny override it would drop). The graph is unchanged and your text is kept as-is: Save it below, or test it in Verdict.",
                 actionLabel: 'Test as-is in Verdict',
                 onAction: () => {
                   setYamlModalOpen(false)
