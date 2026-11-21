@@ -102,7 +102,8 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
 ## Safety and permissions
 
 - The writable server binds **only a numeric loopback address**. Open it using
-  that exact IP address, not `localhost` or another hostname. POST checks JSON
+  that exact IP address, not `localhost` or another hostname (a page opened on
+  `localhost` is redirected to the numeric address). POST checks JSON
   content type and exact same-origin Origin/Host, rejects DNS hosts and
   cross-site fetches; this prevents DNS rebinding and cross-origin browser
   writes. It is not remote hosting or multi-user authentication.
@@ -181,9 +182,14 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
   requested port or the target port it maps to. That last form is read from the
   API (`get` services, `list` endpointslices) because socket-level load
   balancing rewrites the ClusterIP before Hubble sees the packet, so most
-  clusters report neither names nor a Service. Other hostnames without Hubble
-  DNS visibility, aliases, and mesh interception stay inconclusive, even when
-  traffic generation succeeds; use an IP literal for external targets.
+  clusters report neither names nor a Service. Any other hostname (an
+  external site such as `www.google.com`, a name the Service lookup doesn't
+  find) is **refused with `422` before anything is injected**: without Hubble
+  DNS visibility nothing on a flow ties it to that name, so the run could only
+  end inconclusive. Target the IP instead (resolve it inside the Pod, for
+  example with `nslookup`). A Service-shaped name GuardBee may not read
+  (`get` services forbidden) still runs, with a warning. Aliases and mesh
+  interception stay inconclusive even when traffic generation succeeds.
   Operator network/admission controls must constrain DNS-resolved targets;
   the server cannot safely resolve them in the Pod's DNS context. Loopback, link-local,
   multicast, unspecified, and limited-broadcast targets are rejected because
@@ -198,7 +204,7 @@ the `verdict` command folds them), `warnings` (always an array: this
 attempt's own problems), and `notes` (always an array of
 `{ "code", "text" }`: the standing caveats every attempt carries). A note's
 `code` is stable (`ephemeral-entry`, `runtime-bound`,
-`best-effort-correlation`, `service-match`, `hostname-best-effort`,
+`best-effort-correlation`, `service-match`,
 `udp-marker`, `nodes-off-path`, `replace-mode`, `additive-mode`,
 `policy-replaced`); the UI titles notes by code, never by parsing `text`.
 The UI's downloaded test report is `schemaVersion: 2` since `notes` replaced

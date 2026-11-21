@@ -242,7 +242,7 @@ export class ConnectionProbeError extends Error {
     super(message)
     this.status = status
     this.name = 'ConnectionProbeError'
-    this.definiteRejection = [400, 403, 405, 409, 413, 415, 429].includes(status)
+    this.definiteRejection = [400, 403, 405, 409, 413, 415, 422, 429].includes(status)
   }
 }
 

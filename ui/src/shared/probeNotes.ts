@@ -12,7 +12,6 @@ export interface ProbeNote {
 const NOTE_TITLES: Record<string, { icon: string; title: string }> = {
   'udp-marker': { icon: '✉', title: 'One fixed 27-byte UDP marker, no reply wait' },
   'service-match': { icon: '⎈', title: 'Hostname matched a Kubernetes Service' },
-  'hostname-best-effort': { icon: '≈', title: 'Hostname correlation is best-effort' },
   'ephemeral-entry': { icon: '⧉', title: 'Ephemeral entry stays until Pod replacement' },
   'runtime-bound': { icon: '⏱', title: 'Probe runtime bounded to 8 s' },
   'best-effort-correlation': { icon: '≈', title: 'Flow correlation is best-effort' },

@@ -146,7 +146,11 @@ Flags:
 	mux.HandleFunc("GET /api/templates", srv.handleTemplates)
 	mux.HandleFunc("GET /api/version", srv.handleVersion)
 	mux.HandleFunc("GET /api/compat", srv.handleCompat)
-	mux.Handle("/", http.FileServerFS(static))
+	var root http.Handler = http.FileServerFS(static)
+	if probes != nil {
+		root = probeLocalhostRedirect(addr, root)
+	}
+	mux.Handle("/", root)
 
 	fmt.Printf("%s ui: listening on http://%s\n", binName, addr)
 	if err := http.ListenAndServe(addr, srv.debugLogRequests(mux)); err != nil {

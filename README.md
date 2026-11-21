@@ -137,7 +137,8 @@ running Pod. It requires numeric-loopback serving and additional optional RBAC.
 Each terminated ephemeral entry is immutable and remains until the Pod is
 replaced; GuardBee never removes/restarts the Pod. Cancellation stops capture
 but does not kill an injected container; the image's `timeout` bounds
-its command runtime. Hostnames resolve inside the Pod; flow attribution is best-effort, not
+its command runtime. Targets are IP addresses or Kubernetes Service names (resolved inside the Pod);
+an external hostname is refused before injection, since no flow could be tied to it. Flow attribution is best-effort, not
 proof that a packet came from the probe. CIDR-group identity injection is
 unverified and FQDN/L7 proxy semantics are not reproduced, so those policies
 suppress probe simulation instead of producing a reassuring verdict.
