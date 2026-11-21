@@ -228,7 +228,7 @@ test('ui-connectivity-test', async ({ page }) => {
     outcome: 'connected', message: 'TCP connection established by nc (not an application health check)',
     containerName: 'guardbee-connection-31b7c266129c5883', image: images[1].image, imageId: 'busybox',
     context: 'kind-guardbee-lab', apiServer: 'https://127.0.0.1:6443', startedAt: '2026-11-21T17:51:05Z', durationMs: 3944,
-    flows: [{ ...flowRow, count: 8 }, { ...flowRow, count: 1 }],
+    flows: [{ ...flowRow, count: 8 }, { ...flowRow, count: 1, decision: 'allowed', decidedBy: 'allowed, no policy attributed by Hubble' }],
     simulation: { ...VERDICT, namespace: 'observability', flowsSampled: 9, counts: { unchanged: 0, newlyDropped: 9, newlyAllowed: 0, notSimulated: 0, replySkipped: 0, total: 9 }, rows: [{ ...VERDICT.rows[0], count: 9, baselineAllowed: true, candidateAllowed: false }] },
     warnings: [],
     notes: [
@@ -260,4 +260,13 @@ test('ui-connectivity-test', async ({ page }) => {
   await form.getByRole('button', { name: 'Review & run connection test' }).click()
   await expect(page.getByRole('region', { name: 'Candidate prediction' }).getByRole('heading')).toHaveText('BLOCKED')
   await panel.screenshot({ path: out('ui-connectivity-test') })
+
+  // The same result's evidence: observed flows, the candidate simulation
+  // row, and the notes, with one note opened to show its full sentence.
+  const evidence = panel.locator('details', { hasText: /Evidence & limitations/ }).first()
+  await evidence.locator('summary').first().click()
+  await panel.getByRole('region', { name: 'Test notes' }).getByText('Hostname matched a Kubernetes Service').click()
+  await page.mouse.move(0, 0)
+  await evidence.scrollIntoViewIfNeeded()
+  await evidence.screenshot({ path: out('ui-connectivity-evidence'), animations: 'disabled' })
 })

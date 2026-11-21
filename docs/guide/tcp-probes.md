@@ -218,6 +218,17 @@ do not infer a candidate allow from a delta, an empty sample, or runtime outcome
 
 ## Evidence, not policy sign-off
 
+**Evidence & limitations**, under every result, shows what the verdict rests
+on: the Hubble flows observed under current policy (one connection's trace
+events folded into a row with a count, plus who Hubble says decided it), the
+candidate simulation rows with both decisions, and the test's notes, each a
+short title that opens to the full explanation.
+
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict — connectivity test evidence</span></div>
+<img src="../images/ui-connectivity-evidence.png" alt="Evidence and limitations expanded: the observed Hubble flows table (one connection's trace events folded into rows with a count), the candidate simulation row turning allowed into blocked, and the test notes, one opened to show its full text" />
+</div>
+
 Capture starts before injection and waits for GetFlows headers and the source
 node's NODE_CONNECTED event as a relay availability health gate. This is not
 an acknowledgement that the source-node collector has subscribed: relay marks
