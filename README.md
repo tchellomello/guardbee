@@ -113,6 +113,10 @@ Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the
 - [x] Web UI with a graph-based policy editor
 - [x] Egress-side evaluation (identity/CIDR/entity/port rules; FQDN egress
       stays `not simulated`)
+- [x] L7 rule changes — a flow behind different HTTP/DNS proxy rules is
+      `L7_CHANGED`, not a false drop
+- [ ] L7 request verdicts — judge Hubble's DNS, then HTTP, request records
+      against the candidate's L7 rules
 - [ ] `fromNodes`/`toNodes` policies — today a live policy using them is
       skipped and named in the UI banner / CLI warning, not simulated
       (Hubble flows carry no node labels to match them against)

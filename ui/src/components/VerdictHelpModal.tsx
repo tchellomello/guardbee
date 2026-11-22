@@ -135,6 +135,30 @@ export function VerdictHelpModal({ isOpen, onClose, initialCategory }: VerdictHe
               </p>
             </div>
 
+            {/* L7 Changed */}
+            <div
+              className={`p-3.5 border transition-all ${
+                initialCategory === 'l7 changed'
+                  ? 'border-l7 bg-l7/10 ring-1 ring-l7'
+                  : 'border-l7/40 bg-l7/5'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider border border-l7/40 bg-l7/10 text-l7">
+                  L7 CHANGED
+                </span>
+                <span className="text-[0.7rem] text-l7 font-semibold tracking-wide uppercase">
+                  Proxy Rules Change
+                </span>
+              </div>
+              <p className="text-ink text-xs leading-relaxed">
+                The connection is <strong className="text-l7">ALLOWED</strong> at L4 either way, but the L7 proxy (Envoy for HTTP, the DNS proxy for DNS) would check its requests against different rules — added, removed or changed.
+              </p>
+              <p className="mt-1 text-ink-dim text-[0.7rem] leading-relaxed">
+                Individual requests are not judged yet: a request the new rules don't match gets an HTTP 403 or a refused DNS lookup. Compare the rules shown under each row.
+              </p>
+            </div>
+
             {/* Unchanged */}
             <div
               className={`p-3.5 border transition-all ${
@@ -172,14 +196,14 @@ export function VerdictHelpModal({ isOpen, onClose, initialCategory }: VerdictHe
                   NOT SIMULATED
                 </span>
                 <span className="text-[0.7rem] text-ink-dim font-semibold tracking-wide uppercase">
-                  Layer 7 & FQDN Rules
+                  Unresolved Flows
                 </span>
               </div>
               <p className="text-ink text-xs leading-relaxed">
-                Flows filtered by HTTP path/method (L7) or DNS names (toFQDNs).
+                Flows without a resolved security identity on either side, or without a concrete destination port.
               </p>
               <p className="mt-1 text-ink-dim text-[0.7rem] leading-relaxed">
-                These verdicts are decided in Cilium's Envoy proxy or local DNS proxy, not the L3/L4 BPF datapath policy engine. The simulator explicitly flags them rather than guessing.
+                Cilium's policy engine can't be asked about them reliably, so the simulator flags them rather than guessing. A <code className="text-signal">toFQDNs</code> destination is only matched through the identity labels Hubble reports for its IP.
               </p>
             </div>
 

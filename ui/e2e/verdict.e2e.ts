@@ -55,6 +55,40 @@ test.describe('Verdict tab', () => {
     expect(body.candidateYAML).toBe(LOOKS_CORRECT_CNP)
   })
 
+  test('an L7 rule change shows as L7_CHANGED with its rules, not as a drop', async ({ page }) => {
+    const l7Row = {
+      ...VERDICT.rows[2],
+      change: 'L7_CHANGED' as const,
+      explanation: "(still allowed at L4; the L7 proxy's request rules for it change, requests are not judged)",
+      l7Candidate: 'ingress: HTTP GET /healthz',
+    }
+    await page.route('**/api/verdict', (r) =>
+      r.fulfill({
+        json: {
+          ...VERDICT,
+          counts: { ...VERDICT.counts, unchanged: 0, l7Changed: 15 },
+          rows: [VERDICT.rows[0], l7Row],
+        },
+      })
+    )
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    await form.locator('input').first().fill('postgres')
+    await form.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await page.getByRole('button', { name: 'Run verdict', exact: true }).click()
+
+    const l7 = page.locator('table:visible tbody tr', { hasText: 'L7_CHANGED' })
+    await expect(l7).toHaveCount(1)
+    await expect(l7.getByTestId('verdict-l7-rules')).toHaveText('L7 no L7 rules → ingress: HTTP GET /healthz')
+    // An L4 allow/deny exception can't undo an L7 rule change: offered on the
+    // drop, never on the L7 row.
+    await expect(l7.getByRole('button', { name: /Allow \/ Deny/ })).toHaveCount(0)
+    await expect(page.locator('table:visible tbody tr', { hasText: 'NEWLY_DROPPED' }).first().getByRole('button', { name: /Allow \/ Deny/ })).toBeVisible()
+
+    await page.getByRole('button', { name: /L7 changed/ }).click()
+    await expect(page.getByText('Proxy Rules Change')).toBeVisible()
+  })
+
   test('filters ride along in the verdict request', async ({ page, cluster }) => {
     await openTab(page, 'Verdict')
     const form = visibleForm(page)

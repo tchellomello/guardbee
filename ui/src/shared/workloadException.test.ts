@@ -69,6 +69,11 @@ describe('exceptionTargets', () => {
     expect(exceptionTargets({ ...droppedRow, change: 'UNCHANGED', side: undefined })).toEqual([])
     expect(exceptionTargets({ ...droppedRow, side: 'ingress' })).toEqual([])
   })
+
+  it('returns nothing for an L7_CHANGED row: an L4 exception cannot undo an L7 rule change', () => {
+    expect(exceptionTargets(droppedRow)).not.toEqual([])
+    expect(exceptionTargets({ ...droppedRow, change: 'L7_CHANGED' })).toEqual([])
+  })
 })
 
 describe('buildExceptionPolicyYAML', () => {

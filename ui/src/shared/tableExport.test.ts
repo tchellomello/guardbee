@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { flowsToCSV, flowsToText, verdictRowsToCSV, verdictRowsToText } from './tableExport'
+import { flowsToCSV, flowsToText, l7Text, verdictRowsToCSV, verdictRowsToText } from './tableExport'
 import type { Flow, VerdictRow } from '../api'
 
 const flow = (over: Partial<Flow> = {}): Flow => ({
@@ -67,14 +67,22 @@ describe('verdict rows export', () => {
 
   it('writes the table columns with raw protocol, port and count', () => {
     expect(verdictRowsToCSV([row()])).toBe(
-      'Change,Source,Destination,Protocol,Port,Seen,Why\r\n' +
+      'Change,Source,Destination,Protocol,Port,Seen,Why,L7\r\n' +
         'NEWLY_DROPPED,testing/netshoot-mmello,reserved:kube-apiserver,TCP,443,3,' +
-        '(currently allowed; this candidate would start blocking it)\r\n'
+        '(currently allowed; this candidate would start blocking it),\r\n'
     )
   })
 
   it('neutralises formulas and produces tab-separated text', () => {
     expect(verdictRowsToCSV([row({ source: '=cmd' })])).toContain(",'=cmd,")
-    expect(verdictRowsToText([row()]).split('\n')[1].split('\t')).toHaveLength(7)
+    expect(verdictRowsToText([row()]).split('\n')[1].split('\t')).toHaveLength(8)
+  })
+
+  it('names the L7 rules: unchanged, changed, added and removed', () => {
+    expect(l7Text(row())).toBe('')
+    expect(l7Text(row({ l7Baseline: 'ingress: HTTP GET /healthz', l7Candidate: 'ingress: HTTP GET /healthz' }))).toBe('ingress: HTTP GET /healthz')
+    expect(l7Text(row({ l7Baseline: 'ingress: HTTP GET /a', l7Candidate: 'ingress: HTTP GET /b' }))).toBe('ingress: HTTP GET /a → ingress: HTTP GET /b')
+    expect(l7Text(row({ l7Candidate: 'egress: DNS *.example.com' }))).toBe('no L7 rules → egress: DNS *.example.com')
+    expect(l7Text(row({ l7Baseline: 'egress: DNS *' }))).toBe('egress: DNS * → no L7 rules')
   })
 })

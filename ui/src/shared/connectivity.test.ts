@@ -5,7 +5,7 @@ import { ConnectionProbeError } from '../api'
 
 const simulation: VerdictResponse = {
   namespace: 'test', candidateRuleCount: 1, baselineRuleCount: 1, flowsRequested: 1, flowsSampled: 1,
-  counts: { unchanged: 1, newlyDropped: 0, newlyAllowed: 0, notSimulated: 0, replySkipped: 0, total: 1 },
+  counts: { unchanged: 1, newlyDropped: 0, newlyAllowed: 0, l7Changed: 0, notSimulated: 0, replySkipped: 0, total: 1 },
   rows: [{ change: 'UNCHANGED', source: 'a', destination: 'b', protocol: 'TCP', port: 80, count: 1, explanation: '', baselineAllowed: false, candidateAllowed: false }],
 }
 const response: ConnectionProbeResponse = { namespace: 'test', pod: 'a', host: 'b', port: 80, message: '', flows: [{ source: 'a', destination: 'b', time: '', l4: 'TCP:80', verdict: 'DROPPED' }], simulation }

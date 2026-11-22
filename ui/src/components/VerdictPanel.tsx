@@ -4,7 +4,7 @@ import { fetchPods, fetchPolicyWorkloads, runVerdict, type WorkloadsResult, type
 import { classifyTrafficPeer } from './RuleEditorCard'
 import { groupRows } from '../shared/groupRows'
 import { formatElapsed, useElapsedMs } from '../shared/elapsed'
-import { downloadTextFile, verdictRowsToCSV, verdictRowsToText } from '../shared/tableExport'
+import { downloadTextFile, l7Text, verdictRowsToCSV, verdictRowsToText } from '../shared/tableExport'
 import { CheckRow, Field, NamespaceScope } from './NamespaceScope'
 import { PolicyTextModal } from './PolicyTextModal'
 import { VerdictGraph } from './VerdictGraph'
@@ -31,7 +31,7 @@ import { GraphNodeLink } from './GraphNodeLink'
 import { CountChip, EmptyState, ResultsHeader, SectionLabel } from './Chips'
 import { CHANGE_STYLES, FIELD_ROW_OFFSET, HEADLINE_CHIP_STYLES, META_CHIP, TEXT_ACTION } from '../shared/chipStyles'
 
-const CATEGORY_ORDER: VerdictChange[] = ['NEWLY_DROPPED', 'NEWLY_ALLOWED', 'UNCHANGED']
+const CATEGORY_ORDER: VerdictChange[] = ['NEWLY_DROPPED', 'NEWLY_ALLOWED', 'L7_CHANGED', 'UNCHANGED']
 
 // Mirrors the results table's own columns/order exactly, so what gets
 // pasted into a PR description or ticket matches what's on screen.
@@ -42,7 +42,7 @@ function rowsToMarkdownTable(rows: VerdictRow[]): string {
     (r) =>
       `| ${r.change} | ${escapeCell(r.source)} | ${escapeCell(r.destination)} | ${r.protocol}:${r.port} | ${
         r.count > 1 ? `${r.count}×` : '—'
-      } | ${escapeCell(r.explanation)} |`
+      } | ${escapeCell(r.explanation)}${l7Text(r) ? ` (L7 ${escapeCell(l7Text(r))})` : ''} |`
   )
   return [header, ...lines].join('\n')
 }
@@ -51,6 +51,7 @@ const EMPTY_COUNTS = {
   unchanged: 0,
   newlyDropped: 0,
   newlyAllowed: 0,
+  l7Changed: 0,
   notSimulated: 0,
   replySkipped: 0,
   total: 0,
@@ -298,6 +299,7 @@ export function VerdictPanel({
               payload.counts.unchanged +
               payload.counts.newlyDropped +
               payload.counts.newlyAllowed +
+              payload.counts.l7Changed +
               payload.counts.notSimulated +
               payload.counts.replySkipped
             return {
@@ -886,6 +888,14 @@ function RunCard({
               filled
               onClick={() => onOpenHelp('newly allowed')}
             />
+            {result.counts.l7Changed > 0 && (
+              <CountChip
+                label="L7 changed"
+                value={result.counts.l7Changed}
+                className={CHANGE_STYLES.L7_CHANGED}
+                onClick={() => onOpenHelp('l7 changed')}
+              />
+            )}
             <CountChip
               label="not simulated"
               value={result.counts.notSimulated}
@@ -987,12 +997,19 @@ function RunCard({
                         {row.protocol}:{row.port}
                       </td>
                       <td className="px-3 py-2 text-xs text-ink-faint">{row.count > 1 ? `${row.count}×` : '—'}</td>
-                      <td className="px-3 py-2 text-xs text-ink-dim">{row.explanation}</td>
+                      <td className="px-3 py-2 text-xs text-ink-dim">
+                        {row.explanation}
+                        {l7Text(row) && (
+                          <span data-testid="verdict-l7-rules" className="mt-1 block font-mono text-[0.7rem] text-l7">
+                            L7 {l7Text(row)}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           {/* Not while streaming: the exception re-runs one-shot, which would end the live stream. */}
                           {!run.isStreaming && <WorkloadExceptionMenu row={row} onAddException={onAddException} />}
-                          {row.change !== 'UNCHANGED' && onAppendRuleToPolicy && (
+                          {(row.change === 'NEWLY_DROPPED' || row.change === 'NEWLY_ALLOWED') && onAppendRuleToPolicy && (
                             <AddToPolicyButton
                               row={row}
                               policyNamespace={policyNamespace}

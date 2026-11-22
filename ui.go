@@ -381,6 +381,7 @@ type verdictCountsOut struct {
 	Unchanged    int `json:"unchanged"`
 	NewlyDropped int `json:"newlyDropped"`
 	NewlyAllowed int `json:"newlyAllowed"`
+	L7Changed    int `json:"l7Changed"`
 	NotSimulated int `json:"notSimulated"`
 	ReplySkipped int `json:"replySkipped"`
 	Total        int `json:"total"`
@@ -402,6 +403,9 @@ type verdictRowOut struct {
 	DestinationLabels []string `json:"destinationLabels,omitempty"`
 	// DestinationService: see verdictRow.dstService.
 	DestinationService string `json:"destinationService,omitempty"`
+	// L7Baseline/L7Candidate: see verdictRow.l7Baseline/l7Candidate.
+	L7Baseline  string `json:"l7Baseline,omitempty"`
+	L7Candidate string `json:"l7Candidate,omitempty"`
 }
 
 type verdictResponse struct {
@@ -465,6 +469,7 @@ func toCountsOut(c *verdictCounts) verdictCountsOut {
 		Unchanged:    c.unchanged,
 		NewlyDropped: c.newlyDropped,
 		NewlyAllowed: c.newlyAllowed,
+		L7Changed:    c.l7Changed,
 		NotSimulated: c.notSimulated,
 		ReplySkipped: c.replySkipped,
 		Total:        c.total,
@@ -487,6 +492,8 @@ func toRowOut(row *verdictRow, count int) verdictRowOut {
 		SourceLabels:       row.srcLabels,
 		DestinationLabels:  row.dstLabels,
 		DestinationService: row.dstService,
+		L7Baseline:         row.l7Baseline,
+		L7Candidate:        row.l7Candidate,
 	}
 }
 

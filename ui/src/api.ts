@@ -17,7 +17,7 @@ export interface VerdictRequest extends FlowFilterParams {
   showUnchanged: boolean
 }
 
-export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'UNCHANGED'
+export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'L7_CHANGED' | 'UNCHANGED'
 
 export interface VerdictRow {
   baselineAllowed?: boolean
@@ -38,12 +38,17 @@ export interface VerdictRow {
   destinationLabels?: string[]
   // The Kubernetes Service the flow was addressed to ("ns/name"), if any.
   destinationService?: string
+  // The L7 rules the proxy applies to this flow on each side, absent when
+  // that side doesn't redirect it (verdictRow.l7Baseline/l7Candidate).
+  l7Baseline?: string
+  l7Candidate?: string
 }
 
 export interface VerdictCounts {
   unchanged: number
   newlyDropped: number
   newlyAllowed: number
+  l7Changed: number
   notSimulated: number
   replySkipped: number
   total: number

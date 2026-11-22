@@ -58,7 +58,7 @@ const CLEAN: VerdictResponse = {
   // No skipped replies: the UI only calls a sample clean when every
   // sampled flow was judged unchanged.
   flowsSampled: 31,
-  counts: { unchanged: 31, newlyDropped: 0, newlyAllowed: 0, notSimulated: 0, replySkipped: 0, total: 31 },
+  counts: { unchanged: 31, newlyDropped: 0, newlyAllowed: 0, l7Changed: 0, notSimulated: 0, replySkipped: 0, total: 31 },
   rows: [],
 }
 
@@ -229,7 +229,7 @@ test('ui-connectivity-test', async ({ page }) => {
     containerName: 'guardbee-connection-31b7c266129c5883', image: images[1].image, imageId: 'busybox',
     context: 'kind-guardbee-lab', apiServer: 'https://127.0.0.1:6443', startedAt: '2026-11-21T17:51:05Z', durationMs: 3944,
     flows: [{ ...flowRow, count: 8 }, { ...flowRow, count: 1, decision: 'allowed', decidedBy: 'allowed, no policy attributed by Hubble' }],
-    simulation: { ...VERDICT, namespace: 'observability', flowsSampled: 9, counts: { unchanged: 0, newlyDropped: 9, newlyAllowed: 0, notSimulated: 0, replySkipped: 0, total: 9 }, rows: [{ ...VERDICT.rows[0], count: 9, baselineAllowed: true, candidateAllowed: false }] },
+    simulation: { ...VERDICT, namespace: 'observability', flowsSampled: 9, counts: { unchanged: 0, newlyDropped: 9, newlyAllowed: 0, l7Changed: 0, notSimulated: 0, replySkipped: 0, total: 9 }, rows: [{ ...VERDICT.rows[0], count: 9, baselineAllowed: true, candidateAllowed: false }] },
     warnings: [],
     notes: [
       { code: 'service-match', text: 'Hostname matched Service postgres/postgres: flows to its ClusterIPs or its 1 current backend addresses on the mapped target port count as evidence.' },

@@ -23,12 +23,15 @@ package main
 //   - A flow must be allowed by BOTH the destination's ingress policy and
 //     the source's egress policy (each side's own distilled policy, queried
 //     for the other side as the peer). Only identity-based egress is judged
-//     (endpoints, entities, CIDRs, ports); toFQDNs/L7 egress is
-//     NOT_SIMULATED like any other L7 verdict, and a flow whose source is
-//     outside the cluster has no egress policy to consult.
-//   - L7/FQDN-decided flows are flagged NOT_SIMULATED rather than guessed,
-//     per the design doc's own stated limit — those verdicts live in Envoy
-//     and the DNS proxy, not the policy map this engine computes.
+//     (endpoints, entities, CIDRs, ports); a toFQDNs destination only
+//     matches through the identity labels Hubble reports for its IP, and a
+//     flow whose source is outside the cluster has no egress policy to
+//     consult.
+//   - L7 requests are not judged, only the L7 rules in front of them: a
+//     flow allowed at L4 on both sides but redirected to the proxy under
+//     different rules is L7_CHANGED (l7RulesFor). Whether a request passes
+//     those rules is decided in Envoy and the DNS proxy, not the policy map
+//     this engine computes.
 //   - A flow's source/destination identity must already be a real,
 //     currently-allocated identity (Hubble resolves these directly on every
 //     flow). Candidate-policy labels with no matching live pod are simply
@@ -79,7 +82,7 @@ import (
 // verdictCounts tallies every flow judged in a run — shared between the
 // one-shot and --follow code paths so both print the identical summary shape.
 type verdictCounts struct {
-	newlyDropped, newlyAllowed, unchanged, notSimulated, replySkipped, total int
+	newlyDropped, newlyAllowed, l7Changed, unchanged, notSimulated, replySkipped, total int
 }
 
 func runVerdict(args []string) {
@@ -93,11 +96,12 @@ func runVerdict(args []string) {
 	fs.Uint64Var(&last, "last", 50, "number of recent flows to sample")
 	fs.BoolVarP(&follow, "follow", "f", false, "keep judging new flows until Ctrl+C, instead of stopping after --last")
 	fs.BoolVar(&showUnchanged, "show-unchanged", false, "also print UNCHANGED rows (deduplicated and grouped last), not just what changed")
-	var failOnDropped, failOnAllowed, replaceExisting, perPolicy bool
+	var failOnDropped, failOnAllowed, failOnL7, replaceExisting, perPolicy bool
 	var minFlows int
 	var format string
 	fs.BoolVar(&failOnDropped, "fail-on-dropped", false, fmt.Sprintf("exit %d if any sampled flow is NEWLY_DROPPED (for CI)", exitVerdictDropped))
 	fs.BoolVar(&failOnAllowed, "fail-on-allowed", false, fmt.Sprintf("exit %d if any sampled flow is NEWLY_ALLOWED (for CI; a dropped flow outranks it)", exitVerdictAllowed))
+	fs.BoolVar(&failOnL7, "fail-on-l7", false, fmt.Sprintf("exit %d if any sampled flow is L7_CHANGED: allowed at L4 either way, but under different L7 proxy rules (for CI; dropped and newly allowed flows outrank it)", exitVerdictL7))
 	fs.IntVar(&minFlows, "min-flows", 0, fmt.Sprintf("exit %d if fewer than this many flows were actually judged (replies and not-simulated flows don't count); 0 disables", exitVerdictTooFewFlows))
 	fs.StringVar(&format, "format", formatTable, "output format: table, json or markdown (json/markdown: one-shot only, not with --follow)")
 	fs.BoolVar(&replaceExisting, "replace-existing", false, "judge the candidate as REPLACING any live policy with the same kind, namespace and name, instead of being added on top of it — use for edits to an existing policy")
@@ -107,7 +111,7 @@ func runVerdict(args []string) {
 
 Diffs a candidate CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy against
 today's live policy state, judging real recent Hubble flows against both.
-Prints NEWLY_DROPPED/NEWLY_ALLOWED rows plus an UNCHANGED count, with a
+Prints NEWLY_DROPPED/NEWLY_ALLOWED/L7_CHANGED rows plus an UNCHANGED count, with a
 legend explaining every category that occurred. --show-unchanged also
 prints UNCHANGED rows (what's confirmed still working), grouped after the
 regressions so those stay the first thing you see.
@@ -132,23 +136,25 @@ it, rules an edit removes or narrows still allow traffic and the regression
 is not reported.
 
 For CI: --fail-on-dropped exits %[3]d on any NEWLY_DROPPED flow, --fail-on-allowed
-exits %[5]d on any NEWLY_ALLOWED flow, --min-flows N exits %[4]d when fewer than N
-flows were judged (so an empty sample can't read as a pass), and
---format json|markdown prints a machine-readable result or a PR-comment
-summary. Errors always exit 1; a finding outranks a thin sample, and a dropped
-flow outranks a newly allowed one.
+exits %[5]d on any NEWLY_ALLOWED flow, --fail-on-l7 exits %[6]d on any L7_CHANGED
+flow, --min-flows N exits %[4]d when fewer than N flows were judged (so an empty
+sample can't read as a pass), and --format json|markdown prints a
+machine-readable result or a PR-comment summary. Errors always exit 1; a
+finding outranks a thin sample, a dropped flow outranks a newly allowed one,
+and both outrank an L7 change.
 
 A candidate file may hold several documents (e.g. rendered kustomize output):
 documents that are not a CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy are
 skipped with a warning on stderr. Pass several files, or "-" to read stdin.
 By default every policy is judged together as one candidate; --per-policy
 judges each on its own (one section per policy) and exits with the worst
-result: a dropped flow, then a newly allowed one, then too few flows.
+result: a dropped flow, then a newly allowed one, then an L7 change, then too
+few flows.
 
 %[2]s
 
 Flags:
-`, binName, numberFlagHelp, exitVerdictDropped, exitVerdictTooFewFlows, exitVerdictAllowed)
+`, binName, numberFlagHelp, exitVerdictDropped, exitVerdictTooFewFlows, exitVerdictAllowed, exitVerdictL7)
 		fs.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s verdict -n myapp examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --last 200 examples/myapp-wrong-port.yaml\n  %[1]s verdict -n myapp --follow examples/myapp-merge-ready.yaml\n  %[1]s verdict --all-namespaces examples/ccnp-coredns-merge-ready.yaml\n  %[1]s verdict -n myapp --show-unchanged examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 examples/myapp-merge-ready.yaml\n  %[1]s verdict -n myapp --replace-existing --fail-on-dropped --min-flows 20 --format markdown examples/myapp-merge-ready.yaml\n", binName)
 	}
@@ -172,8 +178,8 @@ Flags:
 		fmt.Fprintf(os.Stderr, "%s verdict: %v\n", binName, err)
 		os.Exit(1)
 	}
-	if follow && (format != formatTable || failOnDropped || failOnAllowed || minFlows > 0 || perPolicy) {
-		fmt.Fprintf(os.Stderr, "%s verdict: --format json|markdown, --fail-on-dropped, --fail-on-allowed, --min-flows and --per-policy need a one-shot run, not --follow\n", binName)
+	if follow && (format != formatTable || failOnDropped || failOnAllowed || failOnL7 || minFlows > 0 || perPolicy) {
+		fmt.Fprintf(os.Stderr, "%s verdict: --format json|markdown, --fail-on-dropped, --fail-on-allowed, --fail-on-l7, --min-flows and --per-policy need a one-shot run, not --follow\n", binName)
 		os.Exit(1)
 	}
 
@@ -232,7 +238,7 @@ Flags:
 		return
 	}
 
-	runs, err := judgeCandidateGroups(logger, cilium, core, cfg, namespace, filter, last, showUnchanged, replaceExisting, groups, failOnDropped, failOnAllowed, minFlows, start, target)
+	runs, err := judgeCandidateGroups(logger, cilium, core, cfg, namespace, filter, last, showUnchanged, replaceExisting, groups, failOnDropped, failOnAllowed, failOnL7, minFlows, start, target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
@@ -454,7 +460,7 @@ func judgeFetchedFlows(logger *slog.Logger, baseline, candidate *verdictEngine, 
 		flowsSampled:   len(flows),
 		counts:         counts,
 	}
-	for _, cat := range []string{"NEWLY_DROPPED", "NEWLY_ALLOWED", "UNCHANGED"} {
+	for _, cat := range []string{"NEWLY_DROPPED", "NEWLY_ALLOWED", "L7_CHANGED", "UNCHANGED"} {
 		for _, k := range order {
 			if rowsByKey[k].change != cat {
 				continue
@@ -538,6 +544,28 @@ type verdictRow struct {
 	// key(): one row's flows can reach the same pod with or without a
 	// Service in front, and that doesn't change the verdict.
 	dstService string
+	// l7Baseline/l7Candidate name the L7 rules the proxy applies to this
+	// flow on each side (joinL7), "" when that side doesn't redirect it.
+	l7Baseline, l7Candidate string
+}
+
+// l7Detail is the CLI's bracketed L7 note for a row, "" when neither side
+// sends the flow through the proxy.
+func (r *verdictRow) l7Detail() string {
+	none := func(s string) string {
+		if s == "" {
+			return "no L7 rules"
+		}
+		return s
+	}
+	switch {
+	case r.l7Baseline == "" && r.l7Candidate == "":
+		return ""
+	case r.l7Baseline == r.l7Candidate:
+		return "  [L7 " + r.l7Candidate + "]"
+	default:
+		return "  [L7 " + none(r.l7Baseline) + " → " + none(r.l7Candidate) + "]"
+	}
 }
 
 func serviceString(s *flowpb.Service) string {
@@ -557,7 +585,7 @@ func (r *verdictRow) key() string {
 	if r.baselineAllowed != nil && r.candidateAllowed != nil {
 		key += fmt.Sprintf("|%t:%t", *r.baselineAllowed, *r.candidateAllowed)
 	}
-	return key
+	return key + "|" + r.l7Baseline + "|" + r.l7Candidate
 }
 
 // line renders this row, appending a "(seen Nx in this sample)" suffix when
@@ -567,8 +595,8 @@ func (r *verdictRow) line(count int) string {
 	if count > 1 {
 		suffix = fmt.Sprintf("  (seen %dx in this sample)", count)
 	}
-	return fmt.Sprintf("%s  %s -> %s  %s:%d  %s%s",
-		colorizePadded(changeColor(r.change), r.change, 13), r.src, r.dst, r.proto, r.port, changeExplanation(r.change), suffix)
+	return fmt.Sprintf("%s  %s -> %s  %s:%d  %s%s%s",
+		colorizePadded(changeColor(r.change), r.change, 13), r.src, r.dst, r.proto, r.port, changeExplanation(r.change), r.l7Detail(), suffix)
 }
 
 // judgeFlow is the one piece of judging logic shared by the one-shot and
@@ -593,8 +621,12 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		counts.notSimulated++
 		return nil
 	}
-	if f.GetL7() != nil {
-		counts.notSimulated++
+	// An L7 record's request half carries the same L4 tuple as the
+	// connection, so it is judged like any flow (whether its port is behind
+	// the proxy is read off the engine, below). The response half is the
+	// reply direction of an already-allowed request.
+	if f.GetL7().GetType() == flowpb.L7FlowType_RESPONSE {
+		counts.replySkipped++
 		return nil
 	}
 
@@ -673,11 +705,20 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 	baseAllow := baseIn && baseEg
 	candAllow := candIn && candEg
 
+	// The L7 rules the proxy applies on each half, "" when not redirected.
+	// Only meaningful while L4 allows, so a both-denied flow stays UNCHANGED.
+	baseL7In, baseL7Eg := l7RulesFor(baseEpp, key, srcNID), l7RulesFor(baseSrcEpp, egressKey, dstNID)
+	candL7In, candL7Eg := l7RulesFor(candEpp, key, srcNID), l7RulesFor(candSrcEpp, egressKey, dstNID)
+	l7Differs := baseAllow && candAllow && (baseL7In != candL7In || baseL7Eg != candL7Eg)
+
 	var change string
 	switch {
-	case baseAllow == candAllow:
+	case baseAllow == candAllow && !l7Differs:
 		change = "UNCHANGED"
 		counts.unchanged++
+	case l7Differs:
+		change = "L7_CHANGED"
+		counts.l7Changed++
 	case candAllow:
 		change = "NEWLY_ALLOWED"
 		counts.newlyAllowed++
@@ -690,7 +731,11 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		return nil
 	}
 	var side string
-	switch inFlipped, egFlipped := baseIn != candIn, baseEg != candEg; {
+	inFlipped, egFlipped := baseIn != candIn, baseEg != candEg
+	if change == "L7_CHANGED" {
+		inFlipped, egFlipped = baseL7In != candL7In, baseL7Eg != candL7Eg
+	}
+	switch {
 	case change == "UNCHANGED":
 	case inFlipped && egFlipped:
 		side = "both"
@@ -704,7 +749,20 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		change: change, src: endpointString(src), dst: endpointString(dst), proto: proto, port: key.DestPort,
 		side: side, srcLabels: src.GetLabels(), dstLabels: dst.GetLabels(),
 		dstService: serviceString(f.GetDestinationService()),
+		l7Baseline: joinL7(baseL7In, baseL7Eg), l7Candidate: joinL7(candL7In, candL7Eg),
 	}
+}
+
+// joinL7 labels each half's L7 rules with the side that applies them.
+func joinL7(in, eg string) string {
+	var parts []string
+	if in != "" {
+		parts = append(parts, "ingress: "+in)
+	}
+	if eg != "" {
+		parts = append(parts, "egress: "+eg)
+	}
+	return strings.Join(parts, " | ")
 }
 
 // changeExplanation gives a one-line, non-jargon reason for a row, printed
@@ -717,17 +775,20 @@ func changeExplanation(change string) string {
 		return "(same with or without this candidate)"
 	case "NEWLY_ALLOWED":
 		return "(currently blocked; this candidate would start allowing it)"
+	case "L7_CHANGED":
+		return "(still allowed at L4; the L7 proxy's request rules for it change, requests are not judged)"
 	default:
 		return ""
 	}
 }
 
 func printVerdictSummary(counts *verdictCounts, elapsed time.Duration) {
-	fmt.Printf("\n%d flows sampled: %s unchanged, %s newly dropped, %s newly allowed, %s not simulated, %s reply (skipped)\n",
+	fmt.Printf("\n%d flows sampled: %s unchanged, %s newly dropped, %s newly allowed, %s L7 changed, %s not simulated, %s reply (skipped)\n",
 		counts.total,
 		colorize(changeColor("UNCHANGED"), fmt.Sprintf("%d", counts.unchanged)),
 		colorize(changeColor("NEWLY_DROPPED"), fmt.Sprintf("%d", counts.newlyDropped)),
 		colorize(changeColor("NEWLY_ALLOWED"), fmt.Sprintf("%d", counts.newlyAllowed)),
+		colorize(changeColor("L7_CHANGED"), fmt.Sprintf("%d", counts.l7Changed)),
 		colorize(ansiGray, fmt.Sprintf("%d", counts.notSimulated)),
 		colorize(ansiGray, fmt.Sprintf("%d", counts.replySkipped)),
 	)
@@ -752,7 +813,7 @@ func formatElapsed(d time.Duration) string {
 // appears if something besides UNCHANGED happened too, since an all-UNCHANGED
 // run needs no legend at all.
 func printVerdictLegend(counts *verdictCounts) {
-	anyChange := counts.newlyDropped > 0 || counts.newlyAllowed > 0
+	anyChange := counts.newlyDropped > 0 || counts.newlyAllowed > 0 || counts.l7Changed > 0
 	if !anyChange && counts.notSimulated == 0 && counts.replySkipped == 0 {
 		return
 	}
@@ -767,8 +828,11 @@ func printVerdictLegend(counts *verdictCounts) {
 	if counts.newlyAllowed > 0 {
 		fmt.Printf("  %s   currently blocked, the candidate would allow it — expected if that's the policy's purpose, worth a second look if not.\n", colorize(changeColor("NEWLY_ALLOWED"), "NEWLY_ALLOWED"))
 	}
+	if counts.l7Changed > 0 {
+		fmt.Printf("  %s      allowed at L4 either way, but the L7 proxy (Envoy / DNS proxy) now applies different request rules to it; individual requests are not judged yet — review the rules in brackets.\n", colorize(changeColor("L7_CHANGED"), "L7_CHANGED"))
+	}
 	if counts.notSimulated > 0 {
-		fmt.Printf("  %s   L7/FQDN-decided or unresolved-identity flows; this engine doesn't judge those (see README).\n", colorize(ansiGray, "not simulated"))
+		fmt.Printf("  %s   unresolved-identity or portless flows; this engine doesn't judge those (see README).\n", colorize(ansiGray, "not simulated"))
 	}
 	if counts.replySkipped > 0 {
 		fmt.Printf("  %s established-connection replies; connection tracking always allows these regardless of policy.\n", colorize(ansiGray, "reply (skipped)"))
@@ -1079,6 +1143,89 @@ func isEgressAllowed(epp *policy.EndpointPolicy, key policy.Key) bool {
 	return !epp.SelectorPolicy.EgressPolicyEnabled
 }
 
+// l7RulesFor names the L7 rules the proxy applies to key's traffic, "" when
+// Cilium's own MapState entry for key is not a proxy redirect. Whether the
+// traffic is redirected is Cilium's answer (Lookup); this only reads which
+// rules the redirect carries off the L4Filters it was computed from, so
+// baseline and candidate can be compared and shown. It does not judge any
+// request against them.
+func l7RulesFor(epp *policy.EndpointPolicy, key policy.Key, peer identity.NumericIdentity) string {
+	entry, _, found := epp.Lookup(key)
+	if !found || !entry.IsAllow() || !entry.IsRedirectEntry() {
+		return ""
+	}
+	dir := &epp.SelectorPolicy.L4Policy.Egress
+	if key.IsIngress() {
+		dir = &epp.SelectorPolicy.L4Policy.Ingress
+	}
+	port := key.DestPort
+	seen := map[string]bool{}
+	for f := range dir.Filters() {
+		if f.U8Proto != key.Nexthdr && f.U8Proto != 0 {
+			continue
+		}
+		if f.Port != 0 && (port < f.Port || port > max(f.Port, f.EndPort)) {
+			continue
+		}
+		for cs, psp := range f.PerSelectorPolicies {
+			if psp != nil && psp.IsRedirect() && cs.Selects(peer) {
+				for _, d := range describeL7(psp) {
+					seen[d] = true
+				}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		// Redirected, but no filter named the rules: still distinct from "".
+		return "L7 proxy"
+	}
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return strings.Join(out, "; ")
+}
+
+// describeL7 renders one selector's L7 rules for a reader, one string per
+// rule, e.g. "HTTP GET /healthz", "DNS *.example.com".
+func describeL7(psp *policy.PerSelectorPolicy) []string {
+	var out []string
+	for _, h := range psp.HTTP {
+		parts := []string{"HTTP"}
+		for _, s := range []string{h.Method, h.Path, h.Host} {
+			if s != "" {
+				parts = append(parts, s)
+			}
+		}
+		for _, hdr := range h.Headers {
+			parts = append(parts, "header "+hdr)
+		}
+		for _, hm := range h.HeaderMatches {
+			parts = append(parts, "header "+hm.Name)
+		}
+		if len(parts) == 1 {
+			parts = append(parts, "any request")
+		}
+		out = append(out, strings.Join(parts, " "))
+	}
+	for _, d := range psp.DNS {
+		out = append(out, "DNS "+d.MatchName+d.MatchPattern)
+	}
+	if l := psp.GetListener(); l != "" {
+		out = append(out, "listener "+l)
+	}
+	if len(psp.ServerNames) > 0 {
+		names := make([]string, 0, len(psp.ServerNames))
+		for n := range psp.ServerNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		out = append(out, "TLS SNI "+strings.Join(names, ","))
+	}
+	return out
+}
+
 // noopPolicyMetrics is a minimal types.PolicyMetrics implementation — this
 // CLI has no Prometheus registry to report rule add/remove counts to.
 type noopPolicyMetrics struct{}
@@ -1191,7 +1338,12 @@ func (e *verdictEngine) distillFor(logger *slog.Logger, nid identity.NumericIden
 	if err != nil {
 		return nil, fmt.Errorf("resolving policy for identity %d: %w", nid, err)
 	}
-	epp := sp.DistillPolicy(logger, verdictOwner{id: nid}, map[string]uint16{})
+	// The agent always distills with real proxy ports; with none, Cilium
+	// omits the MapState entry of every L7-ruled port (nothing to redirect
+	// to) and isAllowed would read that traffic as default-deny. One
+	// placeholder fallback port is what LookupRedirectPort accepts for any
+	// listener, so those entries come back as allow + redirect instead.
+	epp := sp.DistillPolicy(logger, verdictOwner{id: nid}, map[string]uint16{policy.FallbackRedirectID: 1})
 	if epp == nil {
 		return nil, fmt.Errorf("distilling policy for identity %d returned nil", nid)
 	}

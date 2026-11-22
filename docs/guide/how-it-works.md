@@ -21,8 +21,8 @@ Documented in code, not silent:
 
 | Simplification | What it means |
 |---|---|
-| Egress scope | A flow must pass the destination's ingress policy and the source's egress policy. Egress is judged on identities, CIDRs, entities and ports; FQDN (L7) egress is `not simulated`. |
-| L7/FQDN flows | Counted as `not simulated` rather than guessed — those verdicts live in Envoy/the DNS proxy, not the policy map this engine computes. |
+| Egress scope | A flow must pass the destination's ingress policy and the source's egress policy. Egress is judged on identities, CIDRs, entities and ports; a `toFQDNs` destination only matches through the identity labels Hubble reports for its IP. |
+| L7 rules, not L7 requests | A flow allowed at L4 either way, but under different L7 proxy rules (HTTP via Envoy, DNS via the DNS proxy), is `L7_CHANGED`, with both rule sets named. Individual requests aren't judged against them — that happens in Envoy/the DNS proxy, not the policy map this engine computes. Hubble's L7 request records are judged on their L4 tuple; responses count as replies. |
 | Reply packets | Skipped (`reply (skipped)` in the summary) — connection tracking always allows those regardless of CNP ingress rules. |
 | Real identities only | Candidate labels with no matching live pod are never exercised by any sampled flow — GuardBee never invents a fake identity. |
 | `--last` is a ceiling | Hubble's flow buffer is a small recent-flow ring, not persisted history — it may hold fewer flows than requested. Use `--follow` to accumulate more over time instead of raising `--last` further. |

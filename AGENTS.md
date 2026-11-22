@@ -107,6 +107,12 @@ Consequences that follow directly from this, non-negotiably:
   common case — a workload with *no* CNP at all is fully default-allow, not
   default-deny. Fixed via `isAllowed()` falling back to
   `epp.SelectorPolicy.IngressPolicyEnabled`.
+- **No proxy ports = no L7 entries.** `DistillPolicy` with an empty
+  redirects map silently omits the MapState entry of every L7-ruled port
+  (nothing to redirect to), so `isAllowed` read HTTP/DNS-ruled traffic as
+  default-deny → false `NEWLY_DROPPED`. `distillFor` passes one placeholder
+  `policy.FallbackRedirectID` port so those entries come back as
+  allow + `IsRedirectEntry()`. Regression suite: `verdict_l7_test.go`.
 - **Identity minimum.** Hand-picked numeric identities must be
   `>= identity.MinimalNumericIdentity` (256) — lower values are reserved for
   Cilium's own special identities.
@@ -131,8 +137,9 @@ Consequences that follow directly from this, non-negotiably:
 ## Known v1 simplifications (intentional, documented in code — don't "fix" silently)
 
 - A flow must be allowed by **both** the destination's ingress policy and the
-  source's egress policy. Egress is judged on identities/CIDRs/entities/ports
-  only; toFQDNs and other L7 egress stay `NOT_SIMULATED`.
+  source's egress policy. Egress is judged on identities/CIDRs/entities/ports;
+  a `toFQDNs` destination only matches through the identity labels Hubble
+  reports for its IP (no DNS-answer correlation).
 - A live baseline policy using `fromNodes`/`toNodes` is **skipped**, named in
   the UI banner / CLI stderr warning, not simulated (`fetchBaselineRules`).
   Cilium's `Parse()` rejects it unless the process-global
@@ -140,8 +147,15 @@ Consequences that follow directly from this, non-negotiably:
   make it match nothing, since Hubble flows carry no node labels — a quietly
   wrong verdict. Verdicts therefore ignore those rules. `Parse()` flattens
   that error to a string, so it is matched by message, not `errors.Is`.
-- L7/FQDN-decided flows are `NOT_SIMULATED`, never guessed — those verdicts
-  live in Envoy/the DNS proxy, not the policy map this engine computes.
+- L7 requests are **not judged**, only the L7 rules in front of them: when a
+  flow is allowed at L4 on both sides but the proxy (Envoy for HTTP, the DNS
+  proxy for DNS) applies different rules to it, the row is `L7_CHANGED`,
+  naming both rule sets (`l7RulesFor` in `verdict.go`). Whether a given
+  request passes them lives in Envoy/the DNS proxy, not the policy map this
+  engine computes. Hubble's L7 request records are judged on their L4 tuple;
+  response records count as replies. Judging requests is the planned next
+  step (DNS via Cilium's own `dnsproxy.CheckAllowed`; HTTP only as a
+  separately labelled match against Cilium's Envoy translation).
 - A flow's identities must already be real and currently allocated (resolved
   directly off Hubble's `Endpoint.Identity`). Candidate labels with no
   matching live pod are simply never exercised — this tool never invents a

@@ -4,11 +4,13 @@ import type { VerdictChange } from '../api'
 // wherever it appears (Verdict, Flows, connectivity tests).
 
 // Visual language matches the CLI's own colorize/changeColor (colors.go):
-// red for NEWLY_DROPPED, amber for NEWLY_ALLOWED, green for UNCHANGED —
+// red for NEWLY_DROPPED, amber for NEWLY_ALLOWED, violet for L7_CHANGED,
+// green for UNCHANGED —
 // same categories, same meaning, just rendered as chips instead of ANSI.
 export const CHANGE_STYLES: Record<VerdictChange, string> = {
   NEWLY_DROPPED: 'border-drop/40 bg-drop/10 text-drop',
   NEWLY_ALLOWED: 'border-allow/40 bg-allow/10 text-allow',
+  L7_CHANGED: 'border-l7/40 bg-l7/10 text-l7',
   UNCHANGED: 'border-unchanged/40 bg-unchanged/10 text-unchanged',
 }
 

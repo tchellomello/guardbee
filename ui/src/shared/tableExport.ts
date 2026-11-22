@@ -33,10 +33,22 @@ export const flowsToText = (flows: Flow[]) => toText(FLOW_COLUMNS, flows.map(flo
 // Same columns/order as the Verdict results table, except Protocol and Port
 // are split (filterable in a spreadsheet) and Seen is the raw count, not the
 // on-screen "—"/"3×" display form.
-export const VERDICT_COLUMNS = ['Change', 'Source', 'Destination', 'Protocol', 'Port', 'Seen', 'Why'] as const
+// L7 is last so a spreadsheet built on the earlier columns keeps working.
+export const VERDICT_COLUMNS = ['Change', 'Source', 'Destination', 'Protocol', 'Port', 'Seen', 'Why', 'L7'] as const
 
 function verdictCells(r: VerdictRow): string[] {
-  return [r.change, r.source, r.destination, r.protocol, String(r.port), String(r.count), r.explanation]
+  return [r.change, r.source, r.destination, r.protocol, String(r.port), String(r.count), r.explanation, l7Text(r)]
+}
+
+// The L7 rules the proxy applies to a row's flow, "" when neither side
+// redirects it: "<rules>" when unchanged, "<before> → <after>" when they
+// differ. Same wording as the CLI's verdictRow.l7Detail.
+export function l7Text(r: VerdictRow): string {
+  const before = r.l7Baseline ?? ''
+  const after = r.l7Candidate ?? ''
+  if (!before && !after) return ''
+  if (before === after) return after
+  return `${before || 'no L7 rules'} → ${after || 'no L7 rules'}`
 }
 
 export const verdictRowsToCSV = (rows: VerdictRow[]) => toCSV(VERDICT_COLUMNS, rows.map(verdictCells))

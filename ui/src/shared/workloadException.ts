@@ -89,7 +89,9 @@ function classifyPeer(peer: string, peerLabels: string[] | undefined): Exception
 // can't be a CNP's endpointSelector) or whose peer can't be written as a
 // rule peer.
 export function exceptionTargets(row: VerdictRow): ExceptionTarget[] {
-  if (row.change === 'UNCHANGED' || !row.side) return []
+  // An exception is an L4 allow/deny: for L7_CHANGED it would either break
+  // the connection or lift the L7 filter, never undo the rule change.
+  if ((row.change !== 'NEWLY_DROPPED' && row.change !== 'NEWLY_ALLOWED') || !row.side) return []
   const directions: ('ingress' | 'egress')[] = row.side === 'both' ? ['egress', 'ingress'] : [row.side]
   const targets: ExceptionTarget[] = []
   for (const direction of directions) {
