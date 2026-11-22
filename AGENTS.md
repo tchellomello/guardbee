@@ -139,7 +139,13 @@ Consequences that follow directly from this, non-negotiably:
 - A flow must be allowed by **both** the destination's ingress policy and the
   source's egress policy. Egress is judged on identities/CIDRs/entities/ports;
   a `toFQDNs` destination only matches through the identity labels Hubble
-  reports for its IP (no DNS-answer correlation).
+  reports for its IP (no DNS-answer correlation). Those `fqdn:<selector>`
+  labels (`api.FQDNSelector.IdentityLabel`) are only added by Cilium's name
+  manager for selectors already in a LIVE policy, so a candidate selector
+  that isn't live yet (new name, or different text for an overlapping one)
+  reads as a false NEWLY_DROPPED. Known gap, planned fix: match Hubble's
+  `destination_names` against the candidate's selectors with `matchpattern`
+  and label the engine's copy of the destination identity.
 - A live baseline policy using `fromNodes`/`toNodes` is **skipped**, named in
   the UI banner / CLI stderr warning, not simulated (`fetchBaselineRules`).
   Cilium's `Parse()` rejects it unless the process-global

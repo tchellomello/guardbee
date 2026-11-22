@@ -410,7 +410,135 @@ catalog, `--probe-images-file`, and the safety model.
 
 ---
 
-## Step 6 — Tear down
+## Step 6 — L7 policies: HTTP paths and DNS names (optional)
+
+So far every rule was L3/L4: who may talk to whom, on which port. Cilium can
+also filter *requests*: HTTP method/path/headers through Envoy, DNS names
+through its DNS proxy. `verdict` handles those in two ways:
+
+- **Rules only.** Traffic that doesn't go through Cilium's proxy today has
+  no request details in Hubble, so a candidate that adds L7 rules is
+  reported as `L7_CHANGED`: still allowed at L4, but now checked against new
+  request rules, which are shown.
+- **Per request.** Once traffic does go through the proxy, Hubble records
+  each HTTP request and DNS query, and `verdict` judges every one of them
+  against the candidate's rules: a request the candidate would refuse is
+  `NEWLY_DROPPED`, naming it.
+
+### 6a — Adding an HTTP rule: rules compared
+
+`examples/postgres-metrics-http-only.yaml` is the merge-ready policy, with the
+Prometheus scrape narrowed to `GET /metrics`:
+
+```
+guardbee verdict -n postgres --fail-on-l7 examples/postgres-metrics-http-only.yaml
+```
+
+<div class="expect" markdown="1">
+<div class="expect-titlebar"><span class="expect-dot red"></span><span class="expect-dot yellow"></span><span class="expect-dot green"></span><span class="expect-label">Expected output</span></div>
+<div class="expect-body" markdown="1">
+
+```
+L7_CHANGED     observability/prometheus-… -> postgres/postgres-…  TCP:9187  (still allowed at L4; the L7 proxy's request rules for it change)  [L7 no L7 rules → ingress: HTTP GET /metrics]
+```
+
+Exit code `5` (`--fail-on-l7`): nothing breaks at L4, but the scrape is now
+behind an HTTP rule.
+
+</div>
+</div>
+
+### 6b — HTTP requests judged one by one
+
+Apply that policy for real (this is a throwaway lab), so the scrape goes
+through Envoy and Hubble records every request:
+
+```
+kubectl apply -f examples/postgres-metrics-http-only.yaml
+```
+
+Then judge two edits of it against those real requests. `--replace-existing`
+compares against the live copy; the filters keep only the scrape's HTTP
+records:
+
+```
+guardbee verdict -n postgres --replace-existing --type l7 \
+  --from-label k8s:app=prometheus --to-port 9187 lab/l7/postgres-metrics-typo.yaml
+guardbee verdict -n postgres --replace-existing --type l7 \
+  --from-label k8s:app=prometheus --to-port 9187 lab/l7/postgres-metrics-any-subpath.yaml
+```
+
+<div class="expect" markdown="1">
+<div class="expect-titlebar"><span class="expect-dot red"></span><span class="expect-dot yellow"></span><span class="expect-dot green"></span><span class="expect-label">Expected output</span></div>
+<div class="expect-body" markdown="1">
+
+```
+NEWLY_DROPPED  observability/prometheus-… -> postgres/postgres-…  TCP:9187  (currently allowed; this candidate would start blocking it)  [L7 HTTP GET /metrics (matched by GuardBee, not Envoy); ingress: HTTP GET /metrics → ingress: HTTP GET /metric]
+```
+
+for the one-letter typo (`/metric`): Cilium's path rule is a regex that must
+match the *whole* path, so every real scrape would get a 403. The looser
+`/metrics.*` keeps every scrape: all unchanged.
+
+</div>
+</div>
+
+"Matched by GuardBee, not Envoy": the rules are the exact ones Cilium sends
+Envoy, but Envoy's matching is C++, so GuardBee evaluates them itself,
+following Envoy's semantics (the path includes the query string, so
+`/metrics` does not allow `/metrics?debug=1`). Applying the typo for real is
+a quick way to see Envoy agree: `guardbee flows -n postgres --type l7`
+shows the scrapes `DROPPED`.
+
+### 6c — DNS queries judged one by one
+
+`lab/l7/webapp-dns-live.yaml` sends webapp's DNS through Cilium's DNS proxy,
+allowing any name. Apply it, then judge a candidate that narrows the names
+to `*.cluster.local`:
+
+```
+kubectl apply -f lab/l7/webapp-dns-live.yaml
+guardbee verdict -n webapp --replace-existing --type l7 --to-port 53 \
+  examples/webapp-dns-single-label-wildcard.yaml
+```
+
+<div class="expect" markdown="1">
+<div class="expect-titlebar"><span class="expect-dot red"></span><span class="expect-dot yellow"></span><span class="expect-dot green"></span><span class="expect-label">Expected output</span></div>
+<div class="expect-body" markdown="1">
+
+```
+NEWLY_DROPPED  webapp/webapp-… -> kube-system/coredns-…  UDP:53  (currently allowed; this candidate would start blocking it)  [L7 DNS postgres.postgres.svc.cluster.local.; egress: DNS * → egress: DNS *.cluster.local]
+```
+
+webapp could no longer resolve its own database. In a Cilium `matchPattern`,
+`*` matches **one** DNS label, so `*.cluster.local` doesn't match
+`postgres.postgres.svc.cluster.local`; `**.cluster.local` (several labels) is
+what was meant. Matching uses Cilium's own pattern code.
+
+</div>
+</div>
+
+Clean up before moving on:
+
+```
+kubectl delete -f examples/postgres-metrics-http-only.yaml -f lab/l7/webapp-dns-live.yaml
+```
+
+`mise run lab-validate` runs 6a–6c on a fresh lab too (exit codes 5, 2, 0
+and 2), so they're re-checked against every pinned Cilium.
+
+### `toFQDNs` (not part of this lab)
+
+`examples/webapp-fqdn-without-dns-rule.yaml` shows the one `toFQDNs` check
+GuardBee makes today: a warning when a candidate's `toFQDNs` has no
+`rules.dns` anywhere, which Cilium accepts but which can never learn the
+name's IPs. Judging `toFQDNs` *traffic* isn't reliable yet: a selector not
+already in a live policy reads as a drop, because Cilium only labels IPs for
+live selectors. See [how verdict works](how-it-works.html).
+
+---
+
+## Step 7 — Tear down
 
 ```
 mise run lab-down
