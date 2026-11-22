@@ -27,11 +27,12 @@ package main
 //     matches through the identity labels Hubble reports for its IP, and a
 //     flow whose source is outside the cluster has no egress policy to
 //     consult.
-//   - L7 requests are not judged, only the L7 rules in front of them: a
-//     flow allowed at L4 on both sides but redirected to the proxy under
-//     different rules is L7_CHANGED (l7RulesFor). Whether a request passes
-//     those rules is decided in Envoy and the DNS proxy, not the policy map
-//     this engine computes.
+//   - DNS queries Hubble recorded are judged like the DNS proxy would
+//     (dnsverdict.go). Any other flow behind the L7 proxy (HTTP via Envoy,
+//     or a connection-level flow) is only compared on its rules: allowed at
+//     L4 on both sides but under different rules is L7_CHANGED
+//     (l7RulesFor). Whether an HTTP request passes is decided in Envoy, not
+//     the policy map this engine computes.
 //   - A flow's source/destination identity must already be a real,
 //     currently-allocated identity (Hubble resolves these directly on every
 //     flow). Candidate-policy labels with no matching live pod are simply
@@ -547,6 +548,10 @@ type verdictRow struct {
 	// l7Baseline/l7Candidate name the L7 rules the proxy applies to this
 	// flow on each side (joinL7), "" when that side doesn't redirect it.
 	l7Baseline, l7Candidate string
+	// l7Request is the L7 request this row's verdict was judged on
+	// ("DNS api.github.com."), "" for a connection-level row. Part of key():
+	// each query name is its own verdict.
+	l7Request string
 }
 
 // l7Detail is the CLI's bracketed L7 note for a row, "" when neither side
@@ -558,13 +563,17 @@ func (r *verdictRow) l7Detail() string {
 		}
 		return s
 	}
+	req := ""
+	if r.l7Request != "" {
+		req = r.l7Request + "; "
+	}
 	switch {
 	case r.l7Baseline == "" && r.l7Candidate == "":
 		return ""
 	case r.l7Baseline == r.l7Candidate:
-		return "  [L7 " + r.l7Candidate + "]"
+		return "  [L7 " + req + r.l7Candidate + "]"
 	default:
-		return "  [L7 " + none(r.l7Baseline) + " → " + none(r.l7Candidate) + "]"
+		return "  [L7 " + req + none(r.l7Baseline) + " → " + none(r.l7Candidate) + "]"
 	}
 }
 
@@ -585,7 +594,7 @@ func (r *verdictRow) key() string {
 	if r.baselineAllowed != nil && r.candidateAllowed != nil {
 		key += fmt.Sprintf("|%t:%t", *r.baselineAllowed, *r.candidateAllowed)
 	}
-	return key + "|" + r.l7Baseline + "|" + r.l7Candidate
+	return key + "|" + r.l7Baseline + "|" + r.l7Candidate + "|" + r.l7Request
 }
 
 // line renders this row, appending a "(seen Nx in this sample)" suffix when
@@ -702,14 +711,30 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 
 	baseIn, baseEg := isAllowed(baseEpp, key), isEgressAllowed(baseSrcEpp, egressKey)
 	candIn, candEg := isAllowed(candEpp, key), isEgressAllowed(candSrcEpp, egressKey)
+
+	// A DNS request record names its query, so it is judged the way the DNS
+	// proxy would (dnsverdict.go), on the egress half, the only side Cilium
+	// accepts DNS rules on. A changed DNS rule set then yields a verdict on
+	// this query rather than L7_CHANGED.
+	var request string
+	dnsJudged := false
+	baseL7Eg, candL7Eg := l7RulesFor(baseSrcEpp, egressKey, dstNID), l7RulesFor(candSrcEpp, egressKey, dstNID)
+	if q := f.GetL7().GetDns().GetQuery(); q != "" && (baseL7Eg != "" || candL7Eg != "") {
+		baseOK, baseJudged := dnsQueryVerdict(baseSrcEpp, egressKey, dstNID, q)
+		candOK, candJudged := dnsQueryVerdict(candSrcEpp, egressKey, dstNID, q)
+		if baseJudged && candJudged {
+			dnsJudged = true
+			request = "DNS " + q
+			baseEg, candEg = baseEg && baseOK, candEg && candOK
+		}
+	}
 	baseAllow := baseIn && baseEg
 	candAllow := candIn && candEg
 
 	// The L7 rules the proxy applies on each half, "" when not redirected.
 	// Only meaningful while L4 allows, so a both-denied flow stays UNCHANGED.
-	baseL7In, baseL7Eg := l7RulesFor(baseEpp, key, srcNID), l7RulesFor(baseSrcEpp, egressKey, dstNID)
-	candL7In, candL7Eg := l7RulesFor(candEpp, key, srcNID), l7RulesFor(candSrcEpp, egressKey, dstNID)
-	l7Differs := baseAllow && candAllow && (baseL7In != candL7In || baseL7Eg != candL7Eg)
+	baseL7In, candL7In := l7RulesFor(baseEpp, key, srcNID), l7RulesFor(candEpp, key, srcNID)
+	l7Differs := baseAllow && candAllow && (baseL7In != candL7In || (!dnsJudged && baseL7Eg != candL7Eg))
 
 	var change string
 	switch {
@@ -750,6 +775,7 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		side: side, srcLabels: src.GetLabels(), dstLabels: dst.GetLabels(),
 		dstService: serviceString(f.GetDestinationService()),
 		l7Baseline: joinL7(baseL7In, baseL7Eg), l7Candidate: joinL7(candL7In, candL7Eg),
+		l7Request: request,
 	}
 }
 
@@ -776,7 +802,7 @@ func changeExplanation(change string) string {
 	case "NEWLY_ALLOWED":
 		return "(currently blocked; this candidate would start allowing it)"
 	case "L7_CHANGED":
-		return "(still allowed at L4; the L7 proxy's request rules for it change, requests are not judged)"
+		return "(still allowed at L4; the L7 proxy's request rules for it change)"
 	default:
 		return ""
 	}
@@ -829,7 +855,7 @@ func printVerdictLegend(counts *verdictCounts) {
 		fmt.Printf("  %s   currently blocked, the candidate would allow it — expected if that's the policy's purpose, worth a second look if not.\n", colorize(changeColor("NEWLY_ALLOWED"), "NEWLY_ALLOWED"))
 	}
 	if counts.l7Changed > 0 {
-		fmt.Printf("  %s      allowed at L4 either way, but the L7 proxy (Envoy / DNS proxy) now applies different request rules to it; individual requests are not judged yet — review the rules in brackets.\n", colorize(changeColor("L7_CHANGED"), "L7_CHANGED"))
+		fmt.Printf("  %s      allowed at L4 either way, but the L7 proxy (Envoy / DNS proxy) now applies different request rules to it; only DNS queries are judged per request — review the rules in brackets.\n", colorize(changeColor("L7_CHANGED"), "L7_CHANGED"))
 	}
 	if counts.notSimulated > 0 {
 		fmt.Printf("  %s   unresolved-identity or portless flows; this engine doesn't judge those (see README).\n", colorize(ansiGray, "not simulated"))

@@ -42,13 +42,15 @@ function verdictCells(r: VerdictRow): string[] {
 
 // The L7 rules the proxy applies to a row's flow, "" when neither side
 // redirects it: "<rules>" when unchanged, "<before> → <after>" when they
-// differ. Same wording as the CLI's verdictRow.l7Detail.
+// differ, led by the judged request ("DNS api.github.com.; ") if any. Same
+// wording as the CLI's verdictRow.l7Detail.
 export function l7Text(r: VerdictRow): string {
   const before = r.l7Baseline ?? ''
   const after = r.l7Candidate ?? ''
   if (!before && !after) return ''
-  if (before === after) return after
-  return `${before || 'no L7 rules'} → ${after || 'no L7 rules'}`
+  const req = r.l7Request ? `${r.l7Request}; ` : ''
+  if (before === after) return req + after
+  return `${req}${before || 'no L7 rules'} → ${after || 'no L7 rules'}`
 }
 
 export const verdictRowsToCSV = (rows: VerdictRow[]) => toCSV(VERDICT_COLUMNS, rows.map(verdictCells))

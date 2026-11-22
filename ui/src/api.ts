@@ -42,6 +42,9 @@ export interface VerdictRow {
   // that side doesn't redirect it (verdictRow.l7Baseline/l7Candidate).
   l7Baseline?: string
   l7Candidate?: string
+  // The L7 request the verdict was judged on ("DNS api.github.com."),
+  // absent for a connection-level row (verdictRow.l7Request).
+  l7Request?: string
 }
 
 export interface VerdictCounts {

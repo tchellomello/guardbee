@@ -115,8 +115,10 @@ Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the
       stays `not simulated`)
 - [x] L7 rule changes — a flow behind different HTTP/DNS proxy rules is
       `L7_CHANGED`, not a false drop
-- [ ] L7 request verdicts — judge Hubble's DNS, then HTTP, request records
-      against the candidate's L7 rules
+- [x] DNS query verdicts — each DNS query Hubble recorded is judged against
+      the candidate's DNS rules (Cilium's own matchpattern semantics)
+- [ ] HTTP request verdicts — judge Hubble's HTTP records against the
+      candidate's HTTP rules
 - [ ] `fromNodes`/`toNodes` policies — today a live policy using them is
       skipped and named in the UI banner / CLI warning, not simulated
       (Hubble flows carry no node labels to match them against)

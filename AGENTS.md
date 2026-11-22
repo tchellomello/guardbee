@@ -147,15 +147,21 @@ Consequences that follow directly from this, non-negotiably:
   make it match nothing, since Hubble flows carry no node labels — a quietly
   wrong verdict. Verdicts therefore ignore those rules. `Parse()` flattens
   that error to a string, so it is matched by message, not `errors.Is`.
-- L7 requests are **not judged**, only the L7 rules in front of them: when a
-  flow is allowed at L4 on both sides but the proxy (Envoy for HTTP, the DNS
-  proxy for DNS) applies different rules to it, the row is `L7_CHANGED`,
-  naming both rule sets (`l7RulesFor` in `verdict.go`). Whether a given
-  request passes them lives in Envoy/the DNS proxy, not the policy map this
-  engine computes. Hubble's L7 request records are judged on their L4 tuple;
-  response records count as replies. Judging requests is the planned next
-  step (DNS via Cilium's own `dnsproxy.CheckAllowed`; HTTP only as a
-  separately labelled match against Cilium's Envoy translation).
+- **DNS queries are judged; HTTP requests are not.** A Hubble DNS request
+  record behind the DNS proxy on either side is judged per query name like
+  the DNS proxy would (`dnsverdict.go`), yielding NEWLY_DROPPED/
+  NEWLY_ALLOWED/UNCHANGED with the query named. `pkg/fqdn/dnsproxy` itself
+  can't be imported (Linux-only datapath code breaks the darwin release
+  builds), so the pattern semantics come from Cilium's portable
+  `pkg/fqdn/matchpattern` and only `GeneratePattern` + `CheckAllowed`'s loop
+  are ported; `dnsverdict_conformance_test.go` (Linux build tag) compares the
+  port against the real dnsproxy, so keep it passing on every Cilium bump.
+  Every other flow behind the proxy (HTTP via Envoy, or a connection-level
+  flow without a query) is only compared on its rules: allowed at L4 on both
+  sides under different L7 rules → `L7_CHANGED`, naming both rule sets
+  (`l7RulesFor`). Response records count as replies. HTTP request
+  verdicts are the planned next step, as a separately labelled match
+  against Cilium's Envoy translation (Envoy's matching is C++).
 - A flow's identities must already be real and currently allocated (resolved
   directly off Hubble's `Endpoint.Identity`). Candidate labels with no
   matching live pod are simply never exercised — this tool never invents a

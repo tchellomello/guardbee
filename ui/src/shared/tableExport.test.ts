@@ -84,5 +84,8 @@ describe('verdict rows export', () => {
     expect(l7Text(row({ l7Baseline: 'ingress: HTTP GET /a', l7Candidate: 'ingress: HTTP GET /b' }))).toBe('ingress: HTTP GET /a → ingress: HTTP GET /b')
     expect(l7Text(row({ l7Candidate: 'egress: DNS *.example.com' }))).toBe('no L7 rules → egress: DNS *.example.com')
     expect(l7Text(row({ l7Baseline: 'egress: DNS *' }))).toBe('egress: DNS * → no L7 rules')
+    expect(l7Text(row({ l7Request: 'DNS api.github.com.', l7Baseline: 'egress: DNS *', l7Candidate: 'egress: DNS *.example.com' }))).toBe(
+      'DNS api.github.com.; egress: DNS * → egress: DNS *.example.com'
+    )
   })
 })

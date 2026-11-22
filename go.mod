@@ -5,6 +5,7 @@ go 1.26.8
 require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/cilium/cilium v1.20.4
+	github.com/cilium/dns v1.1.51-0.20240603182237-af788769786a
 	github.com/cilium/hive v1.0.4
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/term v0.46.0
@@ -26,8 +27,10 @@ require (
 	github.com/cilium/proxy v0.0.0-20260701124752-9c14fdc485a1 // indirect
 	github.com/cilium/statedb v0.8.4 // indirect
 	github.com/cilium/stream v0.0.1 // indirect
+	github.com/cilium/workerpool v1.4.0 // indirect
 	github.com/cloudflare/cfssl v1.6.5 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
+	github.com/containernetworking/cni v1.3.0 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -69,16 +72,19 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/renameio/v2 v2.0.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gopacket/gopacket v1.6.1 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de // indirect
 	github.com/mackerelio/go-osstat v0.2.7 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-shellwords v1.0.13 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/spdystream v0.5.1 // indirect
@@ -102,6 +108,10 @@ require (
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/vishvananda/netlink v1.3.2-0.20260624190457-bab08b3566fc // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
@@ -119,6 +129,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
@@ -135,6 +146,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20260501160325-927ab1f70cd6 // indirect
 	k8s.io/streaming v0.36.5 // indirect
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 // indirect
+	sigs.k8s.io/controller-runtime v0.24.1 // indirect
 	sigs.k8s.io/gateway-api v1.6.3 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/mcs-api v0.5.2 // indirect

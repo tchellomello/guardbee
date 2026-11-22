@@ -406,6 +406,8 @@ type verdictRowOut struct {
 	// L7Baseline/L7Candidate: see verdictRow.l7Baseline/l7Candidate.
 	L7Baseline  string `json:"l7Baseline,omitempty"`
 	L7Candidate string `json:"l7Candidate,omitempty"`
+	// L7Request: see verdictRow.l7Request.
+	L7Request string `json:"l7Request,omitempty"`
 }
 
 type verdictResponse struct {
@@ -494,6 +496,7 @@ func toRowOut(row *verdictRow, count int) verdictRowOut {
 		DestinationService: row.dstService,
 		L7Baseline:         row.l7Baseline,
 		L7Candidate:        row.l7Candidate,
+		L7Request:          row.l7Request,
 	}
 }
 

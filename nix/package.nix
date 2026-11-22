@@ -37,7 +37,7 @@ buildGoModule {
   inherit version;
   src = lib.cleanSource ../.;
 
-  vendorHash = "sha256-9DUp9HHV1+LGm9ZdzRGOn5N2MVhy1cq30bjsBJ0E3Fw=";
+  vendorHash = "sha256-/Xhu4cvdfKVr1oRb2BSSo3ifgcKvLlPHJQ6Fb6KyHWY=";
 
   subPackages = [ "." ];
   # Same as the release workflow: none of the embedded Cilium packages

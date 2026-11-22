@@ -1009,7 +1009,7 @@ function RunCard({
                         <div className="flex items-center gap-2">
                           {/* Not while streaming: the exception re-runs one-shot, which would end the live stream. */}
                           {!run.isStreaming && <WorkloadExceptionMenu row={row} onAddException={onAddException} />}
-                          {(row.change === 'NEWLY_DROPPED' || row.change === 'NEWLY_ALLOWED') && onAppendRuleToPolicy && (
+                          {(row.change === 'NEWLY_DROPPED' || row.change === 'NEWLY_ALLOWED') && !row.l7Request && onAppendRuleToPolicy && (
                             <AddToPolicyButton
                               row={row}
                               policyNamespace={policyNamespace}

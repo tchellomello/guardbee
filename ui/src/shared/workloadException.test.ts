@@ -73,6 +73,7 @@ describe('exceptionTargets', () => {
   it('returns nothing for an L7_CHANGED row: an L4 exception cannot undo an L7 rule change', () => {
     expect(exceptionTargets(droppedRow)).not.toEqual([])
     expect(exceptionTargets({ ...droppedRow, change: 'L7_CHANGED' })).toEqual([])
+    expect(exceptionTargets({ ...droppedRow, l7Request: 'DNS api.github.com.' })).toEqual([])
   })
 })
 

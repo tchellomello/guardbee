@@ -59,7 +59,7 @@ test.describe('Verdict tab', () => {
     const l7Row = {
       ...VERDICT.rows[2],
       change: 'L7_CHANGED' as const,
-      explanation: "(still allowed at L4; the L7 proxy's request rules for it change, requests are not judged)",
+      explanation: "(still allowed at L4; the L7 proxy's request rules for it change)",
       l7Candidate: 'ingress: HTTP GET /healthz',
     }
     await page.route('**/api/verdict', (r) =>
@@ -87,6 +87,29 @@ test.describe('Verdict tab', () => {
 
     await page.getByRole('button', { name: /L7 changed/ }).click()
     await expect(page.getByText('Proxy Rules Change')).toBeVisible()
+  })
+
+  test('a refused DNS query is a NEWLY_DROPPED row naming the query', async ({ page }) => {
+    const dnsRow = {
+      ...VERDICT.rows[0],
+      side: 'egress' as const,
+      protocol: 'UDP',
+      port: 53,
+      l7Request: 'DNS api.github.com.',
+      l7Baseline: 'egress: DNS *',
+      l7Candidate: 'egress: DNS *.example.com',
+    }
+    await page.route('**/api/verdict', (r) => r.fulfill({ json: { ...VERDICT, rows: [VERDICT.rows[0], dnsRow] } }))
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    await form.locator('input').first().fill('postgres')
+    await form.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await page.getByRole('button', { name: 'Run verdict', exact: true }).click()
+
+    const dns = page.locator('table:visible tbody tr', { hasText: 'UDP:53' })
+    await expect(dns.getByTestId('verdict-l7-rules')).toHaveText('L7 DNS api.github.com.; egress: DNS * → egress: DNS *.example.com')
+    // An L4 exception would only lift DNS filtering for this peer.
+    await expect(dns.getByRole('button', { name: /Allow \/ Deny/ })).toHaveCount(0)
   })
 
   test('filters ride along in the verdict request', async ({ page, cluster }) => {

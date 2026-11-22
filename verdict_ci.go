@@ -70,7 +70,7 @@ func judgedFlows(c *verdictCounts) int {
 // a NEWLY_DROPPED, NEWLY_ALLOWED or L7_CHANGED row is a finding even if few
 // flows were judged. Dropped outranks allowed — breaking traffic is the
 // worse news — and both outrank L7_CHANGED, which may or may not break
-// anything (its requests are not judged).
+// anything (its HTTP requests are not judged).
 func verdictExitCode(c *verdictCounts, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int) int {
 	if failOnDropped && c.newlyDropped > 0 {
 		return exitVerdictDropped
