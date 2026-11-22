@@ -39,6 +39,22 @@ async function submit(page: Page) {
 }
 
 test.describe('Connectivity tests', () => {
+  test("Host suggests the cluster's Services, and picking one fills its port", async ({ page }) => {
+    const form = await enabled(page)
+    const host = form.getByLabel('Host or IP')
+    await host.fill('')
+    await host.pressSequentially('prom', { delay: 40 })
+    await page.getByRole('option', { name: 'prometheus.observability.svc.cluster.local' }).click()
+    await expect(host).toHaveValue('prometheus.observability.svc.cluster.local')
+    await expect(form.getByLabel('Port')).toHaveValue('9090')
+  })
+
+  test('Host falls back to Services seen in flows when GuardBee may not list them', async ({ page }) => {
+    await page.route('**/api/services*', (r) => r.fulfill({ status: 403, body: 'forbidden' }))
+    const form = await enabled(page)
+    await expect(form).toContainText('suggestions are Services seen in flows')
+  })
+
   test('disabled capability and capability failure fail closed', async ({ page }) => {
     let podLookups = 0
     await page.route('**/api/probes/pods?*', (route) => { podLookups++; return route.fulfill({ json: { pods: [] } }) })

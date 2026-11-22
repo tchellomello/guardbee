@@ -192,6 +192,21 @@ export function fetchProbeCapabilities(): Promise<ProbeCapabilities> {
 
 // Unlike /api/pods (label suggestions), this inventory contains only running
 // probe-eligible Pods and their UID, so replacement cannot target a namesake.
+export interface ClusterService {
+  namespace: string
+  name: string
+  ports?: { port: number; protocol: string }[]
+}
+
+// GET /api/services: every Service (namespace '' = all). forbidden is set
+// when GuardBee's RBAC lacks "list" on Services, so callers can fall back
+// to Services seen in flows instead of showing an error.
+export async function fetchServices(namespace = ''): Promise<{ services: ClusterService[]; forbidden?: boolean }> {
+  const res = await fetch(`/api/services?${new URLSearchParams(namespace ? { namespace } : {})}`)
+  if (res.status === 403) return { services: [], forbidden: true }
+  return parseErrorOrJSON<{ services: ClusterService[] }>(res)
+}
+
 export function fetchProbePods(namespace: string): Promise<{ pods: ProbePod[]; excluded?: Record<string, number> }> {
   return fetch(`/api/probes/pods?${new URLSearchParams({ namespace })}`).then((res) =>
     parseErrorOrJSON<{ pods: ProbePod[]; excluded?: Record<string, number> }>(res)

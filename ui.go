@@ -29,6 +29,7 @@ import (
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/spf13/pflag"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -138,6 +139,7 @@ Flags:
 	mux.HandleFunc("GET /api/flow-filter-options", srv.handleFlowFilterOptions)
 	mux.HandleFunc("GET /api/namespaces", srv.handleNamespaces)
 	mux.HandleFunc("GET /api/pods", srv.handlePods)
+	mux.HandleFunc("GET /api/services", srv.handleServices)
 	mux.HandleFunc("GET /api/policies", srv.handlePolicies)
 	mux.HandleFunc("GET /api/policies/edit", srv.handlePolicyForEdit)
 	mux.HandleFunc("POST /api/policy/validate", srv.handlePolicyValidate)
@@ -861,6 +863,51 @@ type podOut struct {
 type podsResponse struct {
 	Namespace string   `json:"namespace"`
 	Pods      []podOut `json:"pods"`
+}
+
+type serviceOut struct {
+	Namespace string           `json:"namespace"`
+	Name      string           `json:"name"`
+	Ports     []servicePortOut `json:"ports,omitempty"`
+}
+
+type servicePortOut struct {
+	Port     int32  `json:"port"`
+	Protocol string `json:"protocol"`
+}
+
+// handleServices backs the connectivity test's Host suggestions: Service
+// names and ports in one namespace, or every namespace when none is given.
+// A Forbidden list (RBAC without "list" on services) is reported as 403 so
+// the UI can fall back to Services seen in flows rather than show an error.
+func (s *uiServer) handleServices(w http.ResponseWriter, r *http.Request) {
+	list, err := s.core.CoreV1().Services(r.URL.Query().Get("namespace")).List(r.Context(), metav1.ListOptions{})
+	if apierrors.IsForbidden(err) {
+		http.Error(w, fmt.Sprintf("listing services: %v", err), http.StatusForbidden)
+		return
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf("listing services: %v", err), http.StatusInternalServerError)
+		return
+	}
+	out := make([]serviceOut, 0, len(list.Items))
+	for _, svc := range list.Items {
+		so := serviceOut{Namespace: svc.Namespace, Name: svc.Name}
+		for _, p := range svc.Spec.Ports {
+			so.Ports = append(so.Ports, servicePortOut{Port: p.Port, Protocol: string(p.Protocol)})
+		}
+		out = append(out, so)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+		return out[i].Name < out[j].Name
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Services []serviceOut `json:"services"`
+	}{out})
 }
 
 func (s *uiServer) handlePods(w http.ResponseWriter, r *http.Request) {

@@ -182,7 +182,10 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
   requested port or the target port it maps to. That last form is read from the
   API (`get` services, `list` endpointslices) because socket-level load
   balancing rewrites the ClusterIP before Hubble sees the packet, so most
-  clusters report neither names nor a Service. Any other hostname (an
+  clusters report neither names nor a Service. In the UI, the Host field
+  suggests the cluster's Services (`list` services) and picking one fills its
+  port; without that permission it suggests the Services seen in this
+  session's verdict flows. Any other hostname (an
   external site such as `www.google.com`, a name the Service lookup doesn't
   find) is **refused with `422` before anything is injected**: without Hubble
   DNS visibility nothing on a flow ties it to that name, so the run could only

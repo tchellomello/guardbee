@@ -31,6 +31,16 @@ export const test = base.extend<{ cluster: Cluster }>({
         return r.fulfill({ json: { namespaces: NAMESPACES } })
       })
       await page.route('**/api/probes/capabilities', (r) => r.fulfill({ json: { enabled: false } }))
+      await page.route('**/api/services*', (r) =>
+        r.fulfill({
+          json: {
+            services: [
+              { namespace: 'observability', name: 'prometheus', ports: [{ port: 9090, protocol: 'TCP' }] },
+              { namespace: 'postgres', name: 'postgres', ports: [{ port: 5432, protocol: 'TCP' }] },
+            ],
+          },
+        })
+      )
       await page.route('**/api/pods?*', (r) => {
         record(r.request())
         const ns = new URL(r.request().url()).searchParams.get('namespace') ?? ''

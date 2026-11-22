@@ -639,7 +639,7 @@ export function VerdictPanel({
 
       </form>
 
-      <ConnectivityTestsPanel active={active} candidateYAML={candidateYAML} namespace={namespace} allNamespaces={allNamespaces} replaceExisting={replaceExisting} resetGeneration={resetGeneration} onRunningChange={setProbeRunning} onOpenHelp={openHelp} />
+      <ConnectivityTestsPanel active={active} candidateYAML={candidateYAML} namespace={namespace} allNamespaces={allNamespaces} replaceExisting={replaceExisting} resetGeneration={resetGeneration} onRunningChange={setProbeRunning} onOpenHelp={openHelp} seenServices={runs.flatMap((r) => r.result.rows.flatMap((row) => (row.destinationService ? [row.destinationService] : [])))} />
 
       <div className="mt-6 space-y-6">
         {runs.length > 0 && (

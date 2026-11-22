@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ConnectionProbeResponse, VerdictResponse } from '../api'
-import { candidateFingerprint, connectivityDecision, shortenMiddle } from './connectivity'
+import { candidateFingerprint, connectivityDecision, serviceHostSuggestions, servicePortFor, shortenMiddle } from './connectivity'
 import { ConnectionProbeError } from '../api'
 
 const simulation: VerdictResponse = {
@@ -49,5 +49,27 @@ describe('shortenMiddle', () => {
     expect(short).toHaveLength(20)
     expect(short.startsWith('testing2/')).toBe(true)
     expect(short.endsWith('-hvh26')).toBe(true)
+  })
+})
+
+describe('service host suggestions', () => {
+  const services = [
+    { namespace: 'ai', name: 'ollama', ports: [{ port: 11434, protocol: 'TCP' }] },
+    { namespace: 'postgres', name: 'postgres', ports: [{ port: 5432, protocol: 'TCP' }, { port: 9187, protocol: 'UDP' }] },
+  ]
+  it('lists cluster Services as DNS names, the scope namespace first', () => {
+    expect(serviceHostSuggestions(services, [], 'postgres')).toEqual([
+      'postgres.postgres.svc.cluster.local',
+      'ollama.ai.svc.cluster.local',
+    ])
+  })
+  it('falls back to Services seen in flows, deduplicated', () => {
+    expect(serviceHostSuggestions([], ['ai/ollama', 'ai/ollama', 'bogus'], '')).toEqual(['ollama.ai.svc.cluster.local'])
+  })
+  it("fills the picked Service's port for the protocol, else leaves it", () => {
+    expect(servicePortFor(services, 'ollama.ai.svc.cluster.local', 'TCP')).toBe('11434')
+    expect(servicePortFor(services, 'postgres.postgres.svc.cluster.local', 'UDP')).toBe('9187')
+    expect(servicePortFor(services, 'ollama.ai.svc.cluster.local', 'UDP')).toBeNull()
+    expect(servicePortFor(services, '10.0.0.1', 'TCP')).toBeNull()
   })
 })

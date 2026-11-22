@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  fetchServices,
+  type ClusterService,
   fetchNamespaces, fetchProbeCapabilities, fetchProbePods, runConnectionProbeStream,
   ConnectionProbeError,
   type ProbePod, type ProbeProtocol, type ConnectionProbeRequest, type ConnectionProbeResponse,
   type ProbeCapabilities, type ProbeImage,
 } from '../api'
 import { validProbeHost, validProbeNamespace, validProbePort } from '../shared/tcpProbe'
-import { candidateFingerprint, connectivityDecision, type ConnectivityDecision } from '../shared/connectivity'
+import { candidateFingerprint, connectivityDecision, serviceHostSuggestions, servicePortFor, type ConnectivityDecision } from '../shared/connectivity'
+import { SuggestInput } from './SuggestInput'
 import type { ProbeStageId } from '../shared/probeStages'
 import { Field } from './NamespaceScope'
 import { ProbeImagePicker } from './ProbeImagePicker'
@@ -26,8 +29,11 @@ const errorText = (err: unknown) => err instanceof Error ? err.message : String(
 type RequestSnapshot = Readonly<ConnectionProbeRequest>
 type Attempt = { request: RequestSnapshot; allNamespaces: boolean; submittedAt: string; capabilities: ProbeCapabilities; stages: ProbeStageId[]; response?: ConnectionProbeResponse; error?: string; definiteRejection?: boolean; errorStatus?: number }
 
-export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdictNamespace, allNamespaces, replaceExisting, resetGeneration, onRunningChange, onOpenHelp }: {
+export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdictNamespace, allNamespaces, replaceExisting, resetGeneration, onRunningChange, onOpenHelp, seenServices = [] }: {
   active: boolean; candidateYAML: string; namespace: string; allNamespaces: boolean; replaceExisting: boolean; resetGeneration: number; onRunningChange: (running: boolean) => void; onOpenHelp?: (category: string) => void
+  // "ns/name" Services seen in verdict rows: Host suggestions when listing
+  // the cluster's Services isn't allowed.
+  seenServices?: string[]
 }) {
   const [expanded, setExpanded] = useState(false)
   const [capability, setCapability] = useState({ enabled: false, message: 'Checking test availability…' })
@@ -44,6 +50,7 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
   const [running, setRunning] = useState(false)
   const [attempt, setAttempt] = useState<Attempt | null>(null)
   const [podRefresh, setPodRefresh] = useState(0)
+  const [services, setServices] = useState<{ list: ClusterService[]; forbidden: boolean }>({ list: [], forbidden: false })
   // State is not a synchronous lock. The panel stays mounted across app tabs;
   // never abort or repeat this mutating request just because the view changes.
   const runningRef = useRef(false)
@@ -102,6 +109,17 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
     })
     return () => { ignore = true }
   }, [namespace, allNamespaces, capability.enabled, podRefresh, active, expanded])
+
+  // Host suggestions: the cluster's Services, all namespaces, fetched once
+  // per open panel. A failed or forbidden list just means fewer suggestions.
+  useEffect(() => {
+    if (!active || !expanded || !capability.enabled) return
+    let ignore = false
+    fetchServices().then((res) => {
+      if (!ignore) setServices({ list: res.services ?? [], forbidden: !!res.forbidden })
+    }).catch(() => {})
+    return () => { ignore = true }
+  }, [active, expanded, capability.enabled])
 
   // The catalog is the server's; an id it no longer offers falls back to its
   // default (first) entry rather than sending something it would reject.
@@ -192,12 +210,25 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
                 <option value="">{podPlaceholder}</option>
                 {pods.map((pod) => <option key={pod.uid} value={pod.uid}>{pod.name}</option>)}
               </select></Field>
-              <Field label="Host or IP"><input value={host} required maxLength={253} aria-describedby="connection-host-help" aria-invalid={!!host && !validProbeHost(host)} className={inputClass} placeholder="db.myapp.svc.cluster.local" onChange={(e) => setHost(e.target.value)} /></Field>
+              <Field label="Host or IP"><SuggestInput
+                value={host}
+                multi={false}
+                suggestions={serviceHostSuggestions(services.list, seenServices, namespace)}
+                placeholder="db.myapp.svc.cluster.local"
+                className={inputClass}
+                inputProps={{ required: true, maxLength: 253, 'aria-describedby': 'connection-host-help', 'aria-invalid': !!host && !validProbeHost(host) }}
+                onChange={(v) => {
+                  setHost(v)
+                  // Picking a known Service fills its port for this protocol.
+                  const p = servicePortFor(services.list, v, protocol)
+                  if (p) setPort(p)
+                }}
+              /></Field>
               <Field label="Port"><input value={port} required inputMode="numeric" maxLength={5} pattern="[0-9]{1,5}" aria-invalid={!validProbePort(port)} className={inputClass} onChange={(e) => setPort(e.target.value)} /></Field>
               <Field label="Protocol"><select value={protocol} className={inputClass} onChange={(e) => setProtocol(e.target.value as ProbeProtocol)}>{(['TCP', 'UDP'] as const).map((p) => <option key={p} value={p} disabled={!!server.protocols && !server.protocols.includes(p) || !imageSupports(p)}>{p}{!imageSupports(p) && selectedImage ? ` (not in ${selectedImage.name})` : ''}</option>)}</select></Field>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-dim">
-              <p id="connection-host-help">{protocol === 'UDP' ? 'Sends one bounded datagram with a fixed payload (27 bytes); delivery is never proven.' : 'Opens one bounded TCP connection; not an application login.'} Host: an IP address or a Kubernetes Service name; for an external site, use its IP.</p>
+              <p id="connection-host-help">{protocol === 'UDP' ? 'Sends one bounded datagram with a fixed payload (27 bytes); delivery is never proven.' : 'Opens one bounded TCP connection; not an application login.'} Host: an IP address or a Kubernetes Service name ({services.forbidden ? 'suggestions are Services seen in flows: GuardBee may not list Services' : 'pick one of the cluster\'s Services to fill its port'}); for an external site, use its IP.</p>
               <button type="button" className="cursor-pointer text-signal disabled:opacity-40" disabled={!validProbeNamespace(namespace) || inventory.loading} onClick={() => setPodRefresh((value) => value + 1)}>Refresh running Pods</button>
             </div>
             {currentInventory && inventory.error && <p role="alert" className="break-words text-sm text-drop">Could not list running Pods: {inventory.error}</p>}
