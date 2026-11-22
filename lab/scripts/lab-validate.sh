@@ -9,6 +9,8 @@
 # docs/guide/lab.md). The two candidates are the lab guide's own:
 #   looks-correct.yaml — must regress (exit 2, NEWLY_DROPPED present)
 #   merge-ready.yaml   — must pass clean (exit 0)
+# plus examples/postgres-metrics-http-only.yaml — the scrape newly behind an
+# HTTP rule must be L7_CHANGED (exit 5 with --fail-on-l7)
 # Then the connectivity tests, through the streaming endpoint the UI uses,
 # once per built-in vetted probe image (probes/images.yaml), so "vetted" is
 # re-proven against every pinned Cilium, not just claimed:
@@ -88,13 +90,14 @@ if ! grep -qF "cilium engine ${pinned} (pinned)" <<<"$out"; then
 	exit 1
 fi
 
-# expect_verdict <candidate> <expected-exit>
+# expect_verdict <candidate> <expected-exit> [extra verdict flags...]
 expect_verdict() {
 	local candidate=$1 want=$2 got attempt
+	local extra=("${@:3}")
 	for ((attempt = 1; attempt <= RETRIES; attempt++)); do
 		got=0
 		"./$bin" verdict --kubeconfig "$kubeconfig" -n "$NS" --last 50 \
-			--fail-on-dropped --min-flows "$MIN_FLOWS" --format markdown "$candidate" || got=$?
+			--fail-on-dropped --min-flows "$MIN_FLOWS" --format markdown "${extra[@]}" "$candidate" || got=$?
 		if [[ $got -ne 3 ]]; then
 			break
 		fi
@@ -114,6 +117,14 @@ expect_verdict lab/candidates/looks-correct.yaml 2
 echo
 echo "=== lab-validate: merge-ready.yaml must pass clean (exit 0) ==="
 expect_verdict lab/candidates/merge-ready.yaml 0
+echo
+echo "=== lab-validate: an HTTP rule on the Prometheus scrape is L7_CHANGED (exit 5) ==="
+# Narrowed to the scrape itself: in an unfiltered 50-flow sample the
+# webapp pg_isready loop and kubelet probes can crowd every scrape out, and
+# an empty-of-scrapes sample would read as a pass. With the filter, too few
+# scrapes yet is exit 3, which expect_verdict retries.
+expect_verdict examples/postgres-metrics-http-only.yaml 5 --fail-on-l7 \
+	--from-label k8s:app=prometheus --to-port 9187
 
 echo
 echo "=== lab-validate: connectivity tests with the built-in probe images ==="

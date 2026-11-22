@@ -141,10 +141,11 @@ guardbee verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-rea
 | `--fail-on-dropped` | Exit `2` if any sampled flow is `NEWLY_DROPPED` |
 | `--per-policy` | Judge each CNP/CCNP document on its own: one section per policy and an overall exit code that is the worst of them. One-shot only |
 | `--fail-on-allowed` | Exit `4` if any sampled flow is `NEWLY_ALLOWED` (a dropped flow outranks it) |
+| `--fail-on-l7` | Exit `5` if any sampled flow is `L7_CHANGED` (dropped and newly allowed flows outrank it) |
 | `--min-flows N` | Exit `3` if fewer than N flows were judged (replies and not-simulated flows don't count) |
 | `--format table\|json\|markdown` | Output format; `json` and `markdown` are one-shot only |
 
-> Output is three buckets: `NEWLY_DROPPED` and `NEWLY_ALLOWED` (each with a one-line plain-English reason), and `UNCHANGED`. See [how verdict works](how-it-works.html) for the engine mechanics.
+> Output is four buckets: `NEWLY_DROPPED`, `NEWLY_ALLOWED` and `L7_CHANGED` (each with a one-line plain-English reason), and `UNCHANGED`. `L7_CHANGED` means the flow is allowed at L4 either way, but the L7 proxy would check its requests against different rules; the rules are shown in brackets (`[L7 no L7 rules → ingress: HTTP GET /healthz]`). DNS queries Hubble recorded are judged one by one: a query the candidate's DNS rules would refuse is `NEWLY_DROPPED`, named in brackets (`[L7 DNS api.github.com.; egress: DNS * → egress: DNS *.example.com]`). HTTP requests Hubble recorded are judged too, against the exact Envoy rules Cilium generates, and marked `(matched by GuardBee, not Envoy)` since Envoy's own matching is C++ (`--format json`: `"l7Judge": "guardbee"`). If Hubble redacts URL queries on the cluster (`hubble-redact-http-urlquery`), or the `cilium-config` ConfigMap can't be read to check, HTTP requests are left unjudged and the row says why. See [how verdict works](how-it-works.html) for the engine mechanics.
 
 `<candidate.yaml>` may hold several `---`-separated policies, like a file for `kubectl apply -f`; they're judged together as one candidate. On the CLI, documents of any other kind (a ConfigMap or Deployment in rendered kustomize output) are skipped with a warning on stderr; a file with no policy at all is an error. Pass several files, or `-` to read stdin. A CiliumNetworkPolicy without `metadata.namespace` (kustomize adds it later) can't be placed from the file alone, so pass `-n`. In the UI, a row's **Allow / Deny** button uses this: it shows the affected workload's detected identity labels, and appends a separate exception policy scoped to the labels you pick (with `enableDefaultDeny` off for that direction, so it never default-denies anything on its own). Then it re-runs the verdict.
 
@@ -156,7 +157,7 @@ By default the candidate is added on top of the live policy set, including a liv
 
 ### Several policies in one run
 
-By default every policy document is one merged candidate. For a rendered file with several independent policies, `--per-policy` judges each on its own against the same sampled flows (Hubble is sampled once), prints a section per policy, and exits with the worst result across them, ranked dropped (`2`), then newly allowed (`4`), then too few flows (`3`), then pass:
+By default every policy document is one merged candidate. For a rendered file with several independent policies, `--per-policy` judges each on its own against the same sampled flows (Hubble is sampled once), prints a section per policy, and exits with the worst result across them, ranked dropped (`2`), then newly allowed (`4`), then L7 changed (`5`), then too few flows (`3`), then pass:
 
 ```
 kustomize build overlays/prod | guardbee verdict -n myapp --per-policy --replace-existing --fail-on-dropped --min-flows 20 -
@@ -179,8 +180,9 @@ guardbee verdict -n myapp --replace-existing --fail-on-dropped --min-flows 20 --
 | `2` | `--fail-on-dropped`: at least one sampled flow is `NEWLY_DROPPED` |
 | `3` | `--min-flows`: too few flows judged to call it a pass (a dropped or newly allowed flow outranks this) |
 | `4` | `--fail-on-allowed`: at least one sampled flow is `NEWLY_ALLOWED` (a dropped flow outranks this) |
+| `5` | `--fail-on-l7`: at least one sampled flow is `L7_CHANGED` (dropped and newly allowed flows outrank this) |
 
-`--format json` prints the same object as the UI's `POST /api/verdict`, plus `candidate`, `replacedPolicies`, `judgedFlows`, `minFlows`, `result` (`pass`, `dropped`, `allowed` or `insufficient-flows`) and `exitCode`. `--format markdown` prints a summary ready to post as a PR comment: a status line, the counts, a table of changed rows, and unchanged rows in a collapsed section.
+`--format json` prints the same object as the UI's `POST /api/verdict`, plus `candidate`, `replacedPolicies`, `judgedFlows`, `minFlows`, `result` (`pass`, `dropped`, `allowed`, `l7-changed` or `insufficient-flows`) and `exitCode`. `--format markdown` prints a summary ready to post as a PR comment: a status line, the counts, a table of changed rows, and unchanged rows in a collapsed section.
 
 A pass only covers flows that were in Hubble's buffer at run time. Use `--min-flows` so a quiet namespace reads as inconclusive, not clean.
 

@@ -158,6 +158,30 @@ func TestFlowFilterFlagsParse(t *testing.T) {
 	}
 }
 
+// The L7 filters map onto Hubble's own FlowFilter fields (hubble observe's
+// --http-method/--http-path/--http-status/--to-fqdn) on every entry.
+func TestFlowWhitelistL7(t *testing.T) {
+	f := flowFilter{httpMethods: []string{"GET"}, httpPaths: []string{"/api/.*"}, httpStatuses: []string{"5+"}, toFQDNs: []string{"api.github.com"}}
+	wl, err := flowWhitelist("app", f)
+	if err != nil || len(wl) == 0 {
+		t.Fatalf("whitelist: %v, %v", wl, err)
+	}
+	for _, ff := range wl {
+		if ff.HttpMethod[0] != "GET" || ff.HttpPath[0] != "/api/.*" || ff.HttpStatusCode[0] != "5+" || ff.DestinationFqdn[0] != "api.github.com" {
+			t.Fatalf("L7 fields not carried: %+v", ff)
+		}
+	}
+	if got := f.String(); got != "--http-method GET --http-path /api/.* --http-status 5+ --to-fqdn api.github.com" {
+		t.Errorf("String() = %q", got)
+	}
+	if f.empty() {
+		t.Error("an L7-only filter is not empty")
+	}
+	if _, err := (&flowFilterFlags{f: flowFilter{httpPaths: []string{"/api/(unclosed"}}}).parse(); err == nil {
+		t.Error("an invalid --http-path regex must be rejected before reaching Hubble")
+	}
+}
+
 // hubble-relay asks each node for Number flows and merges them, so a
 // multi-node cluster returns more than --last asked for, not necessarily in
 // order. newestFlows must hand back the newest N, oldest first.

@@ -81,6 +81,14 @@ rules:
   - apiGroups: [""]
     resources: ["pods/portforward"]
     verbs: ["create"]
+  # verdict reads only Hubble's redaction settings from this one ConfigMap,
+  # and only when it judges HTTP requests: a redacted URL query would make a
+  # path verdict a guess (httpverdict.go). Without it, HTTP requests are
+  # reported as not judged rather than guessed.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cilium-config"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

@@ -18,6 +18,7 @@ const (
 	ansiRed    = "\033[31m"
 	ansiGreen  = "\033[32m"
 	ansiYellow = "\033[33m"
+	ansiViolet = "\033[35m" // magenta: the UI's violet L7 token
 	ansiGray   = "\033[90m"
 )
 
@@ -41,6 +42,8 @@ func changeColor(change string) string {
 		return ansiRed
 	case "NEWLY_ALLOWED":
 		return ansiYellow
+	case "L7_CHANGED":
+		return ansiViolet
 	case "UNCHANGED":
 		return ansiGreen
 	default: // "not simulated", "reply (skipped)"

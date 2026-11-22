@@ -615,6 +615,18 @@ func defaultDenyFits(got *bool, denyOnly bool) bool {
 	return got == nil
 }
 
+// portRulesFitEditorModel: every port rule is bare ports, which is all
+// templatePortRule carries.
+func portRulesFitEditorModel(prs api.PortRules) bool {
+	for _, pr := range prs {
+		if (pr.Rules != nil && !pr.Rules.IsEmpty()) || len(pr.ServerNames) > 0 || pr.Listener != nil ||
+			pr.TerminatingTLS != nil || pr.OriginatingTLS != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // policyFitsEditorModel reports whether rule survives a
 // round-trip through the editor model (appendDenyRules + the frontend
 // generator). False -> the frontend must keep the user's text instead of
@@ -641,6 +653,19 @@ func policyFitsEditorModel(rule *api.Rule) bool {
 		}
 		denyOnly := len(rule.Ingress) == 0 && len(rule.IngressDeny) > 0
 		if !defaultDenyFits(rule.EnableDefaultDeny.Ingress, denyOnly) {
+			return false
+		}
+	}
+	// The editor's port model is port + protocol only: L7 rules (HTTP/DNS),
+	// SNI, TLS and Envoy listeners, and toFQDNs peers would be dropped on
+	// regeneration, silently opening the port up to every request.
+	for _, r := range rule.Ingress {
+		if !portRulesFitEditorModel(r.ToPorts) {
+			return false
+		}
+	}
+	for _, r := range rule.Egress {
+		if len(r.ToFQDNs) > 0 || !portRulesFitEditorModel(r.ToPorts) {
 			return false
 		}
 	}

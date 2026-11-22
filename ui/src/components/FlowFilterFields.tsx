@@ -56,6 +56,11 @@ const QUICK_FILTERS: { label: string; title: string; set: Partial<FlowFilter> }[
   { label: 'From the internet', title: 'Only flows from outside the cluster (reserved:world)', set: { fromLabel: 'reserved:world' } },
   { label: 'From nodes', title: 'Only flows from the node itself, e.g. kubelet probes (reserved:host)', set: { fromLabel: 'reserved:host' } },
   { label: 'To the API server', title: 'Only flows to the Kubernetes API server (reserved:kube-apiserver)', set: { toLabel: 'reserved:kube-apiserver' } },
+  {
+    label: 'L7 requests',
+    title: "Only HTTP and DNS records (--type l7) — they exist only for traffic already behind Cilium's proxy",
+    set: { type: 'l7' },
+  },
 ]
 
 export function FlowFilterFields({
@@ -244,13 +249,23 @@ export function FlowFilterFields({
             {input('toPort', 'Port', '443', 'Destination port (--to-port)')}
           </>
         )}
+        {row(
+          'L7',
+          <>
+            {input('httpMethod', 'HTTP method', 'GET', 'HTTP request method (--http-method)', ['GET', 'POST', 'PUT', 'DELETE'])}
+            {input('httpPath', 'HTTP path', '/api/.*', 'HTTP path, a regex (--http-path)')}
+            {input('httpStatus', 'HTTP status', '5+', 'HTTP response status, or a class like 4+ (--http-status)', ['403', '4+', '5+'])}
+            {input('toFqdn', 'To FQDN', 'api.github.com', "Destination DNS name, as Cilium's DNS proxy learned it (--to-fqdn)")}
+          </>
+        )}
 
         <p className="text-[0.7rem] leading-relaxed text-ink-faint">
           {intro} Hubble applies filters before sampling, so all <em>Last</em> flows match. Fields combine with AND;
           commas separate alternatives. Same as the CLI's <code className="text-ink-dim">--pod</code>,{' '}
           <code className="text-ink-dim">--from-*</code>, <code className="text-ink-dim">--to-*</code>,{' '}
-          <code className="text-ink-dim">--verdict</code>, <code className="text-ink-dim">--drop-reason-desc</code> and{' '}
-          <code className="text-ink-dim">--type</code>.
+          <code className="text-ink-dim">--verdict</code>, <code className="text-ink-dim">--drop-reason-desc</code>,{' '}
+          <code className="text-ink-dim">--type</code>, <code className="text-ink-dim">--http-*</code> and{' '}
+          <code className="text-ink-dim">--to-fqdn</code>. L7 fields only match traffic already behind Cilium's proxy.
         </p>
       </div>
     </details>

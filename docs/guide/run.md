@@ -15,6 +15,7 @@ repo):
 | CNPs, CCNPs, `CiliumIdentity`, `CiliumEndpoint`, namespaces | `get`/`list`/`watch` |
 | Kubernetes `NetworkPolicy` inventory (all namespaces) | `list` for connectivity simulation completeness checks |
 | `cilium-system` (for `hubble-relay`) | pod `get`/`list` + port-forward |
+| `cilium-system/cilium-config` ConfigMap only | `get`, read when judging HTTP requests, to check whether Hubble redacts URL queries (without it, HTTP requests are left unjudged) |
 
 <div class="guarantee" markdown="1">
 

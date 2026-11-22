@@ -107,6 +107,12 @@ Consequences that follow directly from this, non-negotiably:
   common case — a workload with *no* CNP at all is fully default-allow, not
   default-deny. Fixed via `isAllowed()` falling back to
   `epp.SelectorPolicy.IngressPolicyEnabled`.
+- **No proxy ports = no L7 entries.** `DistillPolicy` with an empty
+  redirects map silently omits the MapState entry of every L7-ruled port
+  (nothing to redirect to), so `isAllowed` read HTTP/DNS-ruled traffic as
+  default-deny → false `NEWLY_DROPPED`. `distillFor` passes one placeholder
+  `policy.FallbackRedirectID` port so those entries come back as
+  allow + `IsRedirectEntry()`. Regression suite: `verdict_l7_test.go`.
 - **Identity minimum.** Hand-picked numeric identities must be
   `>= identity.MinimalNumericIdentity` (256) — lower values are reserved for
   Cilium's own special identities.
@@ -131,8 +137,9 @@ Consequences that follow directly from this, non-negotiably:
 ## Known v1 simplifications (intentional, documented in code — don't "fix" silently)
 
 - A flow must be allowed by **both** the destination's ingress policy and the
-  source's egress policy. Egress is judged on identities/CIDRs/entities/ports
-  only; toFQDNs and other L7 egress stay `NOT_SIMULATED`.
+  source's egress policy. Egress is judged on identities/CIDRs/entities/ports;
+  a `toFQDNs` destination only matches through the identity labels Hubble
+  reports for its IP (no DNS-answer correlation).
 - A live baseline policy using `fromNodes`/`toNodes` is **skipped**, named in
   the UI banner / CLI stderr warning, not simulated (`fetchBaselineRules`).
   Cilium's `Parse()` rejects it unless the process-global
@@ -140,8 +147,34 @@ Consequences that follow directly from this, non-negotiably:
   make it match nothing, since Hubble flows carry no node labels — a quietly
   wrong verdict. Verdicts therefore ignore those rules. `Parse()` flattens
   that error to a string, so it is matched by message, not `errors.Is`.
-- L7/FQDN-decided flows are `NOT_SIMULATED`, never guessed — those verdicts
-  live in Envoy/the DNS proxy, not the policy map this engine computes.
+- **DNS queries and HTTP requests are judged per request.** A Hubble DNS request
+  record behind the DNS proxy on either side is judged per query name like
+  the DNS proxy would (`dnsverdict.go`), yielding NEWLY_DROPPED/
+  NEWLY_ALLOWED/UNCHANGED with the query named. `pkg/fqdn/dnsproxy` itself
+  can't be imported (Linux-only datapath code breaks the darwin release
+  builds), so the pattern semantics come from Cilium's portable
+  `pkg/fqdn/matchpattern` and only `GeneratePattern` + `CheckAllowed`'s loop
+  are ported; `dnsverdict_conformance_test.go` (Linux build tag) compares the
+  port against the real dnsproxy, so keep it passing on every Cilium bump.
+  A Hubble HTTP request record is judged against the exact Envoy rules
+  Cilium's translator produced (`PerSelectorPolicy.EnvoyHTTPRules()`), but
+  the matching is GuardBee's (`httpverdict.go`, following Envoy v1.37.5's
+  header_utility and cilium/proxy's network_policy.cc, since both are C++),
+  so those rows are marked "matched by GuardBee, not Envoy" and carry
+  `l7Judge: "guardbee"` in JSON. Outside the modelled subset (deny/pass or
+  mixed-precedence rules, listeners, SNI, secret-backed headerMatches, a
+  redacted header the rule reads) a request is not judged and the row says
+  so. Hubble's `hubble-redact-http-urlquery` removes queries without a
+  trace and Cilium's path rules match the query, so `newHTTPGate` reads
+  `cilium-config` once (RBAC: get on that one ConfigMap) and turns HTTP
+  judging off when query redaction is on or the ConfigMap is unreadable.
+  Cilium's translator comment says its "secret fetch failed" matcher (exact
+  "" inverted) never matches; in Envoy 1.37.5 it matches any non-empty
+  value, one reason secret rules are never judged.
+  Any other flow behind the proxy (a connection-level flow without an L7
+  record) is only compared on its rules: allowed at L4 on both sides under
+  different L7 rules → `L7_CHANGED`, naming both rule sets (`l7RulesFor`).
+  Response records count as replies.
 - A flow's identities must already be real and currently allocated (resolved
   directly off Hubble's `Endpoint.Identity`). Candidate labels with no
   matching live pod are simply never exercised — this tool never invents a
@@ -281,7 +314,9 @@ ClusterRole (get/list/watch on CNP/CCNP/CiliumIdentity/CiliumEndpoint/
 namespaces) plus a `cilium-system`-scoped Role (pods get/list +
 pods/portforward create — required because `kubectl port-forward
 svc/hubble-relay` resolves to a backing pod client-side, so RBAC can't be
-scoped tighter than the Service's selector). Hubble relay itself listens on
+scoped tighter than the Service's selector — plus get on the one
+`cilium-config` ConfigMap, read only when HTTP requests are judged, to know
+whether Hubble redacts URL queries). Hubble relay itself listens on
 containerPort 4245 in `cilium-system`. Give the ServiceAccount its own
 namespace rather than reusing `default` — it's a credential/identity, not a
 disposable workload. **Never commit a kubeconfig holding a live SA bearer

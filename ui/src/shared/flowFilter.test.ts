@@ -26,6 +26,16 @@ describe('flowFilterParams', () => {
     ).toEqual({ toPod: ['db', 'other/cache'], toService: ['api'], toPort: ['443', '5432'] })
   })
 
+  it('keeps an HTTP path regex whole, commas included, and splits methods', () => {
+    expect(flowFilterParams({ ...EMPTY_FLOW_FILTER, httpPath: ' /v{1,2}/users ', httpMethod: 'GET, POST' })).toEqual({
+      httpPath: ['/v{1,2}/users'],
+      httpMethod: ['GET', 'POST'],
+    })
+    expect(describeFlowFilter({ ...EMPTY_FLOW_FILTER, httpMethod: 'GET', httpStatus: '5+', toFqdn: 'api.github.com' })).toBe(
+      'HTTP GET · status 5+ · to api.github.com'
+    )
+  })
+
   it('keeps a label selector whole, commas included', () => {
     expect(flowFilterParams({ ...EMPTY_FLOW_FILTER, toLabel: ' k8s:app=db,k8s:tier=backend ' })).toEqual({
       toLabel: ['k8s:app=db,k8s:tier=backend'],

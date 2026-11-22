@@ -108,7 +108,7 @@ func TestReplaceExistingDetectsNarrowedPolicy(t *testing.T) {
 
 	judge := func(replace bool, f *flowpb.Flow) (string, []string) {
 		t.Helper()
-		_, _, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cs, "alpha", candidateRules, replace)
+		_, _, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, nil, cs, "alpha", candidateRules, replace)
 		if err != nil {
 			t.Fatalf("buildVerdictEnginesWith(replace=%v): %v", replace, err)
 		}
@@ -160,23 +160,29 @@ func TestVerdictExitCode(t *testing.T) {
 		counts        verdictCounts
 		failOnDropped bool
 		failOnAllowed bool
+		failOnL7      bool
 		minFlows      int
 		want          int
 	}{
-		{"plain run never fails", verdictCounts{newlyDropped: 3}, false, false, 0, 0},
-		{"dropped with gate", verdictCounts{newlyDropped: 1, unchanged: 40}, true, false, 0, exitVerdictDropped},
-		{"clean with gate", verdictCounts{unchanged: 40}, true, false, 0, 0},
-		{"too few judged", verdictCounts{unchanged: 3, replySkipped: 50}, false, false, 10, exitVerdictTooFewFlows},
-		{"replies and not-simulated don't count", verdictCounts{unchanged: 9, replySkipped: 30, notSimulated: 30}, true, false, 10, exitVerdictTooFewFlows},
-		{"enough judged", verdictCounts{unchanged: 8, newlyAllowed: 2}, true, false, 10, 0},
-		{"dropped outranks thin sample", verdictCounts{newlyDropped: 1}, true, false, 10, exitVerdictDropped},
-		{"allowed with gate", verdictCounts{newlyAllowed: 1, unchanged: 40}, false, true, 0, exitVerdictAllowed},
-		{"allowed without gate", verdictCounts{newlyAllowed: 1, unchanged: 40}, true, false, 0, 0},
-		{"dropped outranks allowed", verdictCounts{newlyDropped: 1, newlyAllowed: 1}, true, true, 0, exitVerdictDropped},
-		{"allowed outranks thin sample", verdictCounts{newlyAllowed: 1}, false, true, 10, exitVerdictAllowed},
+		{"plain run never fails", verdictCounts{newlyDropped: 3}, false, false, false, 0, 0},
+		{"dropped with gate", verdictCounts{newlyDropped: 1, unchanged: 40}, true, false, false, 0, exitVerdictDropped},
+		{"clean with gate", verdictCounts{unchanged: 40}, true, false, false, 0, 0},
+		{"too few judged", verdictCounts{unchanged: 3, replySkipped: 50}, false, false, false, 10, exitVerdictTooFewFlows},
+		{"replies and not-simulated don't count", verdictCounts{unchanged: 9, replySkipped: 30, notSimulated: 30}, true, false, false, 10, exitVerdictTooFewFlows},
+		{"enough judged", verdictCounts{unchanged: 8, newlyAllowed: 2}, true, false, false, 10, 0},
+		{"dropped outranks thin sample", verdictCounts{newlyDropped: 1}, true, false, false, 10, exitVerdictDropped},
+		{"allowed with gate", verdictCounts{newlyAllowed: 1, unchanged: 40}, false, true, false, 0, exitVerdictAllowed},
+		{"allowed without gate", verdictCounts{newlyAllowed: 1, unchanged: 40}, true, false, false, 0, 0},
+		{"dropped outranks allowed", verdictCounts{newlyDropped: 1, newlyAllowed: 1}, true, true, false, 0, exitVerdictDropped},
+		{"allowed outranks thin sample", verdictCounts{newlyAllowed: 1}, false, true, false, 10, exitVerdictAllowed},
+		{"l7 with gate", verdictCounts{l7Changed: 1, unchanged: 40}, false, false, true, 0, exitVerdictL7},
+		{"l7 without gate", verdictCounts{l7Changed: 1, unchanged: 40}, true, true, false, 0, 0},
+		{"allowed outranks l7", verdictCounts{newlyAllowed: 1, l7Changed: 1}, false, true, true, 0, exitVerdictAllowed},
+		{"l7 outranks thin sample", verdictCounts{l7Changed: 1}, false, false, true, 10, exitVerdictL7},
+		{"l7 rows count as judged", verdictCounts{l7Changed: 10}, false, false, false, 10, 0},
 	}
 	for _, c := range cases {
-		if got := verdictExitCode(&c.counts, c.failOnDropped, c.failOnAllowed, c.minFlows); got != c.want {
+		if got := verdictExitCode(&c.counts, c.failOnDropped, c.failOnAllowed, c.failOnL7, c.minFlows); got != c.want {
 			t.Errorf("%s: want %d, got %d", c.name, c.want, got)
 		}
 	}
@@ -328,6 +334,8 @@ func TestWorstExitCode(t *testing.T) {
 		{"all pass", []int{0, 0}, 0},
 		{"dropped outranks allowed even though 4 > 2", []int{exitVerdictAllowed, exitVerdictDropped}, exitVerdictDropped},
 		{"allowed outranks thin sample", []int{exitVerdictTooFewFlows, exitVerdictAllowed, 0}, exitVerdictAllowed},
+		{"allowed outranks l7", []int{exitVerdictL7, exitVerdictAllowed}, exitVerdictAllowed},
+		{"l7 outranks thin sample", []int{exitVerdictTooFewFlows, exitVerdictL7}, exitVerdictL7},
 		{"thin sample outranks pass", []int{0, exitVerdictTooFewFlows}, exitVerdictTooFewFlows},
 	}
 	for _, c := range cases {
@@ -421,7 +429,7 @@ func TestJudgeGroupPerPolicyWorstExitCode(t *testing.T) {
 
 	var runs []groupRun
 	for _, g := range groups {
-		run, err := judgeGroup(logger, cs, "alpha", flowFilter{}, 50, false, true, g, flows, true, false, 0, time.Now(), kubeTarget{})
+		run, err := judgeGroup(logger, nil, cs, "alpha", flowFilter{}, 50, false, true, g, flows, true, false, false, 0, time.Now(), kubeTarget{})
 		if err != nil {
 			t.Fatalf("judgeGroup(%s): %v", g.label, err)
 		}

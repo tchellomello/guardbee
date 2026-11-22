@@ -58,8 +58,8 @@ as a page afterward.
   opt-in `--enable-probes`: bounded TCP/UDP connectivity tests that run as
   restricted ephemeral containers, using images from a server-side catalog
   only.
-- **Honest uncertainty is part of the product.** L7/FQDN flows, port-0
-  flows, `fromNodes`/`toNodes` baselines, unattributed flows and incomplete
+- **Honest uncertainty is part of the product.** L7 requests (only the
+  rules in front of them are compared, as `L7_CHANGED`), port-0 flows, `fromNodes`/`toNodes` baselines, unattributed flows and incomplete
   probe captures are shown as `NOT_SIMULATED`, "not attributed", skipped or
   withheld. They are never guessed. These are the documented v1
   simplifications (see `CLAUDE.md`/`README.md`).

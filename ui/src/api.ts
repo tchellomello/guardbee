@@ -17,7 +17,7 @@ export interface VerdictRequest extends FlowFilterParams {
   showUnchanged: boolean
 }
 
-export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'UNCHANGED'
+export type VerdictChange = 'NEWLY_DROPPED' | 'NEWLY_ALLOWED' | 'L7_CHANGED' | 'UNCHANGED'
 
 export interface VerdictRow {
   baselineAllowed?: boolean
@@ -38,12 +38,20 @@ export interface VerdictRow {
   destinationLabels?: string[]
   // The Kubernetes Service the flow was addressed to ("ns/name"), if any.
   destinationService?: string
+  // The L7 rules the proxy applies to this flow on each side, absent when
+  // that side doesn't redirect it (verdictRow.l7Baseline/l7Candidate).
+  l7Baseline?: string
+  l7Candidate?: string
+  // The L7 request the verdict was judged on ("DNS api.github.com."),
+  // absent for a connection-level row (verdictRow.l7Request).
+  l7Request?: string
 }
 
 export interface VerdictCounts {
   unchanged: number
   newlyDropped: number
   newlyAllowed: number
+  l7Changed: number
   notSimulated: number
   replySkipped: number
   total: number
@@ -59,6 +67,9 @@ export interface VerdictResponse {
   rows: VerdictRow[]
   // Live baseline policies the engine couldn't load (fromNodes/toNodes), see fetchBaselineRules in policies.go.
   skippedPolicies?: string[]
+  // Candidate constructs that can't work as written (candidateWarnings in
+  // dnsverdict.go), e.g. toFQDNs without any rules.dns.
+  warnings?: string[]
   // The kubeconfig context and API server this verdict judged (see kubeTarget in kube.go).
   context?: string
   apiServer?: string

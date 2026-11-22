@@ -106,7 +106,7 @@ export const VERDICT: VerdictResponse = {
   baselineRuleCount: 0,
   flowsRequested: 50,
   flowsSampled: 32,
-  counts: { unchanged: 15, newlyDropped: 17, newlyAllowed: 0, notSimulated: 0, replySkipped: 0, total: 32 },
+  counts: { unchanged: 15, newlyDropped: 17, newlyAllowed: 0, l7Changed: 0, notSimulated: 0, replySkipped: 0, total: 32 },
   rows: [row('NEWLY_DROPPED', 'prom', 'pg', 9187, 6), row('NEWLY_DROPPED', 'host', 'pg', 5432, 11), row('UNCHANGED', 'web', 'pg', 5432, 15)],
   context: 'kind-guardbee-lab',
 }

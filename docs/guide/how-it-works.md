@@ -21,8 +21,8 @@ Documented in code, not silent:
 
 | Simplification | What it means |
 |---|---|
-| Egress scope | A flow must pass the destination's ingress policy and the source's egress policy. Egress is judged on identities, CIDRs, entities and ports; FQDN (L7) egress is `not simulated`. |
-| L7/FQDN flows | Counted as `not simulated` rather than guessed — those verdicts live in Envoy/the DNS proxy, not the policy map this engine computes. |
+| Egress scope | A flow must pass the destination's ingress policy and the source's egress policy. Egress is judged on identities, CIDRs, entities and ports; a `toFQDNs` destination only matches through the identity labels Hubble reports for its IP. |
+| L7 requests | A DNS query Hubble recorded behind the DNS proxy is judged by name against the DNS rules, with Cilium's own `matchpattern` semantics (`*` is one label, `**.` spans several). An HTTP request is judged against the exact Envoy rules Cilium generates; the matching itself is GuardBee's, following Envoy (C++), so those rows say "matched by GuardBee, not Envoy". Rules outside what GuardBee models (deny or tiered rules, Envoy listeners, SNI, secret-backed header values, a header Hubble redacted) leave a request unjudged, and so does query redaction in Hubble (path rules match the query). A flow with no request record, but under different L7 rules, is `L7_CHANGED` with both rule sets named. L7 responses count as replies. Requests are only visible once their traffic already goes through Cilium's proxy today. |
 | Reply packets | Skipped (`reply (skipped)` in the summary) — connection tracking always allows those regardless of CNP ingress rules. |
 | Real identities only | Candidate labels with no matching live pod are never exercised by any sampled flow — GuardBee never invents a fake identity. |
 | `--last` is a ceiling | Hubble's flow buffer is a small recent-flow ring, not persisted history — it may hold fewer flows than requested. Use `--follow` to accumulate more over time instead of raising `--last` further. |

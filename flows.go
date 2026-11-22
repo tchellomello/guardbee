@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -250,12 +251,15 @@ type flowFilter struct {
 	verdicts                                     []flowpb.Verdict
 	dropReasons                                  []flowpb.DropReason
 	types                                        []string
+	// L7: hubble's --http-method/--http-path/--http-status and --to-fqdn.
+	httpMethods, httpPaths, httpStatuses, toFQDNs []string
 }
 
 func (f flowFilter) empty() bool {
 	return len(f.pods) == 0 && len(f.fromPods) == 0 && len(f.fromLabels) == 0 && len(f.fromIPs) == 0 &&
 		len(f.toPods) == 0 && len(f.toServices) == 0 && len(f.toLabels) == 0 && len(f.toIPs) == 0 &&
-		len(f.toPorts) == 0 && len(f.verdicts) == 0 && len(f.dropReasons) == 0 && len(f.types) == 0
+		len(f.toPorts) == 0 && len(f.verdicts) == 0 && len(f.dropReasons) == 0 && len(f.types) == 0 &&
+		len(f.httpMethods) == 0 && len(f.httpPaths) == 0 && len(f.httpStatuses) == 0 && len(f.toFQDNs) == 0
 }
 
 // flags pairs every flag name with its values, in display order — the single
@@ -286,6 +290,7 @@ func (f flowFilter) flags() []struct {
 		{"from-pod", f.fromPods}, {"from-label", f.fromLabels}, {"from-ip", f.fromIPs},
 		{"to-pod", f.toPods}, {"to-service", f.toServices}, {"to-label", f.toLabels}, {"to-ip", f.toIPs}, {"to-port", f.toPorts},
 		{"verdict", names(f.verdicts)}, {"drop-reason-desc", names(f.dropReasons)}, {"type", f.types},
+		{"http-method", f.httpMethods}, {"http-path", f.httpPaths}, {"http-status", f.httpStatuses}, {"to-fqdn", f.toFQDNs},
 	}
 }
 
@@ -324,6 +329,10 @@ func registerFlowFilterFlags(fs *pflag.FlagSet) *flowFilterFlags {
 	fs.StringArrayVar(&r.verdicts, "verdict", nil, "only flows with this verdict: "+strings.Join(verdictNames(), ", ")+". Repeatable")
 	fs.StringArrayVar(&r.dropReasons, "drop-reason-desc", nil, "only flows dropped for this reason (e.g. POLICY_DENIED, POLICY_DENY); see Cilium's flow.DropReason for the full list. Repeatable")
 	fs.StringArrayVar(&r.f.types, "type", nil, "only events of this Hubble type: "+strings.Join(eventTypeNames(), ", ")+". Repeatable")
+	fs.StringArrayVar(&r.f.httpMethods, "http-method", nil, "only HTTP requests/responses with this method (e.g. GET). L7 records only exist for traffic already behind Cilium's proxy. Repeatable")
+	fs.StringArrayVar(&r.f.httpPaths, "http-path", nil, "only HTTP requests/responses whose path matches this regex (e.g. /api/.*). Repeatable")
+	fs.StringArrayVar(&r.f.httpStatuses, "http-status", nil, `only HTTP responses with this status code, or a class like "5+" (hubble's form). Repeatable`)
+	fs.StringArrayVar(&r.f.toFQDNs, "to-fqdn", nil, "only flows to this DNS name, as Cilium's DNS proxy learned it (e.g. api.github.com, *.example.com). Repeatable")
 	return r
 }
 
@@ -341,6 +350,11 @@ func (r *flowFilterFlags) parse() (flowFilter, error) {
 	}
 	if err = validateEventTypes(f.types); err != nil {
 		return flowFilter{}, err
+	}
+	for _, p := range f.httpPaths {
+		if _, err := regexp.Compile(p); err != nil {
+			return flowFilter{}, fmt.Errorf("invalid --http-path regex %q: %v", p, err)
+		}
 	}
 	return f, nil
 }
@@ -459,6 +473,10 @@ func flowWhitelist(namespace string, f flowFilter) ([]*flowpb.FlowFilter, error)
 		ff.Verdict = f.verdicts
 		ff.DropReasonDesc = f.dropReasons
 		ff.EventType = eventTypeFilters(f.types)
+		ff.HttpMethod = f.httpMethods
+		ff.HttpPath = f.httpPaths
+		ff.HttpStatusCode = f.httpStatuses
+		ff.DestinationFqdn = f.toFQDNs
 		return ff
 	}
 

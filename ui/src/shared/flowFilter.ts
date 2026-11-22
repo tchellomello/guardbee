@@ -24,6 +24,12 @@ export interface FlowFilter {
   dropReason: string
   // --type: Hubble's event type (policy-verdict, drop, trace, …).
   type: string
+  // L7 (hubble's --http-method/--http-path/--http-status, --to-fqdn): only
+  // traffic already behind Cilium's proxy has HTTP/DNS records.
+  httpMethod: string
+  httpPath: string
+  httpStatus: string
+  toFqdn: string
 }
 
 export const EMPTY_FLOW_FILTER: FlowFilter = {
@@ -39,6 +45,10 @@ export const EMPTY_FLOW_FILTER: FlowFilter = {
   verdict: '',
   dropReason: '',
   type: '',
+  httpMethod: '',
+  httpPath: '',
+  httpStatus: '',
+  toFqdn: '',
 }
 
 // The query/body parameter names ui.go's flowFilterParams reads.
@@ -49,7 +59,8 @@ export type FlowFilterParams = Partial<Record<keyof FlowFilter, string[]>>
 // labels). Every other field accepts several values separated by commas or
 // spaces (ORed, like a repeated hubble flag), since pod/service names,
 // IPs/CIDRs, ports and enum names can't contain either.
-export const SINGLE_VALUE_FIELDS: ReadonlySet<keyof FlowFilter> = new Set(['fromLabel', 'toLabel'])
+// A path is a regex, which can contain commas ("/v{1,2}/") too.
+export const SINGLE_VALUE_FIELDS: ReadonlySet<keyof FlowFilter> = new Set(['fromLabel', 'toLabel', 'httpPath'])
 
 function splitList(v: string): string[] {
   return v.split(/[\s,]+/).filter(Boolean)
@@ -86,6 +97,10 @@ export function describeFlowFilter(f: FlowFilter): string {
     p.verdict && list('verdict'),
     p.dropReason && `reason ${list('dropReason')}`,
     p.type && `type ${list('type')}`,
+    p.httpMethod && `HTTP ${list('httpMethod')}`,
+    p.httpPath && `path ${list('httpPath')}`,
+    p.httpStatus && `status ${list('httpStatus')}`,
+    p.toFqdn && `to ${list('toFqdn')}`,
   ]
     .filter(Boolean)
     .join(' · ')

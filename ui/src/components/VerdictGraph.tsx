@@ -39,12 +39,14 @@ const EDGE_COLORS: Record<'dark' | 'light', Record<VerdictChange | 'BLOCKED', st
   dark: {
     NEWLY_DROPPED: '#ff5d5d',
     NEWLY_ALLOWED: '#ffb648',
+    L7_CHANGED: '#c4a1ff',
     UNCHANGED: '#5ee8a5',
     BLOCKED: '#7b9799',
   },
   light: {
     NEWLY_DROPPED: '#dc2626',
     NEWLY_ALLOWED: '#b45309',
+    L7_CHANGED: '#7c3aed',
     UNCHANGED: '#15803d',
     BLOCKED: '#527072',
   },
@@ -66,6 +68,7 @@ type CustomEdge = PathEdgeType
 const BADGE_CLASSES: Record<VerdictChange | 'BLOCKED', string> = {
   NEWLY_DROPPED: 'border-drop/40 text-drop',
   NEWLY_ALLOWED: 'border-allow/40 text-allow',
+  L7_CHANGED: 'border-l7/40 text-l7',
   UNCHANGED: 'border-unchanged/40 text-unchanged',
   BLOCKED: 'border-line-bright text-ink-dim',
 }
@@ -403,7 +406,7 @@ function buildGraph(
     const data: PathEdgeData = {
       outcome: look === 'NEWLY_DROPPED' || look === 'BLOCKED' ? 'stop' : 'pass',
       color: colors[look],
-      gate: look === 'NEWLY_DROPPED' || look === 'BLOCKED' ? '✕' : look === 'NEWLY_ALLOWED' ? '✓' : undefined,
+      gate: look === 'NEWLY_DROPPED' || look === 'BLOCKED' ? '✕' : look === 'NEWLY_ALLOWED' ? '✓' : look === 'L7_CHANGED' ? 'L7' : undefined,
       badgeClass: BADGE_CLASSES[look],
       label,
       labelT,

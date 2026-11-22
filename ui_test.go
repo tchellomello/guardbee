@@ -89,6 +89,39 @@ func TestHandlePolicyParseFlagsLossyScopedDeny(t *testing.T) {
 	}
 }
 
+// L7 rules, toFQDNs and the other port extras have no place in the editor
+// model (templatePortRule is port + protocol). Regenerating from it would
+// drop an HTTP/DNS rule and silently open the port to every request, so
+// they must read as lossy and the editor keeps the user's text.
+func TestHandlePolicyParseFlagsLossyL7(t *testing.T) {
+	srv := &uiServer{logger: slog.Default()}
+	parse := func(y string) policyParseResponse {
+		body, _ := json.Marshal(policyValidateRequest{Namespace: "default", CandidateYAML: y})
+		w := httptest.NewRecorder()
+		srv.handlePolicyParse(w, httptest.NewRequest(http.MethodPost, "/api/policy/parse", bytes.NewReader(body)))
+		var resp policyParseResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshaling response: %v", err)
+		}
+		return resp
+	}
+	const head = "apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: p\n  namespace: default\nspec:\n  endpointSelector:\n    matchLabels:\n      run: x\n"
+	const port = "      toPorts:\n        - ports:\n            - port: \"80\"\n              protocol: TCP\n"
+	for name, body := range map[string]string{
+		"ingress http": "  ingress:\n    - fromEntities: [cluster]\n" + port + "          rules:\n            http:\n              - method: GET\n",
+		"egress dns":   "  egress:\n    - toEntities: [cluster]\n      toPorts:\n        - ports:\n            - port: \"53\"\n              protocol: UDP\n          rules:\n            dns:\n              - matchPattern: \"*\"\n",
+		"toFQDNs":      "  egress:\n    - toFQDNs:\n        - matchName: api.github.com\n",
+		"serverNames":  "  egress:\n    - toEntities: [world]\n      toPorts:\n        - ports:\n            - port: \"443\"\n              protocol: TCP\n          serverNames: [api.github.com]\n",
+	} {
+		if got := parse(head + body); !got.Valid || !got.Lossy {
+			t.Errorf("%s: want valid+lossy, got %+v", name, got)
+		}
+	}
+	if plain := parse(head + "  ingress:\n    - fromEntities: [cluster]\n" + port); !plain.Valid || plain.Lossy {
+		t.Errorf("bare ports must still fit the editor: %+v", plain)
+	}
+}
+
 // Exact round-trip contract with ui/src/policy.ts's generator: a scoped deny
 // fits the editor model only when enableDefaultDeny matches what the
 // generator would emit (explicit false for a deny-only direction, nothing
@@ -218,6 +251,17 @@ func TestFlowFilterParams(t *testing.T) {
 	f, err = got.filter("app")
 	if err != nil || f.pods[0] != "web" || f.types[0] != "policy-verdict" {
 		t.Fatalf("pod/type not carried into the filter: %+v, %v", f, err)
+	}
+}
+
+func TestFlowFilterParamsL7(t *testing.T) {
+	q, _ := url.ParseQuery("httpMethod=GET&httpPath=/metrics&httpStatus=403&toFqdn=api.github.com")
+	f, err := flowFilterParamsFromQuery(q).filter("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.httpMethods[0] != "GET" || f.httpPaths[0] != "/metrics" || f.httpStatuses[0] != "403" || f.toFQDNs[0] != "api.github.com" {
+		t.Fatalf("L7 params not carried into the filter: %+v", f)
 	}
 }
 

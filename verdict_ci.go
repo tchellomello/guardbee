@@ -5,7 +5,8 @@ package main
 //
 //   - Exit codes a pipeline can gate on: --fail-on-dropped exits
 //     exitVerdictDropped when any sampled flow is NEWLY_DROPPED,
-//     --fail-on-allowed exits exitVerdictAllowed on any NEWLY_ALLOWED, and
+//     --fail-on-allowed exits exitVerdictAllowed on any NEWLY_ALLOWED,
+//     --fail-on-l7 exits exitVerdictL7 on any L7_CHANGED, and
 //     --min-flows exits exitVerdictTooFewFlows when too few flows were
 //     actually judged — so "nothing was sampled" can never read as a pass.
 //     Errors keep exiting 1.
@@ -46,6 +47,7 @@ const (
 	exitVerdictDropped     = 2
 	exitVerdictTooFewFlows = 3
 	exitVerdictAllowed     = 4
+	exitVerdictL7          = 5
 )
 
 const (
@@ -61,18 +63,23 @@ func validVerdictFormat(f string) bool {
 // judgedFlows is how many sampled flows actually got a verdict — replies and
 // not-simulated flows are counted in total but say nothing about the policy.
 func judgedFlows(c *verdictCounts) int {
-	return c.unchanged + c.newlyDropped + c.newlyAllowed
+	return c.unchanged + c.newlyDropped + c.newlyAllowed + c.l7Changed
 }
 
 // verdictExitCode is the CI gate. A real finding outranks a thin sample:
-// a NEWLY_DROPPED or NEWLY_ALLOWED row is a finding even if few flows were
-// judged. Dropped outranks allowed — breaking traffic is the worse news.
-func verdictExitCode(c *verdictCounts, failOnDropped, failOnAllowed bool, minFlows int) int {
+// a NEWLY_DROPPED, NEWLY_ALLOWED or L7_CHANGED row is a finding even if few
+// flows were judged. Dropped outranks allowed — breaking traffic is the
+// worse news — and both outrank L7_CHANGED, which may or may not break
+// anything (a connection-level flow, no request to judge).
+func verdictExitCode(c *verdictCounts, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int) int {
 	if failOnDropped && c.newlyDropped > 0 {
 		return exitVerdictDropped
 	}
 	if failOnAllowed && c.newlyAllowed > 0 {
 		return exitVerdictAllowed
+	}
+	if failOnL7 && c.l7Changed > 0 {
+		return exitVerdictL7
 	}
 	if minFlows > 0 && judgedFlows(c) < minFlows {
 		return exitVerdictTooFewFlows
@@ -86,6 +93,8 @@ func verdictResult(code int) string {
 		return "dropped"
 	case exitVerdictAllowed:
 		return "allowed"
+	case exitVerdictL7:
+		return "l7-changed"
 	case exitVerdictTooFewFlows:
 		return "insufficient-flows"
 	default:
@@ -152,6 +161,7 @@ func toVerdictResponse(comp *verdictComputation) verdictResponse {
 		Counts:             toCountsOut(comp.counts),
 		Rows:               make([]verdictRowOut, len(comp.rows)),
 		SkippedPolicies:    comp.skippedPolicies,
+		Warnings:           comp.warnings,
 		Context:            comp.target.context,
 		APIServer:          comp.target.apiServer,
 	}
@@ -206,6 +216,8 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 		status = fmt.Sprintf("**FAIL**: %d sampled flow(s) would break", c.newlyDropped)
 	case exitVerdictAllowed:
 		status = fmt.Sprintf("**FAIL**: %d sampled flow(s) would be newly allowed", c.newlyAllowed)
+	case exitVerdictL7:
+		status = fmt.Sprintf("**FAIL**: %d sampled flow(s) would get different L7 proxy rules", c.l7Changed)
 	case exitVerdictTooFewFlows:
 		status = fmt.Sprintf("**INCONCLUSIVE**: only %d flow(s) judged, %d required", judgedFlows(c), minFlows)
 	default:
@@ -220,8 +232,8 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 		fmt.Fprintf(w, "- Context: `%s` (%s)\n", comp.target.context, comp.target.apiServer)
 	}
 	fmt.Fprintf(w, "- Scope: %s%s\n", namespaceLabel(comp.namespace), filterLabel(comp.filter))
-	fmt.Fprintf(w, "- Flows: %d sampled, %d judged (%d unchanged, %d newly dropped, %d newly allowed), %d not simulated, %d replies skipped\n",
-		c.total, judgedFlows(c), c.unchanged, c.newlyDropped, c.newlyAllowed, c.notSimulated, c.replySkipped)
+	fmt.Fprintf(w, "- Flows: %d sampled, %d judged (%d unchanged, %d newly dropped, %d newly allowed, %d L7 changed), %d not simulated, %d replies skipped\n",
+		c.total, judgedFlows(c), c.unchanged, c.newlyDropped, c.newlyAllowed, c.l7Changed, c.notSimulated, c.replySkipped)
 	fmt.Fprintf(w, "- Rules: %d candidate vs %d live\n", comp.candidateRuleCount, comp.baselineRuleCount)
 	if comp.elapsed > 0 {
 		fmt.Fprintf(w, "- Duration: %s\n", formatElapsed(comp.elapsed))
@@ -229,16 +241,34 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 	for _, r := range replaced {
 		fmt.Fprintf(w, "- Replaces live %s\n", r)
 	}
+	for _, msg := range comp.warnings {
+		fmt.Fprintf(w, "- Warning: %s\n", msg)
+	}
 	for _, s := range comp.skippedPolicies {
 		fmt.Fprintf(w, "- Live policy not simulated (fromNodes/toNodes): %s\n", s)
 	}
 
+	// The L7 column only appears when a row in the table has L7 rules, so a
+	// PR comment for an L3/L4-only policy keeps its familiar shape.
 	table := func(rows []int) {
-		fmt.Fprintln(w, "\n| Change | Source | Destination | Port | Seen |")
-		fmt.Fprintln(w, "|---|---|---|---|---|")
+		withL7 := false
+		for _, i := range rows {
+			withL7 = withL7 || comp.rows[i].l7Detail() != ""
+		}
+		if withL7 {
+			fmt.Fprintln(w, "\n| Change | Source | Destination | Port | L7 | Seen |")
+			fmt.Fprintln(w, "|---|---|---|---|---|---|")
+		} else {
+			fmt.Fprintln(w, "\n| Change | Source | Destination | Port | Seen |")
+			fmt.Fprintln(w, "|---|---|---|---|---|")
+		}
 		for _, i := range rows {
 			r := comp.rows[i]
-			fmt.Fprintf(w, "| %s | %s | %s | %s/%d | %d |\n", r.change, mdCell(r.src), mdCell(r.dst), r.proto, r.port, comp.rowCounts[i])
+			l7 := ""
+			if withL7 {
+				l7 = " " + mdCell(strings.TrimSpace(r.l7Detail())) + " |"
+			}
+			fmt.Fprintf(w, "| %s | %s | %s | %s/%d |%s %d |\n", r.change, mdCell(r.src), mdCell(r.dst), r.proto, r.port, l7, comp.rowCounts[i])
 		}
 	}
 	var changed, unchanged []int
@@ -261,15 +291,17 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 }
 
 // worstExitCode is the overall result of several judged policies. Not a
-// numeric max: a dropped flow (2) is worse than a newly allowed one (4), and
-// both outrank a thin sample (3), the same order verdictExitCode applies
-// within one policy.
+// numeric max: a dropped flow (2) is worse than a newly allowed one (4),
+// then an L7 rule change (5), and all outrank a thin sample (3), the same
+// order verdictExitCode applies within one policy.
 func worstExitCode(codes []int) int {
 	rank := func(c int) int {
 		switch c {
 		case exitVerdictDropped:
-			return 3
+			return 4
 		case exitVerdictAllowed:
+			return 3
+		case exitVerdictL7:
 			return 2
 		case exitVerdictTooFewFlows:
 			return 1
@@ -354,14 +386,14 @@ type groupRun struct {
 
 // judgeCandidateGroups samples Hubble once and judges every group against
 // the same flows, each with its own baseline+candidate engines.
-func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, groups []candidateGroup, failOnDropped, failOnAllowed bool, minFlows int, start time.Time, target kubeTarget) ([]groupRun, error) {
+func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, groups []candidateGroup, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int, start time.Time, target kubeTarget) ([]groupRun, error) {
 	flows, err := fetchFlows(core, cfg, namespace, filter, last)
 	if err != nil {
 		return nil, fmt.Errorf("tapping flows: %w", err)
 	}
 	var runs []groupRun
 	for _, g := range groups {
-		run, err := judgeGroup(logger, cilium, namespace, filter, last, showUnchanged, replaceExisting, g, flows, failOnDropped, failOnAllowed, minFlows, start, target)
+		run, err := judgeGroup(logger, core, cilium, namespace, filter, last, showUnchanged, replaceExisting, g, flows, failOnDropped, failOnAllowed, failOnL7, minFlows, start, target)
 		if err != nil {
 			return nil, err
 		}
@@ -370,8 +402,8 @@ func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, co
 	return runs, nil
 }
 
-func judgeGroup(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, g candidateGroup, flows []*flowpb.Flow, failOnDropped, failOnAllowed bool, minFlows int, start time.Time, target kubeTarget) (*groupRun, error) {
-	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, g.rules, replaceExisting)
+func judgeGroup(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, g candidateGroup, flows []*flowpb.Flow, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int, start time.Time, target kubeTarget) (*groupRun, error) {
+	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, core, cilium, namespace, g.rules, replaceExisting)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", g.label, err)
 	}
@@ -383,9 +415,10 @@ func judgeGroup(logger *slog.Logger, cilium ciliumclient.Interface, namespace st
 	comp.candidateRuleCount = len(g.rules)
 	comp.baselineRuleCount = baselineRuleCount
 	comp.skippedPolicies = skipped
+	comp.warnings = candidateWarnings(g.rules)
 	comp.elapsed = time.Since(start)
 	comp.target = target
-	return &groupRun{label: g.label, comp: comp, replaced: replaced, code: verdictExitCode(comp.counts, failOnDropped, failOnAllowed, minFlows)}, nil
+	return &groupRun{label: g.label, comp: comp, replaced: replaced, code: verdictExitCode(comp.counts, failOnDropped, failOnAllowed, failOnL7, minFlows)}, nil
 }
 
 // cliMultiOutput is --format json when more than one policy was judged.
