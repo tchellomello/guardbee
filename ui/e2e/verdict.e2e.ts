@@ -123,6 +123,62 @@ test.describe('Verdict tab', () => {
     await expect(page.getByTestId('verdict-warning')).toHaveText(warning)
   })
 
+  test('Edit in Policy Editor opens the candidate there', async ({ page }) => {
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    await form.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await page.getByRole('button', { name: '✎ Edit in Policy Editor' }).click()
+
+    await expect(page.getByRole('button', { name: 'Policy Editor', exact: true })).toHaveClass(/bg-signal/)
+    const yaml = page.locator('pre:visible').first()
+    await expect(yaml).toContainText('name: postgres-allow-webapp')
+    await expect(yaml).toContainText('port: "5432"')
+  })
+
+  test('Edit in Policy Editor refuses what the editor would lose, and keeps the text', async ({ page }) => {
+    // /api/policy/parse runs for real: L7 rules and several documents can't
+    // live in the single-policy, port-only editor.
+    const l7 = LOOKS_CORRECT_CNP.replace('              protocol: TCP\n', '              protocol: TCP\n          rules:\n            http:\n              - method: GET\n')
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    const ta = form.locator('textarea')
+    const edit = page.getByRole('button', { name: '✎ Edit in Policy Editor' })
+
+    await ta.fill(l7)
+    await edit.click()
+    await expect(page.getByTestId('edit-in-editor-error')).toContainText('L7 HTTP/DNS rules')
+    await expect(page.getByRole('button', { name: 'Verdict', exact: true })).toHaveClass(/bg-signal/)
+    await expect(ta).toHaveValue(l7)
+
+    await ta.fill(LOOKS_CORRECT_CNP + '---\n' + LOOKS_CORRECT_CNP.replace('postgres-allow-webapp', 'second'))
+    // The earlier refusal was about other text: gone as soon as it changes.
+    await expect(page.getByTestId('edit-in-editor-error')).toHaveCount(0)
+    await edit.click()
+    await expect(page.getByTestId('edit-in-editor-error')).toContainText('holds 2 policies')
+  })
+
+  test('Edit in Policy Editor asks before replacing an unsaved draft', async ({ page }) => {
+    // A first candidate becomes the draft — unsaved, not blank.
+    await openTab(page, 'Verdict')
+    const ta = visibleForm(page).locator('textarea')
+    await ta.fill(LOOKS_CORRECT_CNP)
+    await page.getByRole('button', { name: '✎ Edit in Policy Editor' }).click()
+    await expect(page.getByRole('button', { name: 'Policy Editor', exact: true })).toHaveClass(/bg-signal/)
+    await page.getByRole('button', { name: 'Verdict', exact: true }).click()
+    await ta.fill(LOOKS_CORRECT_CNP.replace('postgres-allow-webapp', 'second'))
+
+    const dialogs: string[] = []
+    page.on('dialog', (d) => {
+      dialogs.push(d.message())
+      void d.dismiss()
+    })
+    await page.getByRole('button', { name: '✎ Edit in Policy Editor' }).click()
+    await expect.poll(() => dialogs.length).toBeGreaterThan(0)
+    expect(dialogs[0]).toContain('Replace the current (unsaved) Policy Editor draft')
+    // Dismissed: stay on Verdict.
+    await expect(page.getByRole('button', { name: 'Verdict', exact: true })).toHaveClass(/bg-signal/)
+  })
+
   test('filters ride along in the verdict request', async ({ page, cluster }) => {
     await openTab(page, 'Verdict')
     const form = visibleForm(page)
