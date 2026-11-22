@@ -363,12 +363,14 @@ guardbee ui --enable-probes
 ```
 
 In **Verdict**, paste `lab/candidates/looks-correct.yaml` as the candidate,
-then expand **Connectivity tests**:
+tick **All namespaces** and **Run verdict**. Connectivity tests live in the
+run's card and test that run's candidate, so expand **Connectivity tests**
+there:
 
 1. **Probe image** — pick **BusyBox 1.37**. It's one of the built-in vetted
    images, pinned by digest, and only does TCP, so UDP is greyed out.
-2. Tick **All namespaces**, set **Source namespace** to `observability`,
-   and pick the `prometheus-…` Pod.
+2. Set **Source namespace** to `observability` and pick the
+   `prometheus-…` Pod.
 3. **Host or IP** `postgres.postgres.svc.cluster.local`, **Port** `9187`.
 4. **Review & run connection test**, then confirm.
 

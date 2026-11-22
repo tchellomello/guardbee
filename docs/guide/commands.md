@@ -8,7 +8,7 @@ description: GuardBee's subcommands — policies, flows, blame, verdict, ui, and
 
 All of these are read-only against the cluster by default. Explicitly opted-in
 UI connectivity tests in Verdict append ephemeral containers to generate TCP/UDP
-traffic for the loaded candidate; see [Connectivity tests](tcp-probes.html).
+traffic for a verdict run's candidate; see [Connectivity tests](tcp-probes.html).
 
 ## `policies`
 
