@@ -119,7 +119,12 @@ echo "=== lab-validate: merge-ready.yaml must pass clean (exit 0) ==="
 expect_verdict lab/candidates/merge-ready.yaml 0
 echo
 echo "=== lab-validate: an HTTP rule on the Prometheus scrape is L7_CHANGED (exit 5) ==="
-expect_verdict examples/postgres-metrics-http-only.yaml 5 --fail-on-l7
+# Narrowed to the scrape itself: in an unfiltered 50-flow sample the
+# webapp pg_isready loop and kubelet probes can crowd every scrape out, and
+# an empty-of-scrapes sample would read as a pass. With the filter, too few
+# scrapes yet is exit 3, which expect_verdict retries.
+expect_verdict examples/postgres-metrics-http-only.yaml 5 --fail-on-l7 \
+	--from-label k8s:app=prometheus --to-port 9187
 
 echo
 echo "=== lab-validate: connectivity tests with the built-in probe images ==="
