@@ -285,6 +285,7 @@ export function VerdictPanel({
           row?: VerdictRow
           counts: VerdictResponse['counts']
           skippedPolicies?: string[]
+          warnings?: string[]
           baselineRuleCount?: number
           candidateRuleCount?: number
           context?: string
@@ -314,6 +315,7 @@ export function VerdictPanel({
                 context: payload.context ?? prev.context,
                 apiServer: payload.apiServer ?? prev.apiServer,
                 skippedPolicies: payload.skippedPolicies ?? prev.skippedPolicies,
+                warnings: payload.warnings ?? prev.warnings,
               },
             }
           })
@@ -847,6 +849,11 @@ function RunCard({
 
       {!run.isCollapsed && (
         <div className="space-y-5">
+          {result.warnings?.map((w) => (
+            <div key={w} data-testid="verdict-warning" className="border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-xs text-ink-dim">
+              {w}
+            </div>
+          ))}
           {result.skippedPolicies && result.skippedPolicies.length > 0 && (
             <div className="border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-xs text-ink-dim">
               {result.skippedPolicies.length} live policy(ies) not simulated — they use fromNodes/toNodes, which Hubble

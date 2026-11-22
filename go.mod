@@ -7,6 +7,8 @@ require (
 	github.com/cilium/cilium v1.20.4
 	github.com/cilium/dns v1.1.51-0.20240603182237-af788769786a
 	github.com/cilium/hive v1.0.4
+	github.com/cilium/proxy v0.0.0-20260701124752-9c14fdc485a1
+	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/term v0.46.0
 	google.golang.org/grpc v1.83.2
@@ -24,7 +26,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cilium/ebpf v0.22.0 // indirect
 	github.com/cilium/lumberjack/v2 v2.4.2 // indirect
-	github.com/cilium/proxy v0.0.0-20260701124752-9c14fdc485a1 // indirect
 	github.com/cilium/statedb v0.8.4 // indirect
 	github.com/cilium/stream v0.0.1 // indirect
 	github.com/cilium/workerpool v1.4.0 // indirect
@@ -35,7 +36,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
-	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect

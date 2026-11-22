@@ -189,6 +189,25 @@ test.describe('Flows tab', () => {
     expect([q.get('kind'), q.get('namespace'), q.get('name')]).toEqual(['CiliumNetworkPolicy', 'postgres', 'postgres-allow-webapp'])
   })
 
+  test('the L7 filters reach Hubble as query parameters', async ({ page, cluster }) => {
+    await openTab(page, 'Flows')
+    const form = visibleForm(page)
+    await form.locator('summary', { hasText: 'Filters' }).click()
+    await form.getByRole('button', { name: 'L7 requests' }).click()
+    await expect(form.getByTitle(/Hubble event type/).locator('select')).toHaveValue('l7')
+    await form.getByPlaceholder('/api/.*').fill('/v{1,2}/users')
+    await form.getByPlaceholder('5+').fill('403')
+    await form.getByPlaceholder('api.github.com').fill('api.github.com')
+    await page.getByRole('button', { name: 'Fetch flows' }).click()
+
+    await expect.poll(() => cluster.flowQueries().length).toBeGreaterThan(0)
+    const q = cluster.flowQueries().at(-1)!
+    expect(q.getAll('type')).toEqual(['l7'])
+    expect(q.getAll('httpPath')).toEqual(['/v{1,2}/users']) // a regex stays whole
+    expect(q.getAll('httpStatus')).toEqual(['403'])
+    expect(q.getAll('toFqdn')).toEqual(['api.github.com'])
+  })
+
   test('the either-side pod and event type filters reach Hubble', async ({ page, cluster }) => {
     await openTab(page, 'Flows')
     const form = visibleForm(page)

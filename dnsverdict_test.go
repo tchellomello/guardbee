@@ -42,7 +42,7 @@ func dnsQueryFlow(query string) *flowpb.Flow {
 		Source:      &flowpb.Endpoint{Identity: uint32(l7FrontendNID)},
 		Destination: &flowpb.Endpoint{Identity: uint32(l7BackendNID)},
 		L4:          &flowpb.Layer4{Protocol: &flowpb.Layer4_UDP{UDP: &flowpb.UDP{DestinationPort: 53}}},
-		L7: &flowpb.Layer7{Type: flowpb.L7FlowType_REQUEST, Record: &flowpb.Layer7_Dns{Dns: &flowpb.DNS{Query: query}}},
+		L7:          &flowpb.Layer7{Type: flowpb.L7FlowType_REQUEST, Record: &flowpb.Layer7_Dns{Dns: &flowpb.DNS{Query: query}}},
 	}
 }
 
@@ -132,5 +132,31 @@ func TestDNSGeneratePattern(t *testing.T) {
 		if got := dnsGeneratePattern(&policy.PerSelectorPolicy{L7Rules: api.L7Rules{DNS: c.rules}}); got != c.want {
 			t.Errorf("%+v: want %q, got %q", c.rules, c.want, got)
 		}
+	}
+}
+
+func TestCandidateWarningsFQDNWithoutDNS(t *testing.T) {
+	fqdnOnly := &api.Rule{
+		EndpointSelector: api.NewESFromLabels(labels.ParseSelectLabel("role=frontend")),
+		Egress:           []api.EgressRule{{ToFQDNs: api.FQDNSelectorSlice{{MatchName: "api.github.com"}}}},
+	}
+	got := candidateWarnings(api.Rules{fqdnOnly})
+	if len(got) != 1 || !strings.Contains(got[0], "toFQDNs") || !strings.Contains(got[0], "rules.dns") {
+		t.Fatalf("toFQDNs without a DNS rule: want one warning, got %v", got)
+	}
+	// The same candidate carrying its DNS rule: nothing to warn about.
+	if got := candidateWarnings(api.Rules{fqdnOnly, frontendDNSRule(t, "*")}); len(got) != 0 {
+		t.Fatalf("with a DNS rule: want no warning, got %v", got)
+	}
+	// No toFQDNs at all: nothing to warn about.
+	if got := candidateWarnings(api.Rules{backendHTTPRule(t, api.PortRuleHTTP{Path: "/"})}); len(got) != 0 {
+		t.Fatalf("no toFQDNs: want no warning, got %v", got)
+	}
+
+	var md strings.Builder
+	comp := &verdictComputation{counts: &verdictCounts{}, warnings: candidateWarnings(api.Rules{fqdnOnly})}
+	writeVerdictMarkdown(&md, comp, "c.yaml", nil, 0, 0)
+	if !strings.Contains(md.String(), "- Warning: ") {
+		t.Fatalf("markdown must carry the warning:\n%s", md.String())
 	}
 }

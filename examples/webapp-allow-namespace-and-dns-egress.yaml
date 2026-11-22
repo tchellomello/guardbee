@@ -8,8 +8,8 @@
 # looking completely reasonable in isolation.
 #
 # `guardbee verdict` judges egress at the source, so flows this policy
-# newly blocks show as NEWLY_DROPPED; FQDN (L7) egress stays NOT_SIMULATED
-# (see docs/guide/how-it-works.html's "Known v1 simplifications").
+# newly blocks show as NEWLY_DROPPED (see docs/guide/how-it-works.html's
+# "Known v1 simplifications" for how L7 and toFQDNs rules are judged).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

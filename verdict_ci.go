@@ -70,7 +70,7 @@ func judgedFlows(c *verdictCounts) int {
 // a NEWLY_DROPPED, NEWLY_ALLOWED or L7_CHANGED row is a finding even if few
 // flows were judged. Dropped outranks allowed — breaking traffic is the
 // worse news — and both outrank L7_CHANGED, which may or may not break
-// anything (its HTTP requests are not judged).
+// anything (a connection-level flow, no request to judge).
 func verdictExitCode(c *verdictCounts, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int) int {
 	if failOnDropped && c.newlyDropped > 0 {
 		return exitVerdictDropped
@@ -161,6 +161,7 @@ func toVerdictResponse(comp *verdictComputation) verdictResponse {
 		Counts:             toCountsOut(comp.counts),
 		Rows:               make([]verdictRowOut, len(comp.rows)),
 		SkippedPolicies:    comp.skippedPolicies,
+		Warnings:           comp.warnings,
 		Context:            comp.target.context,
 		APIServer:          comp.target.apiServer,
 	}
@@ -239,6 +240,9 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 	}
 	for _, r := range replaced {
 		fmt.Fprintf(w, "- Replaces live %s\n", r)
+	}
+	for _, msg := range comp.warnings {
+		fmt.Fprintf(w, "- Warning: %s\n", msg)
 	}
 	for _, s := range comp.skippedPolicies {
 		fmt.Fprintf(w, "- Live policy not simulated (fromNodes/toNodes): %s\n", s)
@@ -389,7 +393,7 @@ func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, co
 	}
 	var runs []groupRun
 	for _, g := range groups {
-		run, err := judgeGroup(logger, cilium, namespace, filter, last, showUnchanged, replaceExisting, g, flows, failOnDropped, failOnAllowed, failOnL7, minFlows, start, target)
+		run, err := judgeGroup(logger, core, cilium, namespace, filter, last, showUnchanged, replaceExisting, g, flows, failOnDropped, failOnAllowed, failOnL7, minFlows, start, target)
 		if err != nil {
 			return nil, err
 		}
@@ -398,8 +402,8 @@ func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, co
 	return runs, nil
 }
 
-func judgeGroup(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, g candidateGroup, flows []*flowpb.Flow, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int, start time.Time, target kubeTarget) (*groupRun, error) {
-	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, g.rules, replaceExisting)
+func judgeGroup(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, g candidateGroup, flows []*flowpb.Flow, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int, start time.Time, target kubeTarget) (*groupRun, error) {
+	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, core, cilium, namespace, g.rules, replaceExisting)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", g.label, err)
 	}
@@ -411,6 +415,7 @@ func judgeGroup(logger *slog.Logger, cilium ciliumclient.Interface, namespace st
 	comp.candidateRuleCount = len(g.rules)
 	comp.baselineRuleCount = baselineRuleCount
 	comp.skippedPolicies = skipped
+	comp.warnings = candidateWarnings(g.rules)
 	comp.elapsed = time.Since(start)
 	comp.target = target
 	return &groupRun{label: g.label, comp: comp, replaced: replaced, code: verdictExitCode(comp.counts, failOnDropped, failOnAllowed, failOnL7, minFlows)}, nil

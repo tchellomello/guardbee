@@ -108,7 +108,7 @@ func TestReplaceExistingDetectsNarrowedPolicy(t *testing.T) {
 
 	judge := func(replace bool, f *flowpb.Flow) (string, []string) {
 		t.Helper()
-		_, _, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cs, "alpha", candidateRules, replace)
+		_, _, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, nil, cs, "alpha", candidateRules, replace)
 		if err != nil {
 			t.Fatalf("buildVerdictEnginesWith(replace=%v): %v", replace, err)
 		}
@@ -429,7 +429,7 @@ func TestJudgeGroupPerPolicyWorstExitCode(t *testing.T) {
 
 	var runs []groupRun
 	for _, g := range groups {
-		run, err := judgeGroup(logger, cs, "alpha", flowFilter{}, 50, false, true, g, flows, true, false, false, 0, time.Now(), kubeTarget{})
+		run, err := judgeGroup(logger, nil, cs, "alpha", flowFilter{}, 50, false, true, g, flows, true, false, false, 0, time.Now(), kubeTarget{})
 		if err != nil {
 			t.Fatalf("judgeGroup(%s): %v", g.label, err)
 		}

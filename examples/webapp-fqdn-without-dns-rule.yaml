@@ -1,0 +1,33 @@
+# toFQDNs that can never work: Cilium learns which IPs api.github.com has
+# from the DNS answers its DNS proxy sees, and this policy sends no DNS
+# through the proxy (no egress rule with rules.dns). Cilium accepts it, and
+# the toFQDNs rule silently matches nothing. guardbee warns about it
+# (stderr, the UI's run card, the markdown summary). Not an error: another
+# live policy may already send this workload's DNS through the proxy, e.g. a
+# cluster-wide one allowing DNS for every pod.
+#
+#   guardbee verdict -n webapp examples/webapp-fqdn-without-dns-rule.yaml
+#
+# It also selects webapp for egress, so everything else webapp sends (its
+# DNS lookups and the postgres connection) becomes NEWLY_DROPPED too.
+#
+# The fix is an egress rule to kube-dns on port 53 with
+# `rules: {dns: [{matchPattern: "*"}]}` in the same policy (see
+# examples/webapp-dns-single-label-wildcard.yaml for the shape, and its
+# wildcard caveat).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: webapp-egress-github
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: webapp
+  egress:
+    - toFQDNs:
+        - matchName: api.github.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

@@ -112,6 +112,17 @@ test.describe('Verdict tab', () => {
     await expect(dns.getByRole('button', { name: /Allow \/ Deny/ })).toHaveCount(0)
   })
 
+  test('a candidate warning (toFQDNs without rules.dns) is shown on the run', async ({ page }) => {
+    const warning = 'CiliumNetworkPolicy webapp/egress uses toFQDNs, but the candidate has no egress rule with rules.dns'
+    await page.route('**/api/verdict', (r) => r.fulfill({ json: { ...VERDICT, warnings: [warning] } }))
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    await form.locator('input').first().fill('postgres')
+    await form.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await page.getByRole('button', { name: 'Run verdict', exact: true }).click()
+    await expect(page.getByTestId('verdict-warning')).toHaveText(warning)
+  })
+
   test('filters ride along in the verdict request', async ({ page, cluster }) => {
     await openTab(page, 'Verdict')
     const form = visibleForm(page)

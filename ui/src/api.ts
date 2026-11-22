@@ -67,6 +67,9 @@ export interface VerdictResponse {
   rows: VerdictRow[]
   // Live baseline policies the engine couldn't load (fromNodes/toNodes), see fetchBaselineRules in policies.go.
   skippedPolicies?: string[]
+  // Candidate constructs that can't work as written (candidateWarnings in
+  // dnsverdict.go), e.g. toFQDNs without any rules.dns.
+  warnings?: string[]
   // The kubeconfig context and API server this verdict judged (see kubeTarget in kube.go).
   context?: string
   apiServer?: string

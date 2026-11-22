@@ -15,6 +15,7 @@ package main
 // a Cilium bump that changes either fails CI instead of drifting silently.
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"github.com/cilium/cilium/pkg/fqdn/matchpattern"
 	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/policy"
+	"github.com/cilium/cilium/pkg/policy/api"
 )
 
 // dnsQueryVerdict answers, for a query from the endpoint epp was distilled
@@ -35,26 +37,11 @@ import (
 // proxy, so its query is allowed by definition (judged, allowed). Whether
 // the connection itself is allowed at L4 is the caller's isEgressAllowed.
 func dnsQueryVerdict(epp *policy.EndpointPolicy, key policy.Key, server identity.NumericIdentity, qname string) (allowed, judged bool) {
-	entry, _, found := epp.Lookup(key)
-	if !found || !entry.IsAllow() || !entry.IsRedirectEntry() {
+	filter, redirected := redirectFilter(epp, key)
+	if !redirected {
 		return true, true
 	}
-	// The agent opens one redirect per L4Filter and loads that filter's
-	// PerSelectorPolicies into the proxy (pkg/proxy: UpdateRules(
-	// l4.GetPerSelectorPolicies())). Find the one for this exact port.
-	var filter *policy.L4Filter
-	for f := range epp.SelectorPolicy.L4Policy.Egress.Filters() {
-		if f.U8Proto != key.Nexthdr || f.Port != key.DestPort || f.EndPort != 0 {
-			continue
-		}
-		if filter != nil {
-			// shortcut: several tiers each holding a port filter; which one
-			// the datapath redirects to isn't modelled. Upgrade if seen live.
-			return false, false
-		}
-		filter = f
-	}
-	if filter == nil || !isDNSFilter(filter) {
+	if filter == nil || !filterHasParser(filter, policy.ParserTypeDNS) {
 		// Redirected through a port range, or to Envoy rather than the DNS
 		// proxy: a DNS record we can't tie to the DNS proxy's rules.
 		return false, false
@@ -62,9 +49,41 @@ func dnsQueryVerdict(epp *policy.EndpointPolicy, key policy.Key, server identity
 	return dnsCheckAllowed(filter.GetPerSelectorPolicies(), server, qname), true
 }
 
-func isDNSFilter(f *policy.L4Filter) bool {
+// redirectFilter returns the L4Filter whose rules the proxy enforces for
+// key's traffic. redirected is false when Cilium's own MapState entry for
+// key is not a proxy redirect (the request never reaches a proxy). filter
+// is nil when redirected but the filter can't be told unambiguously.
+//
+// The agent opens one redirect per L4Filter and loads that filter's
+// PerSelectorPolicies into the proxy (pkg/proxy: UpdateRules(
+// l4.GetPerSelectorPolicies())), so this looks for the filter on this
+// exact port.
+func redirectFilter(epp *policy.EndpointPolicy, key policy.Key) (filter *policy.L4Filter, redirected bool) {
+	entry, _, found := epp.Lookup(key)
+	if !found || !entry.IsAllow() || !entry.IsRedirectEntry() {
+		return nil, false
+	}
+	dir := &epp.SelectorPolicy.L4Policy.Egress
+	if key.IsIngress() {
+		dir = &epp.SelectorPolicy.L4Policy.Ingress
+	}
+	for f := range dir.Filters() {
+		if f.U8Proto != key.Nexthdr || f.Port != key.DestPort || f.EndPort != 0 {
+			continue
+		}
+		if filter != nil {
+			// shortcut: several tiers each holding a port filter; which one
+			// the datapath redirects to isn't modelled. Upgrade if seen live.
+			return nil, true
+		}
+		filter = f
+	}
+	return filter, true
+}
+
+func filterHasParser(f *policy.L4Filter, parser policy.L7ParserType) bool {
 	for _, psp := range f.PerSelectorPolicies {
-		if psp != nil && psp.GetL7Parser() == policy.ParserTypeDNS {
+		if psp != nil && psp.GetL7Parser() == parser {
 			return true
 		}
 	}
@@ -131,4 +150,42 @@ func dnsRegex(pattern string) (*regexp.Regexp, error) {
 	}
 	dnsRegexes.Store(pattern, re)
 	return re, nil
+}
+
+// candidateWarnings flags candidate constructs Cilium accepts but that
+// can't work as written. Today: toFQDNs with no DNS rule anywhere in the
+// candidate. Cilium only learns a name's IPs from DNS answers its DNS
+// proxy sees, i.e. from traffic behind a rules.dns egress rule, and Parse()
+// doesn't require one, so such a toFQDNs silently matches nothing. A
+// warning, not an error: the DNS rule often lives in another live policy
+// (e.g. a cluster-wide one allowing DNS for every pod), which a candidate
+// file alone can't show.
+func candidateWarnings(rules api.Rules) []string {
+	var fqdnPolicies []string
+	seen := map[string]bool{}
+	hasDNSRule := false
+	for _, r := range rules {
+		for _, eg := range r.Egress {
+			for _, pr := range eg.ToPorts {
+				if pr.Rules != nil && len(pr.Rules.DNS) > 0 {
+					hasDNSRule = true
+				}
+			}
+			if len(eg.ToFQDNs) == 0 {
+				continue
+			}
+			name := "candidate"
+			if _, display, ok := policyOf(r); ok {
+				name = display
+			}
+			if !seen[name] {
+				seen[name] = true
+				fqdnPolicies = append(fqdnPolicies, name)
+			}
+		}
+	}
+	if hasDNSRule || len(fqdnPolicies) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s uses toFQDNs, but the candidate has no egress rule with rules.dns: unless another live policy sends this workload's DNS through Cilium's DNS proxy, toFQDNs never learns the names' IPs and matches nothing", strings.Join(fqdnPolicies, ", "))}
 }

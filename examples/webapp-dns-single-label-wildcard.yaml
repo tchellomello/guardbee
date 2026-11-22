@@ -1,0 +1,45 @@
+# A classic DNS-policy mistake. `*` in a Cilium matchPattern matches ONE
+# DNS label, so "*.cluster.local" does not match webapp's own lookup of
+# postgres.postgres.svc.cluster.local — Cilium's DNS proxy refuses it and
+# the app can no longer resolve its database. "**.cluster.local" (several
+# labels) is what was meant. Built for the self-paced Lab.
+#
+#   guardbee verdict -n webapp examples/webapp-dns-single-label-wildcard.yaml
+#
+# On a fresh Lab webapp's DNS doesn't go through the DNS proxy yet, so
+# Hubble has no DNS records and the change shows as L7_CHANGED (port 53
+# newly behind DNS rules). Once any policy sends webapp's DNS through the
+# proxy (rules.dns with matchPattern "*"), each recorded query is judged
+# the way the DNS proxy would: this candidate makes the postgres lookup
+# NEWLY_DROPPED, naming the query.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: webapp-egress
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: webapp
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*.cluster.local"
+    - toEndpoints:
+        - matchLabels:
+            app: postgres
+            io.kubernetes.pod.namespace: postgres
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

@@ -326,6 +326,10 @@ type flowFilterParams struct {
 	Verdict    []string `json:"verdict,omitempty"`
 	DropReason []string `json:"dropReason,omitempty"`
 	Type       []string `json:"type,omitempty"`
+	HTTPMethod []string `json:"httpMethod,omitempty"`
+	HTTPPath   []string `json:"httpPath,omitempty"`
+	HTTPStatus []string `json:"httpStatus,omitempty"`
+	ToFQDN     []string `json:"toFqdn,omitempty"`
 }
 
 func flowFilterParamsFromQuery(q url.Values) flowFilterParams {
@@ -334,6 +338,7 @@ func flowFilterParamsFromQuery(q url.Values) flowFilterParams {
 		FromPod: q["fromPod"], FromLabel: q["fromLabel"], FromIP: q["fromIp"],
 		ToPod: q["toPod"], ToService: q["toService"], ToLabel: q["toLabel"], ToIP: q["toIp"], ToPort: q["toPort"],
 		Verdict: q["verdict"], DropReason: q["dropReason"], Type: q["type"],
+		HTTPMethod: q["httpMethod"], HTTPPath: q["httpPath"], HTTPStatus: q["httpStatus"], ToFQDN: q["toFqdn"],
 	}
 }
 
@@ -358,6 +363,7 @@ func (p flowFilterParams) filter(namespace string) (flowFilter, error) {
 			fromPods: clean(p.FromPod), fromLabels: clean(p.FromLabel), fromIPs: clean(p.FromIP),
 			toPods: clean(p.ToPod), toServices: clean(p.ToService), toLabels: clean(p.ToLabel),
 			toIPs: clean(p.ToIP), toPorts: clean(p.ToPort), types: clean(p.Type),
+			httpMethods: clean(p.HTTPMethod), httpPaths: clean(p.HTTPPath), httpStatuses: clean(p.HTTPStatus), toFQDNs: clean(p.ToFQDN),
 		},
 		verdicts:    clean(p.Verdict),
 		dropReasons: clean(p.DropReason),
@@ -406,8 +412,9 @@ type verdictRowOut struct {
 	// L7Baseline/L7Candidate: see verdictRow.l7Baseline/l7Candidate.
 	L7Baseline  string `json:"l7Baseline,omitempty"`
 	L7Candidate string `json:"l7Candidate,omitempty"`
-	// L7Request: see verdictRow.l7Request.
+	// L7Request/L7Judge: see verdictRow.l7Request/l7Judge.
 	L7Request string `json:"l7Request,omitempty"`
+	L7Judge   string `json:"l7Judge,omitempty"`
 }
 
 type verdictResponse struct {
@@ -419,6 +426,9 @@ type verdictResponse struct {
 	Counts             verdictCountsOut `json:"counts"`
 	Rows               []verdictRowOut  `json:"rows"`
 	SkippedPolicies    []string         `json:"skippedPolicies,omitempty"`
+	// Warnings: candidate constructs that can't work as written
+	// (candidateWarnings).
+	Warnings []string `json:"warnings,omitempty"`
 	// Context/APIServer: the cluster this verdict judged (see kubeTarget).
 	// Stamped on every result rather than served once per page, so stacked
 	// UI runs stay labeled correctly if the server restarts on another context.
@@ -497,6 +507,7 @@ func toRowOut(row *verdictRow, count int) verdictRowOut {
 		L7Baseline:         row.l7Baseline,
 		L7Candidate:        row.l7Candidate,
 		L7Request:          row.l7Request,
+		L7Judge:            row.l7Judge,
 	}
 }
 
@@ -511,7 +522,9 @@ type verdictStreamEvent struct {
 	Row    *verdictRowOut   `json:"row,omitempty"`
 	Counts verdictCountsOut `json:"counts"`
 	// SkippedPolicies is set only on the first event, before any flow.
-	SkippedPolicies   []string `json:"skippedPolicies,omitempty"`
+	SkippedPolicies []string `json:"skippedPolicies,omitempty"`
+	// Warnings: see verdictResponse.Warnings; first event only.
+	Warnings          []string `json:"warnings,omitempty"`
 	BaselineRuleCount int      `json:"baselineRuleCount,omitempty"`
 	// CandidateRuleCount is set only on the first event, like BaselineRuleCount.
 	CandidateRuleCount int `json:"candidateRuleCount,omitempty"`
@@ -562,7 +575,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(s.logger, s.cilium, namespace, candidateRules, replaceExisting)
+	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(s.logger, s.core, s.cilium, namespace, candidateRules, replaceExisting)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -579,7 +592,7 @@ func (s *uiServer) handleVerdictStream(w http.ResponseWriter, r *http.Request) {
 	counts := &verdictCounts{}
 	// First event carries what the baseline load knows (rule count, skipped
 	// policies) so the UI can show it before the first flow arrives.
-	if first, err := json.Marshal(verdictStreamEvent{Counts: toCountsOut(counts), BaselineRuleCount: baselineRuleCount, CandidateRuleCount: len(candidateRules), SkippedPolicies: skipped, Context: s.target.context, APIServer: s.target.apiServer}); err == nil {
+	if first, err := json.Marshal(verdictStreamEvent{Counts: toCountsOut(counts), BaselineRuleCount: baselineRuleCount, CandidateRuleCount: len(candidateRules), SkippedPolicies: skipped, Warnings: candidateWarnings(candidateRules), Context: s.target.context, APIServer: s.target.apiServer}); err == nil {
 		fmt.Fprintf(w, "data: %s\n\n", first)
 		flusher.Flush()
 	}

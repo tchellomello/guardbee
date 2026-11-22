@@ -141,10 +141,17 @@ func TestJudgeFlowHubbleL7Records(t *testing.T) {
 	resp.L7 = &flowpb.Layer7{Type: flowpb.L7FlowType_RESPONSE, Record: &flowpb.Layer7_Http{Http: &flowpb.HTTP{Code: 200}}}
 
 	counts := &verdictCounts{}
-	// Candidate drops the live L7 policy entirely: no CNP left -> default allow.
-	row := judgeFlow(slog.Default(), base, cand, req, counts, false)
-	if row == nil || row.change != "L7_CHANGED" {
-		t.Fatalf("L7 request record must be judged on its L4 tuple: want L7_CHANGED, got %+v (counts %+v)", row, counts)
+	// Candidate drops the live L7 policy entirely: no CNP left -> default
+	// allow. The recorded request matched today's rule, so it's unchanged;
+	// one today's rule 403s is newly allowed (httpverdict.go).
+	if row := judgeFlow(slog.Default(), base, cand, req, counts, false); row != nil {
+		t.Fatalf("GET /healthz is allowed either way: want UNCHANGED, got %+v (counts %+v)", row, counts)
+	}
+	admin := tcp80Flow(l7FrontendNID)
+	admin.L7 = &flowpb.Layer7{Type: flowpb.L7FlowType_REQUEST, Record: &flowpb.Layer7_Http{Http: &flowpb.HTTP{Method: "POST", Url: "http://backend/admin"}}}
+	row := judgeFlow(slog.Default(), base, cand, admin, counts, false)
+	if row == nil || row.change != "NEWLY_ALLOWED" || row.l7Judge != "guardbee" {
+		t.Fatalf("POST /admin was 403'd by today's rule: want NEWLY_ALLOWED judged by guardbee, got %+v", row)
 	}
 	if row := judgeFlow(slog.Default(), base, cand, resp, counts, false); row != nil {
 		t.Fatalf("L7 response record: want skipped, got %+v", row)

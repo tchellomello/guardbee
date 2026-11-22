@@ -117,8 +117,8 @@ Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the
       `L7_CHANGED`, not a false drop
 - [x] DNS query verdicts — each DNS query Hubble recorded is judged against
       the candidate's DNS rules (Cilium's own matchpattern semantics)
-- [ ] HTTP request verdicts — judge Hubble's HTTP records against the
-      candidate's HTTP rules
+- [x] HTTP request verdicts — each HTTP request Hubble recorded is judged
+      against the exact Envoy rules Cilium generates (matched by GuardBee)
 - [ ] `fromNodes`/`toNodes` policies — today a live policy using them is
       skipped and named in the UI banner / CLI warning, not simulated
       (Hubble flows carry no node labels to match them against)

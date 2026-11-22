@@ -155,7 +155,7 @@ export function VerdictHelpModal({ isOpen, onClose, initialCategory }: VerdictHe
                 The connection is <strong className="text-l7">ALLOWED</strong> at L4 either way, but the L7 proxy (Envoy for HTTP, the DNS proxy for DNS) would check its requests against different rules — added, removed or changed.
               </p>
               <p className="mt-1 text-ink-dim text-[0.7rem] leading-relaxed">
-                DNS queries Hubble recorded are judged one by one and show up as newly dropped or allowed, naming the query. HTTP requests are not judged yet: one the new rules don't match gets an HTTP 403. Compare the rules shown under each row.
+                DNS queries Hubble recorded are judged one by one and show up as newly dropped or allowed, naming the query. HTTP requests are judged the same way against the exact Envoy rules Cilium generates, marked "matched by GuardBee, not Envoy" because Envoy's own matching is C++. A flow with no request record keeps this L7 CHANGED row: compare the rules shown under it.
               </p>
             </div>
 

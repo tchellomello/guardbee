@@ -1,0 +1,51 @@
+# The Lab's merge-ready policy, tightened at L7: Prometheus may only
+# `GET /metrics` from the postgres-exporter sidecar, instead of anything on
+# port 9187. Built for the self-paced Lab (docs/guide/lab.md).
+#
+#   guardbee verdict -n postgres --fail-on-l7 examples/postgres-metrics-http-only.yaml
+#
+# On a fresh Lab (no live policy) the scrape is still allowed at L4, but now
+# goes through Envoy under an HTTP rule: L7_CHANGED, with the rule named
+# ([L7 no L7 rules → ingress: HTTP GET /metrics]), and --fail-on-l7 exits 5.
+# Its requests can't be judged yet: Hubble only records HTTP for traffic
+# already behind the proxy. Once a policy like this is live, every recorded
+# request is judged against the next candidate (NEWLY_DROPPED for a request
+# its rules would 403, "matched by GuardBee, not Envoy"). Note Cilium's path
+# rule is a full-match regex on the path *including* the query string, so
+# /metrics does not allow /metrics?debug=1.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-allow-webapp
+  namespace: postgres
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: webapp
+            io.kubernetes.pod.namespace: webapp
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app: prometheus
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
+          rules:
+            http:
+              - method: GET
+                path: /metrics
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

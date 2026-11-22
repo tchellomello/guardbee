@@ -204,10 +204,13 @@ Flags:
 		os.Exit(1)
 	}
 	groups := groupCandidates(docs, sources, perPolicy)
+	for _, w := range candidateWarnings(flattenCandidateRules(docs)) {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 
 	if follow {
 		g := groups[0] // --per-policy is rejected with --follow, so there is exactly one
-		baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, g.rules, replaceExisting)
+		baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, core, cilium, namespace, g.rules, replaceExisting)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 			os.Exit(1)
@@ -312,6 +315,7 @@ type verdictComputation struct {
 	rows                                  []*verdictRow
 	rowCounts                             []int    // seen-Nx count, same index as rows
 	skippedPolicies                       []string // live baseline policies the engine could not load, see fetchBaselineRules
+	warnings                              []string // candidateWarnings
 	// CLI only: wall clock of the whole run, set by runVerdict (0 = not
 	// measured). The UI times its runs browser-side instead, so its clock
 	// also covers a --follow-style stream that has no server-side end.
@@ -334,7 +338,7 @@ func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliu
 }
 
 func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, filter flowFilter, candidateRules api.Rules, last uint64, showUnchanged, replaceExisting bool) (*verdictComputation, error) {
-	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(logger, cilium, namespace, candidateRules, replaceExisting)
+	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(logger, core, cilium, namespace, candidateRules, replaceExisting)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +352,7 @@ func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cili
 	comp.candidateRuleCount = len(candidateRules)
 	comp.baselineRuleCount = baselineRuleCount
 	comp.skippedPolicies = skipped
+	comp.warnings = candidateWarnings(candidateRules)
 	return comp, nil
 }
 
@@ -362,8 +367,8 @@ func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cili
 // addIdentities), rather than pre-seeding from a bounded batch — that's
 // what lets --follow/streaming keep working correctly no matter how long it
 // runs or how many new identities show up over time.
-func buildVerdictEngines(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules) (baselineRuleCount int, skipped []string, baseline, candidate *verdictEngine, err error) {
-	baselineRuleCount, skipped, _, baseline, candidate, err = buildVerdictEnginesWith(logger, cilium, namespace, candidateRules, false)
+func buildVerdictEngines(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules) (baselineRuleCount int, skipped []string, baseline, candidate *verdictEngine, err error) {
+	baselineRuleCount, skipped, _, baseline, candidate, err = buildVerdictEnginesWith(logger, core, cilium, namespace, candidateRules, false)
 	return baselineRuleCount, skipped, baseline, candidate, err
 }
 
@@ -372,12 +377,16 @@ func buildVerdictEngines(logger *slog.Logger, cilium ciliumclient.Interface, nam
 // defines (same kind/namespace/name, see replaceSameNamePolicies) are left
 // out of the baseline+candidate engine only — the baseline engine always
 // keeps today's full live state. replaced names the policies dropped.
-func buildVerdictEnginesWith(logger *slog.Logger, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules, replaceExisting bool) (baselineRuleCount int, skipped, replaced []string, baseline, candidate *verdictEngine, err error) {
+func buildVerdictEnginesWith(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules, replaceExisting bool) (baselineRuleCount int, skipped, replaced []string, baseline, candidate *verdictEngine, err error) {
 	baselineRules, skipped, err := fetchBaselineRules(logger, cilium, namespace)
 	if err != nil {
 		return 0, nil, nil, nil, nil, fmt.Errorf("fetching baseline policy: %w", err)
 	}
-	return buildVerdictEnginesFromRules(logger, baselineRules, skipped, candidateRules, replaceExisting)
+	baselineRuleCount, skipped, replaced, baseline, candidate, err = buildVerdictEnginesFromRules(logger, baselineRules, skipped, candidateRules, replaceExisting)
+	if err == nil {
+		candidate.httpGate = newHTTPGate(core)
+	}
+	return baselineRuleCount, skipped, replaced, baseline, candidate, err
 }
 
 // Probes inspect one bounded, context-owned full policy inventory for
@@ -552,6 +561,10 @@ type verdictRow struct {
 	// ("DNS api.github.com."), "" for a connection-level row. Part of key():
 	// each query name is its own verdict.
 	l7Request string
+	// l7Judge is "guardbee" when the request verdict is GuardBee's own
+	// evaluation of Cilium's Envoy rules (HTTP), "" otherwise. Determined
+	// by l7Request, so not part of key().
+	l7Judge string
 }
 
 // l7Detail is the CLI's bracketed L7 note for a row, "" when neither side
@@ -716,9 +729,33 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 	// proxy would (dnsverdict.go), on the egress half, the only side Cilium
 	// accepts DNS rules on. A changed DNS rule set then yields a verdict on
 	// this query rather than L7_CHANGED.
-	var request string
-	dnsJudged := false
+	var request, judge string
+	dnsJudged, httpJudged := false, false
+	baseL7In, candL7In := l7RulesFor(baseEpp, key, srcNID), l7RulesFor(candEpp, key, srcNID)
 	baseL7Eg, candL7Eg := l7RulesFor(baseSrcEpp, egressKey, dstNID), l7RulesFor(candSrcEpp, egressKey, dstNID)
+	proxied := baseL7In != "" || candL7In != "" || baseL7Eg != "" || candL7Eg != ""
+	// An HTTP request record is judged against Cilium's Envoy rules on both
+	// halves (httpverdict.go); marked as GuardBee's match, since Envoy's
+	// own matching is C++.
+	if h := f.GetL7().GetHttp(); h != nil && proxied {
+		if reason := candidate.httpNotJudgedReason(); reason != "" {
+			request = "HTTP requests not judged: " + reason
+		} else if req, err := httpRequestFromHubble(h); err == nil {
+			bIn, bInOK := httpRequestVerdict(baseEpp, key, srcNID, req)
+			cIn, cInOK := httpRequestVerdict(candEpp, key, srcNID, req)
+			bEg, bEgOK := httpRequestVerdict(baseSrcEpp, egressKey, dstNID, req)
+			cEg, cEgOK := httpRequestVerdict(candSrcEpp, egressKey, dstNID, req)
+			if bInOK && cInOK && bEgOK && cEgOK {
+				httpJudged = true
+				request = "HTTP " + req.method + " " + req.path + " (matched by GuardBee, not Envoy)"
+				judge = "guardbee"
+				baseIn, candIn = baseIn && bIn, candIn && cIn
+				baseEg, candEg = baseEg && bEg, candEg && cEg
+			} else {
+				request = "HTTP " + req.method + " " + req.path + " not judged: rules outside what GuardBee models (see README)"
+			}
+		}
+	}
 	if q := f.GetL7().GetDns().GetQuery(); q != "" && (baseL7Eg != "" || candL7Eg != "") {
 		baseOK, baseJudged := dnsQueryVerdict(baseSrcEpp, egressKey, dstNID, q)
 		candOK, candJudged := dnsQueryVerdict(candSrcEpp, egressKey, dstNID, q)
@@ -733,8 +770,7 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 
 	// The L7 rules the proxy applies on each half, "" when not redirected.
 	// Only meaningful while L4 allows, so a both-denied flow stays UNCHANGED.
-	baseL7In, candL7In := l7RulesFor(baseEpp, key, srcNID), l7RulesFor(candEpp, key, srcNID)
-	l7Differs := baseAllow && candAllow && (baseL7In != candL7In || (!dnsJudged && baseL7Eg != candL7Eg))
+	l7Differs := baseAllow && candAllow && !httpJudged && (baseL7In != candL7In || (!dnsJudged && baseL7Eg != candL7Eg))
 
 	var change string
 	switch {
@@ -775,8 +811,16 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		side: side, srcLabels: src.GetLabels(), dstLabels: dst.GetLabels(),
 		dstService: serviceString(f.GetDestinationService()),
 		l7Baseline: joinL7(baseL7In, baseL7Eg), l7Candidate: joinL7(candL7In, candL7Eg),
-		l7Request: request,
+		l7Request: request, l7Judge: judge,
 	}
+}
+
+// httpNotJudgedReason is the candidate engine's httpGate, "" when unset.
+func (e *verdictEngine) httpNotJudgedReason() string {
+	if e.httpGate == nil {
+		return ""
+	}
+	return e.httpGate()
 }
 
 // joinL7 labels each half's L7 rules with the side that applies them.
@@ -855,7 +899,7 @@ func printVerdictLegend(counts *verdictCounts) {
 		fmt.Printf("  %s   currently blocked, the candidate would allow it — expected if that's the policy's purpose, worth a second look if not.\n", colorize(changeColor("NEWLY_ALLOWED"), "NEWLY_ALLOWED"))
 	}
 	if counts.l7Changed > 0 {
-		fmt.Printf("  %s      allowed at L4 either way, but the L7 proxy (Envoy / DNS proxy) now applies different request rules to it; only DNS queries are judged per request — review the rules in brackets.\n", colorize(changeColor("L7_CHANGED"), "L7_CHANGED"))
+		fmt.Printf("  %s      allowed at L4 either way, but the L7 proxy (Envoy / DNS proxy) now applies different request rules to it; DNS queries and HTTP requests Hubble recorded are judged on rows of their own — review the rules in brackets.\n", colorize(changeColor("L7_CHANGED"), "L7_CHANGED"))
 	}
 	if counts.notSimulated > 0 {
 		fmt.Printf("  %s   unresolved-identity or portless flows; this engine doesn't judge those (see README).\n", colorize(ansiGray, "not simulated"))
@@ -1287,6 +1331,10 @@ type verdictEngine struct {
 	repo       *policy.Repository
 	identities identity.IdentityMap
 	cache      map[identity.NumericIdentity]*policy.EndpointPolicy
+	// httpGate (set on the candidate engine) says why HTTP requests can't
+	// be judged on this cluster, "" when they can; nil means they can
+	// (tests, no cluster). See newHTTPGate.
+	httpGate func() string
 }
 
 func newVerdictEngine(logger *slog.Logger, rules api.Rules, identities identity.IdentityMap) (*verdictEngine, error) {
