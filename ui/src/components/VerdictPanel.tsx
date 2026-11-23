@@ -201,7 +201,7 @@ export function VerdictPanel({
     if (runId) {
       const endedAt = Date.now()
       setRuns((prev) =>
-        prev.map((r) => (r.id === runId ? { ...r, durationMs: endedAt - r.timestamp.getTime() } : r))
+        prev.map((r) => (r.id === runId ? { ...r, isStreaming: false, durationMs: endedAt - r.timestamp.getTime() } : r))
       )
     }
   }
