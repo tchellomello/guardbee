@@ -322,23 +322,19 @@ type verdictComputation struct {
 	// also covers a --follow-style stream that has no server-side end.
 	elapsed time.Duration
 	// target is the cluster this run judged, set by the caller that owns the
-	// clients (runVerdict, ui.go's handleVerdict) rather than computeVerdict,
+	// clients (runVerdict, ui.go's handleVerdict) rather than computeVerdictWithMode,
 	// which only ever sees already-built clients.
 	target kubeTarget
 }
 
-// computeVerdict is the full, self-contained one-shot verdict computation:
-// fetches baseline policy, builds both engines, then delegates to
-// judgeFlowBatch. The CLI's runVerdict builds its own engines inline instead
-// (shared with the --follow path, which this function has no equivalent
-// for) — this wrapper exists for callers that just want one answer with no
-// engine lifecycle to manage themselves, namely the "ui" subcommand's HTTP
-// API (see ui.go).
-func computeVerdict(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, filter flowFilter, candidateRules api.Rules, last uint64, showUnchanged bool) (*verdictComputation, error) {
-	return computeVerdictWithMode(logger, core, cilium, cfg, namespace, filter, candidateRules, last, showUnchanged, false)
-}
-
-func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, filter flowFilter, candidateRules api.Rules, last uint64, showUnchanged, replaceExisting bool) (*verdictComputation, error) {
+// computeVerdictWithMode is the full, self-contained one-shot verdict
+// computation: fetches baseline policy, builds both engines, then delegates
+// to judgeFlowBatch. The CLI's runVerdict builds its own engines inline
+// instead (shared with the --follow path, which this function has no
+// equivalent for) — this exists for callers that just want one answer with
+// no engine lifecycle to manage themselves, namely the "ui" subcommand's
+// HTTP API (see ui.go).
+func computeVerdictWithMode(ctx context.Context, logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, cfg *rest.Config, namespace string, filter flowFilter, candidateRules api.Rules, last uint64, showUnchanged, replaceExisting bool) (*verdictComputation, error) {
 	baselineRuleCount, skipped, _, baseline, candidate, err := buildVerdictEnginesWith(logger, core, cilium, namespace, candidateRules, replaceExisting)
 	if err != nil {
 		return nil, err
@@ -346,7 +342,7 @@ func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cili
 	defer baseline.close(logger)
 	defer candidate.close(logger)
 
-	comp, err := judgeFlowBatch(logger, baseline, candidate, core, cfg, namespace, filter, last, showUnchanged)
+	comp, err := judgeFlowBatch(ctx, logger, baseline, candidate, core, cfg, namespace, filter, last, showUnchanged)
 	if err != nil {
 		return nil, err
 	}
@@ -357,10 +353,10 @@ func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cili
 	return comp, nil
 }
 
-// buildVerdictEngines fetches baseline policy and constructs both the
+// buildVerdictEnginesWith fetches baseline policy and constructs both the
 // baseline and baseline+candidate policy.Repository-backed engines — the
-// setup step shared by computeVerdict (one-shot), runVerdict's own --follow
-// path, and the "ui" subcommand's streaming handler (see ui.go's
+// setup step shared by computeVerdictWithMode (one-shot), runVerdict's own
+// --follow path, and the "ui" subcommand's streaming handler (see ui.go's
 // handleVerdictStream). Callers own closing both engines (defer
 // baseline.close/candidate.close) once done with them. Both engines start
 // with no known identities — every flow registers its own source/
@@ -368,16 +364,12 @@ func computeVerdictWithMode(logger *slog.Logger, core kubernetes.Interface, cili
 // addIdentities), rather than pre-seeding from a bounded batch — that's
 // what lets --follow/streaming keep working correctly no matter how long it
 // runs or how many new identities show up over time.
-func buildVerdictEngines(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules) (baselineRuleCount int, skipped []string, baseline, candidate *verdictEngine, err error) {
-	baselineRuleCount, skipped, _, baseline, candidate, err = buildVerdictEnginesWith(logger, core, cilium, namespace, candidateRules, false)
-	return baselineRuleCount, skipped, baseline, candidate, err
-}
-
-// buildVerdictEnginesWith is buildVerdictEngines plus --replace-existing:
-// when replaceExisting is set, live rules from a policy the candidate also
-// defines (same kind/namespace/name, see replaceSameNamePolicies) are left
-// out of the baseline+candidate engine only — the baseline engine always
-// keeps today's full live state. replaced names the policies dropped.
+//
+// With replaceExisting (--replace-existing), live rules from a policy the
+// candidate also defines (same kind/namespace/name, see
+// replaceSameNamePolicies) are left out of the baseline+candidate engine
+// only — the baseline engine always keeps today's full live state. replaced
+// names the policies dropped.
 func buildVerdictEnginesWith(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, namespace string, candidateRules api.Rules, replaceExisting bool) (baselineRuleCount int, skipped, replaced []string, baseline, candidate *verdictEngine, err error) {
 	baselineRules, skipped, err := fetchBaselineRules(logger, cilium, namespace)
 	if err != nil {
@@ -434,8 +426,8 @@ func warnSkippedBaseline(skipped []string) {
 // the one-shot counterpart to runVerdict's --follow loop — same judging
 // logic (judgeFlow), batched instead of streamed, and reusable by both the
 // CLI and the "ui" subcommand's HTTP API.
-func judgeFlowBatch(logger *slog.Logger, baseline, candidate *verdictEngine, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, last uint64, showUnchanged bool) (*verdictComputation, error) {
-	flows, err := fetchFlows(core, cfg, namespace, filter, last)
+func judgeFlowBatch(ctx context.Context, logger *slog.Logger, baseline, candidate *verdictEngine, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, last uint64, showUnchanged bool) (*verdictComputation, error) {
+	flows, err := fetchFlows(ctx, core, cfg, namespace, filter, last)
 	if err != nil {
 		return nil, fmt.Errorf("tapping flows: %w", err)
 	}

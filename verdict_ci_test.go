@@ -427,9 +427,13 @@ func TestJudgeGroupPerPolicyWorstExitCode(t *testing.T) {
 		Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 81}},
 	}}}
 
+	baselineRules, skipped, err := fetchBaselineRules(logger, cs, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var runs []groupRun
 	for _, g := range groups {
-		run, err := judgeGroup(logger, nil, cs, "alpha", flowFilter{}, 50, false, true, g, flows, true, false, false, 0, time.Now(), kubeTarget{})
+		run, err := judgeGroup(logger, baselineRules, skipped, nil, "alpha", flowFilter{}, 50, false, true, g, flows, true, false, false, 0, time.Now(), kubeTarget{})
 		if err != nil {
 			t.Fatalf("judgeGroup(%s): %v", g.label, err)
 		}

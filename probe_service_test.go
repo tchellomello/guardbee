@@ -161,11 +161,11 @@ func TestFindHubbleRelayPodPrefersReady(t *testing.T) {
 		}
 	}
 	core := fake.NewSimpleClientset(relay("relay-a-dead-node", corev1.ConditionFalse), relay("relay-b", corev1.ConditionTrue))
-	if got, err := findHubbleRelayPod(core); err != nil || got != "relay-b" {
+	if got, err := findHubbleRelayPodContext(context.Background(), core); err != nil || got != "relay-b" {
 		t.Fatalf("got %q %v, want the Ready replica", got, err)
 	}
 	core = fake.NewSimpleClientset(relay("relay-a-dead-node", corev1.ConditionFalse))
-	if got, err := findHubbleRelayPod(core); err != nil || got != "relay-a-dead-node" {
+	if got, err := findHubbleRelayPodContext(context.Background(), core); err != nil || got != "relay-a-dead-node" {
 		t.Fatalf("got %q %v, want the Running fallback", got, err)
 	}
 }

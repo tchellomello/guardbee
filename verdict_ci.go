@@ -25,6 +25,7 @@ package main
 //     under-reported for edited policies.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -384,16 +385,24 @@ type groupRun struct {
 	code     int
 }
 
-// judgeCandidateGroups samples Hubble once and judges every group against
-// the same flows, each with its own baseline+candidate engines.
+// judgeCandidateGroups samples Hubble and lists the live baseline once, then
+// judges every group against those same flows and that same baseline, each
+// with its own baseline+candidate engines. Listing the baseline per group
+// would let a policy applied mid-run give two groups different "today"s.
 func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, groups []candidateGroup, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int, start time.Time, target kubeTarget) ([]groupRun, error) {
-	flows, err := fetchFlows(core, cfg, namespace, filter, last)
+	baselineRules, skipped, err := fetchBaselineRules(logger, cilium, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("fetching baseline policy: %w", err)
+	}
+	warnSkippedBaseline(skipped)
+	httpGate := newHTTPGate(core)
+	flows, err := fetchFlows(context.Background(), core, cfg, namespace, filter, last)
 	if err != nil {
 		return nil, fmt.Errorf("tapping flows: %w", err)
 	}
 	var runs []groupRun
 	for _, g := range groups {
-		run, err := judgeGroup(logger, core, cilium, namespace, filter, last, showUnchanged, replaceExisting, g, flows, failOnDropped, failOnAllowed, failOnL7, minFlows, start, target)
+		run, err := judgeGroup(logger, baselineRules, skipped, httpGate, namespace, filter, last, showUnchanged, replaceExisting, g, flows, failOnDropped, failOnAllowed, failOnL7, minFlows, start, target)
 		if err != nil {
 			return nil, err
 		}
@@ -402,14 +411,14 @@ func judgeCandidateGroups(logger *slog.Logger, cilium ciliumclient.Interface, co
 	return runs, nil
 }
 
-func judgeGroup(logger *slog.Logger, core kubernetes.Interface, cilium ciliumclient.Interface, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, g candidateGroup, flows []*flowpb.Flow, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int, start time.Time, target kubeTarget) (*groupRun, error) {
-	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesWith(logger, core, cilium, namespace, g.rules, replaceExisting)
+func judgeGroup(logger *slog.Logger, baselineRules api.Rules, skipped []string, httpGate func() string, namespace string, filter flowFilter, last uint64, showUnchanged, replaceExisting bool, g candidateGroup, flows []*flowpb.Flow, failOnDropped, failOnAllowed, failOnL7 bool, minFlows int, start time.Time, target kubeTarget) (*groupRun, error) {
+	baselineRuleCount, skipped, replaced, baseline, candidate, err := buildVerdictEnginesFromRules(logger, baselineRules, skipped, g.rules, replaceExisting)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", g.label, err)
 	}
 	defer baseline.close(logger)
 	defer candidate.close(logger)
-	warnSkippedBaseline(skipped)
+	candidate.httpGate = httpGate
 
 	comp := judgeFetchedFlows(logger, baseline, candidate, flows, namespace, filter, last, showUnchanged)
 	comp.candidateRuleCount = len(g.rules)

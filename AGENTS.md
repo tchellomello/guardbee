@@ -30,7 +30,7 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
   baseline+candidate) using **Cilium's own `pkg/policy` engine** — not a
   reimplementation — and prints `NEWLY_DROPPED`/`NEWLY_ALLOWED`/`UNCHANGED`.
 - `guardbee ui [--addr host:port]` — milestone 1 web UI: a local HTTP server
-  exposing the exact same `computeVerdict`/`fetchFlows`/`flowAttribution` functions the CLI
+  exposing the exact same `computeVerdictWithMode`/`fetchFlows`/`flowAttribution` functions the CLI
   calls, over JSON, for a React/TS frontend. No parallel implementation —
   UI and CLI can't disagree on a verdict for the same input, only present it
   differently.

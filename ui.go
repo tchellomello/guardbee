@@ -6,7 +6,7 @@ package main
 // subcommands over a small JSON API, for a browser frontend instead of
 // terminal output. No new cluster footprint — same kubeconfig-based access
 // as every other subcommand, and the JSON responses are built from the exact
-// same computeVerdict/fetchFlows functions the CLI itself calls, never a
+// same computeVerdictWithMode/fetchFlows functions the CLI itself calls, never a
 // parallel implementation (see verdict.go's verdictComputation doc comment).
 //
 // Candidate authoring (milestone 2) is explicitly out of scope here — this
@@ -18,7 +18,9 @@ import (
 	"fmt"
 	iofs "io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"sort"
@@ -129,7 +131,6 @@ Flags:
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/probes/capabilities", srv.handleProbeCapabilities)
 	mux.HandleFunc("GET /api/probes/pods", srv.handleProbePods)
-	mux.HandleFunc("POST /api/probes/tcp", srv.handleTCPProbe)
 	mux.HandleFunc("POST /api/probes/connection", srv.handleConnectionProbe)
 	mux.HandleFunc("POST /api/probes/connection/stream", srv.handleConnectionProbeStream)
 	mux.HandleFunc("POST /api/verdict", srv.handleVerdict)
@@ -155,10 +156,40 @@ Flags:
 	mux.Handle("/", root)
 
 	fmt.Printf("%s ui: listening on http://%s\n", binName, addr)
-	if err := http.ListenAndServe(addr, srv.debugLogRequests(mux)); err != nil {
+	if err := http.ListenAndServe(addr, rebindingGuard(addr, srv.debugLogRequests(mux))); err != nil {
 		fmt.Fprintf(os.Stderr, binName+" ui: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// rebindingGuard is the DNS-rebinding defense for the whole server, not just
+// the probe endpoints: a hostile page can point its own name at 127.0.0.1
+// and then read every read-only /api response (flows, policies, Pods) as
+// same-origin. Its requests still carry that name in Host, so only an IP
+// literal, localhost or the exact --addr is served. A rebinding attack needs
+// a DNS name, so an IP literal Host is never one.
+func rebindingGuard(addr string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !trustedHost(r.Host, addr) {
+			http.Error(w, "unexpected Host header (DNS-rebinding protection): open the UI by IP address, localhost, or the exact --addr", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func trustedHost(host, addr string) bool {
+	if strings.EqualFold(host, addr) {
+		return true
+	}
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		h = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]") // Host without a port
+	}
+	if _, err := netip.ParseAddr(h); err == nil {
+		return true
+	}
+	return strings.EqualFold(h, "localhost")
 }
 
 type statusRecorder struct {
@@ -465,7 +496,7 @@ func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	comp, err := computeVerdictWithMode(s.logger, s.core, s.cilium, s.cfg, req.Namespace, filter, candidateRules, req.Last, req.ShowUnchanged, req.ReplaceExisting)
+	comp, err := computeVerdictWithMode(r.Context(), s.logger, s.core, s.cilium, s.cfg, req.Namespace, filter, candidateRules, req.Last, req.ShowUnchanged, req.ReplaceExisting)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("computing verdict: %v", err), http.StatusInternalServerError)
 		return
@@ -540,7 +571,7 @@ type verdictStreamEvent struct {
 
 // handleVerdictStream is the streaming counterpart to handleVerdict — same
 // judging logic (judgeFlow via the shared baseline/candidate engines from
-// buildVerdictEngines), but pushed live over Server-Sent Events as flows
+// buildVerdictEnginesWith), but pushed live over Server-Sent Events as flows
 // arrive instead of computed once over a bounded batch. GET + query params
 // (not POST + JSON body) because EventSource, the browser API this is built
 // for, only supports GET. Stops when the client disconnects (r.Context()
@@ -653,7 +684,7 @@ func (s *uiServer) handleFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flows, err := fetchFlows(s.core, s.cfg, namespace, filter, last)
+	flows, err := fetchFlows(r.Context(), s.core, s.cfg, namespace, filter, last)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("tapping flows: %v", err), http.StatusInternalServerError)
 		return

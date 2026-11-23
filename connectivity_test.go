@@ -50,18 +50,6 @@ func TestConnectionProtocolValidationAndLegacy(t *testing.T) {
 	if w := connectionPOST(&uiServer{}, req); w.Code != 403 {
 		t.Fatal(w.Code)
 	}
-	if w := probePOST(s, req); w.Code != 400 {
-		t.Fatal("UDP accepted on legacy TCP route")
-	}
-	// Missing protocol remains TCP only on the old API.
-	req.Protocol = ""
-	s.probes.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
-		return nil, fmt.Errorf("test capture unavailable")
-	}
-	w := probePOST(s, req)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"protocol":"TCP"`) {
-		t.Fatal(w.Code, w.Body.String())
-	}
 }
 
 func udpFlow(now time.Time) *flowpb.Flow {

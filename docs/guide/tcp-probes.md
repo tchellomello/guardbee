@@ -170,10 +170,7 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
   anything is injected.
 - `POST /api/probes/connection/stream`: the same request, reported as NDJSON
   stages and one terminal line; see [Live progress](#live-progress).
-- `POST /api/probes/tcp` is the compatibility alias: old requests without
-  `protocol` default to TCP and keep optional `candidateYAML`. Explicit TCP is
-  accepted; UDP is rejected on this legacy endpoint.
-  DNS hostnames (case-insensitive, optional trailing dot) resolve inside the
+- DNS hostnames (case-insensitive, optional trailing dot) resolve inside the
   Pod, never server-side. Hostname flow correlation needs positive evidence,
   never just the port: an exact normalized Hubble destination name, the flow's
   destination Service, or, for an in-cluster Service name (`<svc>`,

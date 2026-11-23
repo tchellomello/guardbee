@@ -21,6 +21,32 @@ import (
 	"testing"
 )
 
+func TestRebindingGuard(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	h := rebindingGuard("myhost.lan:4747", ok)
+	for host, want := range map[string]int{
+		"127.0.0.1:4747":        200,
+		"[::1]:4747":            200,
+		"192.168.1.5:4747":      200,
+		"localhost:5173":        200, // vite dev proxy
+		"LOCALHOST":             200,
+		"myhost.lan:4747":       200, // the exact --addr
+		"evil.example:4747":     403, // rebound DNS name
+		"evil.example":          403,
+		"localhost.evil:4747":   403,
+		"myhost.lan:4748":       403,
+		"127.0.0.1.nip.io:4747": 403,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/policies", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Host %q: got %d, want %d", host, rec.Code, want)
+		}
+	}
+}
+
 func TestHandleVerdictRejectsMissingCandidateYAML(t *testing.T) {
 	srv := &uiServer{logger: slog.Default()}
 	body, _ := json.Marshal(verdictRequest{Namespace: "testing"})
