@@ -1,0 +1,64 @@
+# lab-validate's toFQDNs check: a client that keeps opening HTTPS to
+# example.com, with its DNS behind Cilium's DNS proxy (rules.dns) so Hubble
+# attaches destination_names to its flows, and a live policy that allows
+# world:443 WITHOUT any toFQDNs, so Cilium has no fqdn: label for the IP.
+# The candidates next to this file replace that policy (--replace-existing)
+# with a toFQDNs one. Whether the HTTPS request succeeds doesn't matter:
+# the outgoing connection is the flow being judged.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fqdn-client
+  namespace: webapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fqdn-client
+  template:
+    metadata:
+      labels:
+        app: fqdn-client
+    spec:
+      containers:
+        - name: client
+          # Already pulled for the lab's webapp; its busybox has wget.
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                wget -q -T 3 -O /dev/null https://example.com || true
+                sleep 2
+              done
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: fqdn-client-egress
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: fqdn-client
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

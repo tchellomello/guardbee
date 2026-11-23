@@ -632,7 +632,9 @@ spec:
 		if err != nil {
 			t.Fatalf("parseCandidateYAML: %v", err)
 		}
-		ids := identitiesFromFlows([]*flowpb.Flow{f})
+		ids := identity.IdentityMap{}
+		addEndpointIdentity(ids, f.GetSource())
+		addEndpointIdentity(ids, f.GetDestination())
 		baseline, err := newVerdictEngine(logger, nil, ids)
 		if err != nil {
 			t.Fatalf("newVerdictEngine(baseline): %v", err)

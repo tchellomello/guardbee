@@ -529,12 +529,13 @@ and 2), so they're re-checked against every pinned Cilium.
 
 ### `toFQDNs` (not part of this lab)
 
-`examples/webapp-fqdn-without-dns-rule.yaml` shows the one `toFQDNs` check
-GuardBee makes today: a warning when a candidate's `toFQDNs` has no
-`rules.dns` anywhere, which Cilium accepts but which can never learn the
-name's IPs. Judging `toFQDNs` *traffic* isn't reliable yet: a selector not
-already in a live policy reads as a drop, because Cilium only labels IPs for
-live selectors. See [how verdict works](how-it-works.html).
+The lab's workloads never leave the cluster, so the guide has no `toFQDNs`
+step. `examples/webapp-fqdn-without-dns-rule.yaml` shows the warning for a
+`toFQDNs` with no `rules.dns` anywhere, which Cilium accepts but which can
+never learn the name's IPs. `mise run lab-validate` does check `toFQDNs`
+verdicts (`lab/fqdn/`): a client calling example.com, its DNS behind the DNS
+proxy, judged against a new `toFQDNs` selector for that name and for another.
+See [how verdict works](how-it-works.html).
 
 ---
 

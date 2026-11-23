@@ -12,7 +12,9 @@
 # plus examples/postgres-metrics-http-only.yaml — the scrape newly behind an
 # HTTP rule must be L7_CHANGED (exit 5 with --fail-on-l7)
 # and, with real L7 policies applied (lab/l7/), per-request verdicts: an
-# HTTP path typo and a single-label DNS wildcard must drop real requests.
+# HTTP path typo and a single-label DNS wildcard must drop real requests,
+# and a toFQDNs candidate (lab/fqdn/) is matched against the names Hubble
+# saw: example.com keeps the client's traffic, example.org drops it.
 # Then the connectivity tests, through the streaming endpoint the UI uses,
 # once per built-in vetted probe image (probes/images.yaml), so "vetted" is
 # re-proven against every pinned Cilium, not just claimed:
@@ -196,6 +198,23 @@ expect_verdict lab/l7/postgres-metrics-any-subpath.yaml 0 "${http[@]}" --fail-on
 echo "--- '*.cluster.local' (one DNS label) refuses webapp's postgres lookup (exit 2)"
 NS=webapp expect_verdict examples/webapp-dns-single-label-wildcard.yaml 2 --replace-existing --type l7 --to-port 53
 kubectl delete -f examples/postgres-metrics-http-only.yaml -f lab/l7/webapp-dns-live.yaml
+
+# toFQDNs. A selector no live policy has yet has no fqdn: label on the IP
+# Hubble reports, so it is matched against the flow's destination_names
+# (fqdnverdict.go). Needs real DNS and egress to example.com from the
+# runner; the TCP handshake itself may fail, the flow is still judged.
+echo
+echo "=== lab-validate: toFQDNs candidates against real destination_names ==="
+kubectl apply -f lab/fqdn/fqdn-client-live.yaml
+kubectl -n webapp rollout status deployment/fqdn-client --timeout=180s
+fqdn=(--replace-existing --from-label k8s:app=fqdn-client --to-port 443)
+echo "--- toFQDNs example.com, not live yet, keeps the client's traffic (exit 0)"
+NS=webapp expect_verdict lab/fqdn/fqdn-client-example-com.yaml 0 "${fqdn[@]}"
+# Without destination_names every flow would be not simulated, which
+# --min-flows doesn't count: exit 3, retried, then a failure, never a pass.
+echo "--- toFQDNs example.org drops it (exit 2)"
+NS=webapp expect_verdict lab/fqdn/fqdn-client-example-org.yaml 2 "${fqdn[@]}"
+kubectl delete -f lab/fqdn/fqdn-client-live.yaml
 
 echo
 echo "lab-validate: all lab verdicts and connectivity tests matched against Cilium ${pinned}."

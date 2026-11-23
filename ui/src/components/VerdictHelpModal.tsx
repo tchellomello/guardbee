@@ -200,10 +200,10 @@ export function VerdictHelpModal({ isOpen, onClose, initialCategory }: VerdictHe
                 </span>
               </div>
               <p className="text-ink text-xs leading-relaxed">
-                Flows without a resolved security identity on either side, or without a concrete destination port.
+                Flows without a resolved security identity on either side, without a concrete destination port, or to an IP with no DNS name Hubble knows that a <code className="text-signal">toFQDNs</code> candidate would drop.
               </p>
               <p className="mt-1 text-ink-dim text-[0.7rem] leading-relaxed">
-                Cilium's policy engine can't be asked about them reliably, so the simulator flags them rather than guessing. A <code className="text-signal">toFQDNs</code> destination is only matched through the identity labels Hubble reports for its IP.
+                Cilium's policy engine can't be asked about them reliably, so the simulator flags them rather than guessing. A <code className="text-signal">toFQDNs</code> selector is matched against the names Hubble recorded for the destination, which it only has when the source's DNS goes through Cilium's DNS proxy.
               </p>
             </div>
 

@@ -1,0 +1,32 @@
+# toFQDNs for a name fqdn-client never calls: its example.com traffic is
+# dropped, lab-validate expects exit 2. Proves the selector is matched
+# against the real name, not just that every name passes.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: fqdn-client-egress
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: fqdn-client
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: example.org
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

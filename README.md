@@ -111,8 +111,10 @@ Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the
 
 - [x] CLI verdict engine
 - [x] Web UI with a graph-based policy editor
-- [x] Egress-side evaluation (identity/CIDR/entity/port rules; FQDN egress
-      stays `not simulated`)
+- [x] Egress-side evaluation (identity/CIDR/entity/port rules)
+- [x] `toFQDNs` verdicts — a candidate's selector is matched against the
+      names Hubble saw for the destination, even before it is live (needs
+      the source's DNS behind Cilium's DNS proxy; otherwise `not simulated`)
 - [x] L7 rule changes — a flow behind different HTTP/DNS proxy rules is
       `L7_CHANGED`, not a false drop
 - [x] DNS query verdicts — each DNS query Hubble recorded is judged against

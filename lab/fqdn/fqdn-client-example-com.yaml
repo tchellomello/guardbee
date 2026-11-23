@@ -1,0 +1,33 @@
+# toFQDNs for the name fqdn-client really calls, a selector no live policy
+# has yet: lab-validate expects exit 0 (UNCHANGED). Before GuardBee matched
+# Hubble's destination_names against candidate selectors this was a false
+# NEWLY_DROPPED, exit 2.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: fqdn-client-egress
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: fqdn-client
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: example.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
