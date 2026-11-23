@@ -22,11 +22,12 @@ package main
 // Known v1 simplifications (documented, not silent):
 //   - A flow must be allowed by BOTH the destination's ingress policy and
 //     the source's egress policy (each side's own distilled policy, queried
-//     for the other side as the peer). Only identity-based egress is judged
-//     (endpoints, entities, CIDRs, ports); a toFQDNs destination only
-//     matches through the identity labels Hubble reports for its IP, and a
-//     flow whose source is outside the cluster has no egress policy to
-//     consult.
+//     for the other side as the peer). Egress is judged on endpoints,
+//     entities, CIDRs and ports; a toFQDNs selector matches the names Hubble
+//     attached to the flow (destination_names, fqdnverdict.go), and a
+//     world/CIDR flow with no names under a toFQDNs candidate is not
+//     simulated. A flow whose source is outside the cluster has no egress
+//     policy to consult.
 //   - DNS queries Hubble recorded are judged like the DNS proxy would
 //     (dnsverdict.go). Any other flow behind the L7 proxy (HTTP via Envoy,
 //     or a connection-level flow) is only compared on its rules: allowed at
@@ -544,7 +545,8 @@ type verdictRow struct {
 	side string
 	// srcLabels/dstLabels are the flow endpoints' security-identity labels
 	// exactly as Hubble reports them ("k8s:app=foo", "reserved:host", …) —
-	// the same labels identitiesFromFlows feeds the engine, i.e. what a
+	// the same labels addEndpointIdentity feeds the engine (minus fqdn: labels
+	// withFQDNLabels adds for a candidate's toFQDNs), i.e. what a
 	// selector really matches against. Not part of key() for the same reason
 	// side isn't.
 	srcLabels, dstLabels []string
@@ -652,13 +654,18 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		return nil
 	}
 
-	newIDs := identitiesFromFlows([]*flowpb.Flow{f})
+	// Both engines see the same identities: labelled for every selector on
+	// either side, as Cilium labels an IP for all of its live selectors.
+	engineDst := withFQDNLabels(dst, f.GetDestinationNames(), append(append([]fqdnSelector(nil), baseline.fqdn...), candidate.fqdn...))
+	newIDs := identity.IdentityMap{}
+	addEndpointIdentity(newIDs, src)
+	addEndpointIdentity(newIDs, engineDst)
 	baseline.addIdentities(logger, newIDs)
 	candidate.addIdentities(logger, newIDs)
 
 	var key, egressKey policy.Key
 	srcNID := engineNID(src)
-	dstNID := engineNID(dst)
+	dstNID := engineNID(engineDst)
 	l4 := f.GetL4()
 	var proto string
 	switch {
@@ -767,6 +774,14 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 	}
 	baseAllow := baseIn && baseEg
 	candAllow := candIn && candEg
+
+	// Without destination_names (the source's DNS doesn't go through the DNS
+	// proxy) nothing says whether the candidate's toFQDNs would select this
+	// IP, so a drop on egress is withheld rather than reported.
+	if baseAllow && !candEg && len(candidate.fqdn) > 0 && len(f.GetDestinationNames()) == 0 && fqdnCandidate(dst) {
+		counts.notSimulated++
+		return nil
+	}
 
 	// The L7 rules the proxy applies on each half, "" when not redirected.
 	// Only meaningful while L4 allows, so a both-denied flow stays UNCHANGED.
@@ -902,7 +917,7 @@ func printVerdictLegend(counts *verdictCounts) {
 		fmt.Printf("  %s      allowed at L4 either way, but the L7 proxy (Envoy / DNS proxy) now applies different request rules to it; DNS queries and HTTP requests Hubble recorded are judged on rows of their own — review the rules in brackets.\n", colorize(changeColor("L7_CHANGED"), "L7_CHANGED"))
 	}
 	if counts.notSimulated > 0 {
-		fmt.Printf("  %s   unresolved-identity or portless flows; this engine doesn't judge those (see README).\n", colorize(ansiGray, "not simulated"))
+		fmt.Printf("  %s   unresolved-identity or portless flows, or flows to an IP with no DNS name Hubble knows that a toFQDNs candidate would drop; this engine doesn't judge those (see README).\n", colorize(ansiGray, "not simulated"))
 	}
 	if counts.replySkipped > 0 {
 		fmt.Printf("  %s established-connection replies; connection tracking always allows these regardless of policy.\n", colorize(ansiGray, "reply (skipped)"))
@@ -949,23 +964,15 @@ func engineNID(ep *flowpb.Endpoint) identity.NumericIdentity {
 	return id
 }
 
-// identitiesFromFlows extracts every distinct (numeric identity, labels)
-// pair Hubble has already resolved on the given flows. Real flows always
-// carry real, currently-allocated identities, so this needs no separate
-// CiliumIdentity lookup.
-func identitiesFromFlows(flows []*flowpb.Flow) identity.IdentityMap {
-	ids := identity.IdentityMap{}
-	add := func(ep *flowpb.Endpoint) {
-		if ep == nil || ep.GetIdentity() == 0 {
-			return
-		}
-		ids[engineNID(ep)] = labels.ParseLabelArray(ep.GetLabels()...)
+// addEndpointIdentity records the (numeric identity, labels) pair Hubble has
+// already resolved on a flow endpoint. Real flows always carry real,
+// currently-allocated identities, so this needs no separate CiliumIdentity
+// lookup.
+func addEndpointIdentity(ids identity.IdentityMap, ep *flowpb.Endpoint) {
+	if ep == nil || ep.GetIdentity() == 0 {
+		return
 	}
-	for _, f := range flows {
-		add(f.GetSource())
-		add(f.GetDestination())
-	}
-	return ids
+	ids[engineNID(ep)] = labels.ParseLabelArray(ep.GetLabels()...)
 }
 
 // parseCandidateFile reads a local CiliumNetworkPolicy or
@@ -1331,6 +1338,8 @@ type verdictEngine struct {
 	repo       *policy.Repository
 	identities identity.IdentityMap
 	cache      map[identity.NumericIdentity]*policy.EndpointPolicy
+	// fqdn is every toFQDNs selector in this engine's rules (fqdnverdict.go).
+	fqdn []fqdnSelector
 	// httpGate (set on the candidate engine) says why HTTP requests can't
 	// be judged on this cluster, "" when they can; nil means they can
 	// (tests, no cluster). See newHTTPGate.
@@ -1361,6 +1370,7 @@ func newVerdictEngine(logger *slog.Logger, rules api.Rules, identities identity.
 		repo:       repo,
 		identities: identity.IdentityMap{},
 		cache:      map[identity.NumericIdentity]*policy.EndpointPolicy{},
+		fqdn:       fqdnSelectorsOf(rules),
 	}
 	for nid, lbls := range identities {
 		engine.identities[nid] = lbls

@@ -1,0 +1,51 @@
+# toFQDNs done right, the fix for examples/webapp-fqdn-without-dns-rule.yaml:
+# webapp's DNS goes through Cilium's DNS proxy (rules.dns), which is how
+# Cilium learns api.github.com's IPs, and webapp keeps its postgres
+# connection, since selecting webapp for egress default-denies everything
+# this policy doesn't list.
+#
+#   guardbee verdict -n webapp examples/webapp-fqdn-with-dns-rule.yaml
+#
+# HTTPS to api.github.com is judged against the names Hubble recorded for
+# the destination, so the selector counts even though it isn't live yet.
+# Hubble has those names only if webapp's DNS ALREADY goes through the proxy
+# (a live rules.dns, e.g. lab/l7/webapp-dns-live.yaml); otherwise a flow
+# this would drop is counted as not simulated. See docs/guide/commands.md,
+# "Testing a toFQDNs candidate".
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: webapp-egress-github
+  namespace: webapp
+spec:
+  endpointSelector:
+    matchLabels:
+      app: webapp
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            app: postgres
+            io.kubernetes.pod.namespace: postgres
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: api.github.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

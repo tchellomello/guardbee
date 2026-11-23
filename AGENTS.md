@@ -137,15 +137,20 @@ Consequences that follow directly from this, non-negotiably:
 ## Known v1 simplifications (intentional, documented in code — don't "fix" silently)
 
 - A flow must be allowed by **both** the destination's ingress policy and the
-  source's egress policy. Egress is judged on identities/CIDRs/entities/ports;
-  a `toFQDNs` destination only matches through the identity labels Hubble
-  reports for its IP (no DNS-answer correlation). Those `fqdn:<selector>`
-  labels (`api.FQDNSelector.IdentityLabel`) are only added by Cilium's name
-  manager for selectors already in a LIVE policy, so a candidate selector
-  that isn't live yet (new name, or different text for an overlapping one)
-  reads as a false NEWLY_DROPPED. Known gap, planned fix: match Hubble's
-  `destination_names` against the candidate's selectors with `matchpattern`
-  and label the engine's copy of the destination identity.
+  source's egress policy. Egress is judged on identities/CIDRs/entities/ports.
+  Cilium's name manager adds `fqdn:<selector>` labels only for selectors
+  already in a LIVE policy, so `withFQDNLabels` (`fqdnverdict.go`) labels the
+  engine's copy of a world/CIDR destination for every baseline or candidate
+  selector whose `FQDNSelector.ToRegex()` matches one of the flow's
+  `destination_names`: namemanager's `deriveLabelsForName` loop, with
+  Cilium's own regex and `IdentityLabel()`. A labelled `reserved:world` gets
+  a local-scope engine number per label set (`engineNID`), so two names
+  behind identity 2 never share labels. `destination_names` are the SOURCE
+  endpoint's DNS history (the name manager uses every endpoint's); and they
+  exist only when the source's DNS goes through the DNS proxy, so a flow
+  without them that a `toFQDNs` candidate would drop on egress is
+  `NOT_SIMULATED`, not a guessed drop. Regression suite:
+  `fqdnverdict_test.go`; live: `lab/fqdn/` in `lab-validate.sh`.
 - A live baseline policy using `fromNodes`/`toNodes` is **skipped**, named in
   the UI banner / CLI stderr warning, not simulated (`fetchBaselineRules`).
   Cilium's `Parse()` rejects it unless the process-global
