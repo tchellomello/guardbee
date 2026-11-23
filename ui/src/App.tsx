@@ -12,7 +12,8 @@ import { HomepageLink } from './components/HomepageLink'
 import { GitHubLink } from './components/GitHubLink'
 import { VersionBanner } from './components/VersionBanner'
 import { ThemeProvider } from './theme'
-import { fetchClientVersion, type EditablePolicyModel, type VersionInfo } from './api'
+import { editorRefusal } from './shared/editorFit'
+import { fetchClientVersion, parsePolicy, type EditablePolicyModel, type VersionInfo } from './api'
 import { BLANK_POLICY, generateCiliumNetworkPolicyYAML, toPolicyModel, type EgressRule, type IngressRule, type PolicyModel } from './policy'
 import {
   WORKSPACE_STORAGE_KEY,
@@ -153,16 +154,34 @@ function AppContent() {
     setTab('verdict')
   }
 
+  // The draft has work in it that isn't saved anywhere in the workspace.
+  function editorDraftUnsaved(): boolean {
+    const current = JSON.stringify(policyModel)
+    return current !== JSON.stringify(BLANK_POLICY) && !savedPolicies.some((s) => JSON.stringify(s.editorModel) === current)
+  }
+
   function handleOpenInEditor(p: SavedPolicy) {
     if (!p.editorModel) return
-    const current = JSON.stringify(policyModel)
-    const unsaved =
-      current !== JSON.stringify(BLANK_POLICY) && !savedPolicies.some((s) => JSON.stringify(s.editorModel) === current)
-    if (unsaved && !window.confirm('Replace the current (unsaved) Policy Editor draft with this saved policy?')) return
+    if (editorDraftUnsaved() && !window.confirm('Replace the current (unsaved) Policy Editor draft with this saved policy?')) return
     setPolicyModel(p.editorModel)
     setOriginalLiveModel(null)
     setWorkspaceOpen(false)
     setTab('editor')
+  }
+
+  // "Edit in Policy Editor" on the Verdict tab's candidate. Parsed by the
+  // real engine (/api/policy/parse), like the editor's own YAML import; a
+  // candidate the single-policy, port-only editor can't hold is refused
+  // with the reason (resolved string) rather than loaded with rules missing.
+  async function handleEditCandidateInEditor(namespace: string, yaml: string): Promise<string | null> {
+    const res = await parsePolicy(namespace, yaml)
+    const refusal = editorRefusal(res)
+    if (refusal || !res.policy) return refusal
+    if (editorDraftUnsaved() && !window.confirm('Replace the current (unsaved) Policy Editor draft with this candidate?')) return null
+    setPolicyModel(toPolicyModel(res.policy))
+    setOriginalLiveModel(null)
+    setTab('editor')
+    return null
   }
 
   // "Edit in Policy Editor" from the Policies tab — loads a live CNP/CCNP
@@ -277,6 +296,7 @@ function AppContent() {
             onSavePolicy={handleSavePolicy}
             policyNamespace={policyModel.namespace}
             onAppendRuleToPolicy={handleAppendRule}
+            onEditInEditor={handleEditCandidateInEditor}
           />
         </div>
         <div className={tab === 'flows' ? '' : 'hidden'}>

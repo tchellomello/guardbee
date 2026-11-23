@@ -19,16 +19,27 @@ const configuration = (page: Page) => page.getByRole('form', { name: 'Connection
 const run = (page: Page) => configuration(page).getByRole('button', { name: 'Review & run connection test' })
 const prediction = (page: Page) => page.getByRole('region', { name: 'Candidate prediction' })
 
-async function enabled(page: Page, candidate = LOOKS_CORRECT_CNP) {
-  await page.route('**/api/probes/capabilities', (route) => route.fulfill({ json: { enabled: true } }))
-  await page.route('**/api/probes/pods?*', (route) => route.fulfill({ json: { pods: [{ name: 'webapp-123', uid: 'uid-original' }] } }))
+// Connectivity tests live inside a verdict run's card and test that run's
+// frozen candidate, scope and mode: run a verdict, then open its panel.
+async function runVerdict(page: Page, { candidate = LOOKS_CORRECT_CNP, allNamespaces = false, additive = false } = {}) {
   await openTab(page, 'Verdict')
   const main = visibleForm(page)
-  await main.getByLabel('Namespace', { exact: true }).fill('webapp')
+  if (allNamespaces) await main.getByText('All namespaces', { exact: true }).click()
+  else await main.getByLabel('Namespace', { exact: true }).fill('webapp')
+  if (additive) await main.getByText('Replace matching live policies', { exact: true }).click()
   await main.locator('textarea').fill(candidate)
+  await main.getByRole('button', { name: 'Run verdict', exact: true }).click()
+  await expect(panel(page)).toBeVisible()
+}
+
+async function enabled(page: Page, options: Parameters<typeof runVerdict>[1] = {}) {
+  await page.route('**/api/probes/capabilities', (route) => route.fulfill({ json: { enabled: true } }))
+  await page.route('**/api/probes/pods?*', (route) => route.fulfill({ json: { pods: [{ name: 'webapp-123', uid: 'uid-original' }] } }))
+  await runVerdict(page, options)
   await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
   const form = configuration(page)
-  await form.getByLabel('Source Pod').selectOption('uid-original')
+  // With all namespaces, a source namespace must be picked before any Pod.
+  if (!options.allNamespaces) await form.getByLabel('Source Pod').selectOption('uid-original')
   await form.getByLabel('Host or IP').fill('postgres.postgres.svc')
   return form
 }
@@ -39,10 +50,26 @@ async function submit(page: Page) {
 }
 
 test.describe('Connectivity tests', () => {
+  test("Host suggests the cluster's Services, and picking one fills its port", async ({ page }) => {
+    const form = await enabled(page)
+    const host = form.getByLabel('Host or IP')
+    await host.fill('')
+    await host.pressSequentially('prom', { delay: 40 })
+    await page.getByRole('option', { name: 'prometheus.observability.svc.cluster.local' }).click()
+    await expect(host).toHaveValue('prometheus.observability.svc.cluster.local')
+    await expect(form.getByLabel('Port')).toHaveValue('9090')
+  })
+
+  test('Host falls back to Services seen in flows when GuardBee may not list them', async ({ page }) => {
+    await page.route('**/api/services*', (r) => r.fulfill({ status: 403, body: 'forbidden' }))
+    const form = await enabled(page)
+    await expect(form).toContainText('suggestions are Services seen in flows')
+  })
+
   test('disabled capability and capability failure fail closed', async ({ page }) => {
     let podLookups = 0
     await page.route('**/api/probes/pods?*', (route) => { podLookups++; return route.fulfill({ json: { pods: [] } }) })
-    await openTab(page, 'Verdict')
+    await runVerdict(page)
     await expect(page.getByRole('button', { name: 'TCP Probe', exact: true })).toHaveCount(0)
     await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
     await expect(panel(page)).toContainText('Connection tests are disabled')
@@ -52,16 +79,16 @@ test.describe('Connectivity tests', () => {
     await page.route('**/api/probes/capabilities', (route) => route.fulfill({ status: 503, body: 'capability unavailable' }))
     await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
     await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
-    await expect(panel(page).getByRole('status')).toContainText(['Load a nonempty candidate', 'Test availability could not be verified'])
+    await expect(panel(page).getByRole('status')).toContainText(['Test availability could not be verified'])
     await expect(run(page)).toBeDisabled()
     expect(podLookups).toBe(0)
   })
 
-  test('requires a loaded candidate, inherits Verdict namespace, and has no nested or duplicated candidate form', async ({ page }) => {
+  test("lives in the run's card, inherits that run's namespace, and has no nested or duplicated candidate form", async ({ page }) => {
     let posts = 0
     await page.route('**/api/probes/connection/stream', (route) => { posts++; return route.fulfill(probeStream(response)) })
-    const form = await enabled(page, '')
-    await expect(run(page)).toBeDisabled()
+    const form = await enabled(page)
+    await expect(page.locator('section[aria-label="Connectivity tests"]')).toHaveCount(1)
     await expect(form.locator('textarea')).toHaveCount(0)
     await expect(form.getByLabel('Source namespace')).toHaveCount(0)
     await expect(page.locator('form form')).toHaveCount(0)
@@ -93,7 +120,7 @@ test.describe('Connectivity tests', () => {
     await expect(page.getByRole('region', { name: 'Observed Hubble flows' })).toContainText('FORWARDED')
   })
 
-  test('main candidate edits preserve the exact submitted snapshot and mark prediction stale', async ({ page }) => {
+  test("form edits after a run never touch that run's test: same snapshot, not stale", async ({ page }) => {
     await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response)))
     await enabled(page)
     await submit(page)
@@ -104,10 +131,8 @@ test.describe('Connectivity tests', () => {
     await yaml.focus()
     await page.keyboard.press('Control+End')
     await typeSlowly(page, '\n# edited candidate\n')
-    await expect(submitted.getByRole('status')).toContainText('Results are stale')
     await expect(submitted.locator('pre')).toHaveText(LOOKS_CORRECT_CNP)
-    await yaml.fill(LOOKS_CORRECT_CNP)
-    await expect(submitted.getByRole('status')).toHaveCount(0)
+    await expect(submitted.getByText(/Results are stale/)).toHaveCount(0)
   })
 
   test('UDP sends protocol and fixed datagram only; both-blocked UNCHANGED stays BLOCKED', async ({ page }) => {
@@ -180,25 +205,21 @@ test.describe('Connectivity tests', () => {
     })
   }
 
-  test('namespace edits require fresh Pod selection and preserve uncertain mutation warnings', async ({ page }) => {
+  test("form namespace edits leave the run's Pod selection alone and keep uncertain mutation warnings", async ({ page }) => {
     let posts = 0
     await page.route('**/api/probes/connection/stream', (route) => { posts++; return route.fulfill({ status: 504, body: 'Timed out waiting for ephemeral container status' }) })
     const form = await enabled(page)
     await submit(page)
     await expect(panel(page).getByRole('alert')).toContainText('may already have been added')
-    await page.route('**/api/probes/pods?*', (route) => route.fulfill({ json: { pods: [{ name: 'replacement-pod', uid: 'uid-replacement' }] } }))
     await visibleForm(page).getByLabel('Namespace', { exact: true }).fill('other')
-    await expect(form.getByLabel('Source Pod')).toHaveValue('')
-    await expect(run(page)).toBeDisabled()
-    await form.getByLabel('Source Pod').selectOption('uid-replacement')
+    await expect(form.getByLabel('Source Pod')).toHaveValue('uid-original')
+    await expect(panel(page)).toContainText('Source namespace: webapp')
     await expect(panel(page).getByRole('alert')).toContainText('original Pod webapp/webapp-123 (UID uid-original)')
-    await expect(panel(page)).toContainText('Results are stale')
     expect(posts).toBe(1)
   })
 
   test('all namespaces requires explicit source namespace; stale inventories are ignored', async ({ page }) => {
-    const form = await enabled(page)
-    await visibleForm(page).getByText('All namespaces', { exact: true }).click()
+    const form = await enabled(page, { allNamespaces: true })
     await expect(form.getByLabel('Source namespace')).toBeVisible()
     await expect(run(page)).toBeDisabled()
     let release!: () => void
@@ -234,13 +255,16 @@ test.describe('Connectivity tests', () => {
     await page.getByRole('button', { name: 'Verdict', exact: true }).click()
     await expect(form.getByRole('button', { name: 'Running connection test…' })).toBeDisabled()
     await expect(visibleForm(page).getByRole('button', { name: 'Reset', exact: true })).toBeDisabled()
+    // A new run could replace this card mid-test, and removing it would drop the result.
+    await expect(visibleForm(page).getByRole('button', { name: 'Run verdict', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Remove this analysis run' })).toBeDisabled()
     release()
     await expect(prediction(page).getByRole('heading')).toHaveText('BLOCKED')
     expect(posts).toBe(1)
     expect(confirmations).toBe(1)
   })
 
-  test('in-flight candidate changes keep old snapshot; JSON report preserves evidence and server metadata', async ({ page }) => {
+  test("in-flight form edits don't touch the run's snapshot; JSON report preserves evidence and server metadata", async ({ page }) => {
     let release!: () => void
     const pending = new Promise<void>((resolve) => { release = resolve })
     const result = { ...response, uid: 'uid-original', context: 'lab-review', apiServer: 'https://cluster.invalid', image: 'probe@sha256:123', startedAt: '2026-11-17T12:00:00Z', durationMs: 1234 }
@@ -256,7 +280,7 @@ test.describe('Connectivity tests', () => {
     await visibleForm(page).getByLabel('Candidate YAML', { exact: true }).fill(`${LOOKS_CORRECT_CNP}\n# next candidate`)
     release()
     await expect(prediction(page).getByRole('heading')).toHaveText('BLOCKED')
-    await expect(panel(page)).toContainText('Results are stale')
+    await expect(panel(page).getByText(/Results are stale/)).toHaveCount(0)
     const downloadPromise = page.waitForEvent('download')
     await panel(page).getByRole('button', { name: 'Download test report (JSON)' }).click()
     const download = await downloadPromise
@@ -271,13 +295,63 @@ test.describe('Connectivity tests', () => {
     expect(report.submittedAt).toMatch(/^\d{4}-/)
   })
 
-  test('same UID in a different namespace cannot retain source selection', async ({ page }) => {
-    const form = await enabled(page)
-    await expect(run(page)).toBeEnabled()
-    await visibleForm(page).getByLabel('Namespace', { exact: true }).fill('other')
-    await expect(form.getByLabel('Source Pod')).toHaveValue('')
+  test("each run card tests its own run's candidate and namespace", async ({ page }) => {
+    const requests: ConnectionProbeRequest[] = []
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    await page.route('**/api/probes/connection/stream', async (route) => { requests.push(route.request().postDataJSON()); await pending; await route.fulfill(probeStream(response)) })
+    await enabled(page)
+    const main = visibleForm(page)
+    await main.getByText('Stack runs', { exact: true }).click()
+    const second = `${LOOKS_CORRECT_CNP}# second run\n`
+    await main.getByLabel('Namespace', { exact: true }).fill('other')
+    await main.locator('textarea').fill(second)
+    await main.getByRole('button', { name: 'Run verdict', exact: true }).click()
+    await expect(page.locator('section[aria-label="Connectivity tests"]')).toHaveCount(2)
+    // The older run's card (now second) still tests the first candidate.
+    const older = page.locator('section[aria-label="Connectivity tests"]').nth(1)
+    await expect(older).toContainText('Source namespace: webapp')
+    page.once('dialog', (dialog) => dialog.accept())
+    await older.getByRole('button', { name: 'Review & run connection test' }).click()
+    await expect.poll(() => requests.length).toBe(1)
+    expect(requests[0].candidateYAML).toBe(LOOKS_CORRECT_CNP)
+    expect(requests[0].namespace).toBe('webapp')
+    // One test at a time: the newer run's card waits for it.
+    const newer = page.locator('section[aria-label="Connectivity tests"]').nth(0)
+    await newer.getByRole('button', { name: /Connectivity tests/ }).click()
+    await expect(newer).toContainText('Another connectivity test is running')
+    await expect(newer.getByRole('button', { name: 'Review & run connection test' })).toBeDisabled()
+    release()
+    await expect(older.getByRole('region', { name: 'Candidate prediction' })).toBeVisible()
+  })
+
+  test('a live-following run cannot be tested until it stops', async ({ page }) => {
+    await page.route('**/api/probes/capabilities', (route) => route.fulfill({ json: { enabled: true } }))
+    await page.route('**/api/probes/pods?*', (route) => route.fulfill({ json: { pods: [{ name: 'webapp-123', uid: 'uid-original' }] } }))
+    await openTab(page, 'Verdict')
+    const main = visibleForm(page)
+    await main.getByLabel('Namespace', { exact: true }).fill('webapp')
+    await main.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await main.getByText('Follow (live)', { exact: true }).click()
+    await main.getByRole('button', { name: 'Start following', exact: true }).click()
+    await panel(page).getByRole('button', { name: /Connectivity tests/ }).click()
+    await expect(panel(page)).toContainText('Stop following to test')
+    await configuration(page).getByLabel('Source Pod').selectOption('uid-original')
+    await configuration(page).getByLabel('Host or IP').fill('postgres.postgres.svc')
     await expect(run(page)).toBeDisabled()
-    await expect(form.getByLabel('Source Pod').locator('option')).toHaveText(['Select an existing Pod', 'webapp-123'])
+  })
+
+  test('collapsing the run keeps an in-flight test and its result', async ({ page }) => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    await page.route('**/api/probes/connection/stream', async (route) => { await pending; await route.fulfill(probeStream(response)) })
+    await enabled(page)
+    await submit(page)
+    await page.getByRole('button', { name: 'Collapse', exact: true }).click()
+    await expect(panel(page)).toBeHidden()
+    release()
+    await page.getByRole('button', { name: 'Expand', exact: true }).click()
+    await expect(prediction(page).getByRole('heading')).toHaveText('BLOCKED')
   })
 
   test('replacement mode is shared with connectivity and frozen in verdict runs and streams', async ({ page }) => {
@@ -285,16 +359,16 @@ test.describe('Connectivity tests', () => {
     let connection: ConnectionProbeRequest | undefined
     await page.route('**/api/verdict', (route) => { verdicts.push(route.request().postDataJSON()); return route.fulfill({ json: VERDICT }) })
     await page.route('**/api/probes/connection/stream', (route) => { connection = route.request().postDataJSON(); return route.fulfill(probeStream(response)) })
-    await enabled(page)
+    await enabled(page, { additive: true })
     const main = visibleForm(page)
-    await expect(main.getByLabel('Replace matching live policies')).toBeChecked()
-    await main.getByText('Replace matching live policies', { exact: true }).click()
-    await main.getByRole('button', { name: 'Run verdict', exact: true }).click()
     expect(verdicts[0].replaceExisting).toBe(false)
+    await expect(panel(page)).toContainText('Additive · keep live policies')
     await submit(page)
     expect(connection?.replaceExisting).toBe(false)
+    // The run's mode is frozen: flipping the form's doesn't touch its test.
     await main.getByText('Replace matching live policies', { exact: true }).click()
-    await expect(panel(page)).toContainText('Results are stale')
+    await expect(panel(page)).toContainText('Additive · keep live policies')
+    await expect(panel(page).getByText(/Results are stale/)).toHaveCount(0)
     await page.getByRole('button', { name: 'Duplicate to form', exact: true }).click()
     await expect(main.getByLabel('Replace matching live policies')).not.toBeChecked()
     await main.getByText('Follow (live)', { exact: true }).click()
@@ -306,8 +380,7 @@ test.describe('Connectivity tests', () => {
   test('candidate namespace is distinct from explicit source in all-namespace scope', async ({ page }) => {
     let request: ConnectionProbeRequest | undefined
     await page.route('**/api/probes/connection/stream', (route) => { request = route.request().postDataJSON(); return route.fulfill(probeStream(response)) })
-    const form = await enabled(page)
-    await visibleForm(page).getByText('All namespaces', { exact: true }).click()
+    const form = await enabled(page, { allNamespaces: true })
     await form.getByLabel('Source namespace').fill('source-only')
     await form.getByLabel('Source Pod').selectOption('uid-original')
     await submit(page)
@@ -353,7 +426,7 @@ test.describe('Connectivity tests', () => {
     expect(posts).toBe(1)
   })
 
-  test('reset clears completed connectivity inputs and evidence without remounting the panel', async ({ page }) => {
+  test('clearing a completed test, then Reset removing the run with its test', async ({ page }) => {
     await page.route('**/api/probes/connection/stream', (route) => route.fulfill(probeStream(response)))
     const form = await enabled(page)
     await submit(page)
@@ -364,8 +437,7 @@ test.describe('Connectivity tests', () => {
     await expect(prediction(page)).toBeVisible()
     await visibleForm(page).getByRole('button', { name: 'Reset', exact: true }).click()
     await expect(prediction(page)).toHaveCount(0)
-    await expect(form.getByLabel('Host or IP')).toHaveValue('')
-    await expect(run(page)).toBeDisabled()
+    await expect(form).toHaveCount(0)
   })
 
   test('eligible Pod exclusions explain an empty chooser and permit refresh', async ({ page }) => {

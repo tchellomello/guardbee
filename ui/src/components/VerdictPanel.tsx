@@ -97,6 +97,10 @@ export interface VerdictPanelProps {
   // Policy Editor with the new rule selected for review.
   policyNamespace?: string
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
+  // Loads the candidate into the Policy Editor and switches to it; resolves
+  // to a reason when the candidate can't go there (several policies, or
+  // rules the editor can't represent).
+  onEditInEditor?: (namespace: string, candidateYAML: string) => Promise<string | null>
 }
 
 export function VerdictPanel({
@@ -105,6 +109,7 @@ export function VerdictPanel({
   onSavePolicy,
   policyNamespace = '',
   onAppendRuleToPolicy,
+  onEditInEditor,
 }: VerdictPanelProps = {}) {
   // Restored from the last session (auto-saved below), so a reload doesn't
   // throw away the candidate being worked on — appended Allow/Deny
@@ -112,7 +117,6 @@ export function VerdictPanel({
   // traffic at that moment, and stale results would read as current.
   const [stored] = useState(loadVerdictForm)
   const [replaceExisting, setReplaceExisting] = useState(stored.replaceExisting)
-  const [resetGeneration, setResetGeneration] = useState(0)
   const [probeRunning, setProbeRunning] = useState(false)
   const [namespace, setNamespace] = useState(stored.namespace)
   const [allNamespaces, setAllNamespaces] = useState(stored.allNamespaces)
@@ -138,6 +142,24 @@ export function VerdictPanel({
   const [helpOpen, setHelpOpen] = useState(false)
   const [helpCategory, setHelpCategory] = useState<string | null>(null)
   const [expandedEditorOpen, setExpandedEditorOpen] = useState(false)
+  // Kept with the YAML it's about, so it disappears once the text changes.
+  const [editInEditorError, setEditInEditorError] = useState<{ yaml: string; reason: string } | null>(null)
+  const [editInEditorBusy, setEditInEditorBusy] = useState(false)
+
+  async function handleEditInEditor() {
+    if (!onEditInEditor) return
+    setEditInEditorBusy(true)
+    setEditInEditorError(null)
+    const yaml = candidateYAML
+    try {
+      const reason = await onEditInEditor(allNamespaces ? '' : namespace, yaml)
+      setEditInEditorError(reason ? { yaml, reason } : null)
+    } catch (err) {
+      setEditInEditorError({ yaml, reason: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setEditInEditorBusy(false)
+    }
+  }
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const streamRunIdRef = useRef<string | null>(null)
@@ -184,9 +206,12 @@ export function VerdictPanel({
     }
   }
 
+  // "ns/name" Services seen in this session's rows: the connectivity test's
+  // Host suggestions when GuardBee may not list Services.
+  const seenServices = runs.flatMap((r) => r.result.rows.flatMap((row) => (row.destinationService ? [row.destinationService] : [])))
+
   function handleResetSession() {
     if (probeRunning) return
-    setResetGeneration((generation) => generation + 1)
     setReplaceExisting(true)
     stopStreaming()
     requestGenerationRef.current++
@@ -463,6 +488,17 @@ export function VerdictPanel({
                     onSave={handleSave}
                   />
                 )}
+                {onEditInEditor && (
+                  <button
+                    type="button"
+                    onClick={handleEditInEditor}
+                    disabled={!candidateYAML.trim() || editInEditorBusy}
+                    title="Open this policy in the Policy Editor tab to edit it visually (one policy, port-level rules)"
+                    className={TEXT_ACTION}
+                  >
+                    ✎ Edit in Policy Editor
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setExpandedEditorOpen(true)}
@@ -476,6 +512,11 @@ export function VerdictPanel({
             >
               Candidate policy
             </SectionLabel>
+            {editInEditorError?.yaml === candidateYAML && (
+              <p role="status" data-testid="edit-in-editor-error" className="-mt-1 border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-xs text-ink-dim">
+                {editInEditorError.reason}
+              </p>
+            )}
             {savedName && (
               <p className="-mt-1 text-[0.65rem] text-ink-faint">
                 Workspace entry: <span className="font-mono text-ink-dim">{savedName}</span> (edits auto-save
@@ -492,7 +533,8 @@ export function VerdictPanel({
             <div className="flex flex-wrap gap-2">
               <button
                 type="submit"
-                disabled={loading || streaming}
+                disabled={loading || streaming || probeRunning}
+                title={probeRunning ? 'A connectivity test is running; a new run could replace its card' : undefined}
                 className="flex-1 bg-signal py-2.5 font-display text-xs font-bold tracking-[0.1em] text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
               >
                 {loading ? `Judging… ${formatElapsed(loadingElapsedMs)}` : streaming ? 'Streaming…' : follow ? 'Start following' : 'Run verdict'}
@@ -600,8 +642,6 @@ export function VerdictPanel({
 
       </form>
 
-      <ConnectivityTestsPanel active={active} candidateYAML={candidateYAML} namespace={namespace} allNamespaces={allNamespaces} replaceExisting={replaceExisting} resetGeneration={resetGeneration} onRunningChange={setProbeRunning} onOpenHelp={openHelp} />
-
       <div className="mt-6 space-y-6">
         {runs.length > 0 && (
           <ResultsHeader
@@ -630,6 +670,10 @@ export function VerdictPanel({
             policyNamespace={policyNamespace}
             onAppendRuleToPolicy={onAppendRuleToPolicy}
             onAddException={(yaml) => handleAddException(run, yaml)}
+            probeActive={active}
+            probeRunning={probeRunning}
+            onProbeRunningChange={setProbeRunning}
+            seenServices={seenServices}
           />
         ))}
       </div>
@@ -685,6 +729,10 @@ function RunCard({
   policyNamespace,
   onAppendRuleToPolicy,
   onAddException,
+  probeActive,
+  probeRunning,
+  onProbeRunningChange,
+  seenServices,
 }: {
   run: VerdictRunItem
   // False for an older stacked run past LIVE_GRAPH_RUN_LIMIT (see
@@ -698,6 +746,13 @@ function RunCard({
   policyNamespace: string
   onAppendRuleToPolicy?: (direction: 'ingress' | 'egress', rule: IngressRule | EgressRule) => void
   onAddException: (policyYAML: string) => void
+  // Connectivity tests run against this run's frozen candidate and scope.
+  // One test in flight across all runs (probeRunning): each adds an
+  // ephemeral container to a real Pod.
+  probeActive: boolean
+  probeRunning: boolean
+  onProbeRunningChange: (running: boolean) => void
+  seenServices: string[]
 }) {
   const [selectedGraphNode, setSelectedGraphNode] = useState<string | null>(null)
   const [exportCopied, setExportCopied] = useState(false)
@@ -838,7 +893,8 @@ function RunCard({
           <button
             type="button"
             onClick={() => onRemove(run.id)}
-            title="Remove this analysis run"
+            disabled={probeRunning}
+            title={probeRunning ? 'A connectivity test is running; remove this run once it finishes' : 'Remove this analysis run'}
             aria-label="Remove this analysis run"
             className={`${TEXT_ACTION} text-sm hover:text-drop`}
           >
@@ -1034,6 +1090,28 @@ function RunCard({
           ))}
         </div>
       )}
+
+      {/* Kept mounted when the card is collapsed: hiding must not drop an
+          in-flight test or its result. */}
+      <div hidden={run.isCollapsed}>
+        <ConnectivityTestsPanel
+          active={probeActive}
+          candidateYAML={run.candidateYAML}
+          namespace={run.namespace}
+          allNamespaces={run.allNamespaces}
+          replaceExisting={run.replaceExisting}
+          onRunningChange={onProbeRunningChange}
+          onOpenHelp={onOpenHelp}
+          seenServices={seenServices}
+          blockedReason={
+            run.isStreaming
+              ? 'Stop following to test: a test is evidence for a finished run.'
+              : probeRunning
+                ? 'Another connectivity test is running; one at a time.'
+                : undefined
+          }
+        />
+      </div>
     </div>
   )
 }

@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
+  fetchServices,
+  type ClusterService,
   fetchNamespaces, fetchProbeCapabilities, fetchProbePods, runConnectionProbeStream,
   ConnectionProbeError,
   type ProbePod, type ProbeProtocol, type ConnectionProbeRequest, type ConnectionProbeResponse,
   type ProbeCapabilities, type ProbeImage,
 } from '../api'
 import { validProbeHost, validProbeNamespace, validProbePort } from '../shared/tcpProbe'
-import { candidateFingerprint, connectivityDecision, type ConnectivityDecision } from '../shared/connectivity'
+import { candidateFingerprint, connectivityDecision, serviceHostSuggestions, servicePortFor, type ConnectivityDecision } from '../shared/connectivity'
+import { SuggestInput } from './SuggestInput'
 import type { ProbeStageId } from '../shared/probeStages'
 import { Field } from './NamespaceScope'
 import { ProbeImagePicker } from './ProbeImagePicker'
@@ -26,9 +29,18 @@ const errorText = (err: unknown) => err instanceof Error ? err.message : String(
 type RequestSnapshot = Readonly<ConnectionProbeRequest>
 type Attempt = { request: RequestSnapshot; allNamespaces: boolean; submittedAt: string; capabilities: ProbeCapabilities; stages: ProbeStageId[]; response?: ConnectionProbeResponse; error?: string; definiteRejection?: boolean; errorStatus?: number }
 
-export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdictNamespace, allNamespaces, replaceExisting, resetGeneration, onRunningChange, onOpenHelp }: {
-  active: boolean; candidateYAML: string; namespace: string; allNamespaces: boolean; replaceExisting: boolean; resetGeneration: number; onRunningChange: (running: boolean) => void; onOpenHelp?: (category: string) => void
+export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdictNamespace, allNamespaces, replaceExisting, resetGeneration = 0, onRunningChange, onOpenHelp, seenServices = [], blockedReason }: {
+  active: boolean; candidateYAML: string; namespace: string; allNamespaces: boolean; replaceExisting: boolean; resetGeneration?: number; onRunningChange: (running: boolean) => void; onOpenHelp?: (category: string) => void
+  // Why a test can't start right now (the run is still following, or
+  // another run's test is in flight); the inputs stay usable.
+  blockedReason?: string
+  // "ns/name" Services seen in verdict rows: Host suggestions when listing
+  // the cluster's Services isn't allowed.
+  seenServices?: string[]
 }) {
+  // One panel per run card: element ids must be unique per panel.
+  const uid = useId()
+  const ids = { content: `${uid}-content`, capability: `${uid}-capability`, namespaces: `${uid}-namespaces`, hostHelp: `${uid}-host-help` }
   const [expanded, setExpanded] = useState(false)
   const [capability, setCapability] = useState({ enabled: false, message: 'Checking test availability…' })
   const [server, setServer] = useState<ProbeCapabilities>({ enabled: false })
@@ -44,6 +56,7 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
   const [running, setRunning] = useState(false)
   const [attempt, setAttempt] = useState<Attempt | null>(null)
   const [podRefresh, setPodRefresh] = useState(0)
+  const [services, setServices] = useState<{ list: ClusterService[]; forbidden: boolean }>({ list: [], forbidden: false })
   // State is not a synchronous lock. The panel stays mounted across app tabs;
   // never abort or repeat this mutating request just because the view changes.
   const runningRef = useRef(false)
@@ -103,6 +116,17 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
     return () => { ignore = true }
   }, [namespace, allNamespaces, capability.enabled, podRefresh, active, expanded])
 
+  // Host suggestions: the cluster's Services, all namespaces, fetched once
+  // per open panel. A failed or forbidden list just means fewer suggestions.
+  useEffect(() => {
+    if (!active || !expanded || !capability.enabled) return
+    let ignore = false
+    fetchServices().then((res) => {
+      if (!ignore) setServices({ list: res.services ?? [], forbidden: !!res.forbidden })
+    }).catch(() => {})
+    return () => { ignore = true }
+  }, [active, expanded, capability.enabled])
+
   // The catalog is the server's; an id it no longer offers falls back to its
   // default (first) entry rather than sending something it would reject.
   const images = server.images ?? []
@@ -114,7 +138,7 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
   const protocolSupported = (!server.protocols || server.protocols.includes(protocol)) && imageSupports(protocol)
   const podPlaceholder = !capability.enabled ? 'Enable connectivity tests first' : !validProbeNamespace(namespace) ? 'Select a source namespace' : inventory.loading ? 'Loading eligible Pods…' : inventory.error ? 'Could not load Pods' : !pods.length ? 'No eligible Pods found' : 'Select an existing Pod'
   const excluded = currentInventory ? Object.entries(inventory.excluded ?? {}) : []
-  const ready = active && expanded && capability.enabled && protocolSupported && candidateYAML.trim() && selectedPod && validProbeHost(host) && validProbePort(port) && !inventory.loading
+  const ready = !blockedReason && active && expanded && capability.enabled && protocolSupported && candidateYAML.trim() && selectedPod && validProbeHost(host) && validProbePort(port) && !inventory.loading
   const stale = !!attempt && (attempt.request.namespace !== namespace || attempt.allNamespaces !== allNamespaces ||
     (!inventory.loading && attempt.request.uid !== selectedPod?.uid) || attempt.request.host !== host || attempt.request.port !== Number(port) ||
     attempt.request.protocol !== protocol || attempt.request.candidateYAML !== candidateYAML || attempt.request.replaceExisting !== replaceExisting ||
@@ -160,19 +184,20 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
 
   return (
     <section aria-label="Connectivity tests" className="mt-6 min-w-0 border border-line bg-panel">
-      <button type="button" aria-expanded={expanded} aria-controls="connectivity-tests-content" onClick={() => setExpanded(!expanded)} className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-3 p-5 text-left hover:bg-void/30">
-        <span><span className="block text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase">Connectivity tests</span><span className="mt-1 block text-xs text-ink-dim">Test a specific connection against your loaded candidate.</span></span>
+      <button type="button" aria-expanded={expanded} aria-controls={ids.content} onClick={() => setExpanded(!expanded)} className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-3 p-5 text-left hover:bg-void/30">
+        <span><span className="block text-[0.65rem] font-semibold tracking-[0.18em] text-signal uppercase">Connectivity tests</span><span className="mt-1 block text-xs text-ink-dim">Test a specific connection against this run's candidate.</span></span>
         <span className="flex items-center gap-3"><Badge>Bounded · opt-in</Badge><span aria-hidden="true" className="text-ink-dim">{expanded ? '−' : '+'}</span></span>
       </button>
-      <div id="connectivity-tests-content" hidden={!expanded} className="min-w-0 space-y-5 border-t border-line p-5">
+      <div id={ids.content} hidden={!expanded} className="min-w-0 space-y-5 border-t border-line p-5">
         <div className="flex flex-wrap items-center gap-2 text-xs text-ink-dim" aria-label="Current candidate context">
           <Badge>{candidateYAML.trim() ? `Candidate ${candidateFingerprint(candidateYAML)}` : 'No candidate loaded'}</Badge>
           <Badge>{allNamespaces ? 'All namespaces' : `Source namespace: ${namespace || 'not selected'}`}</Badge>
           <Badge>{replaceExisting ? 'Replace matching live policies' : 'Additive · keep live policies'}</Badge>
           {(server.context || server.apiServer) && <Badge>Cluster: {server.context ?? 'unknown context'}{server.apiServer && ` · ${server.apiServer}`}</Badge>}
         </div>
-        {!candidateYAML.trim() && <p role="status" className="text-sm text-ink-dim">Load a nonempty candidate in the Verdict form above before running a connectivity test.</p>}
-        <p id="connection-capability" role="status" className={capability.enabled ? 'sr-only' : 'break-words text-xs text-ink-dim'}>{capability.message}</p>
+        {!candidateYAML.trim() && <p role="status" className="text-sm text-ink-dim">This run has no candidate to test against.</p>}
+        {blockedReason && !running && <p role="status" className="text-sm text-ink-dim">{blockedReason}</p>}
+        <p id={ids.capability} role="status" className={capability.enabled ? 'sr-only' : 'break-words text-xs text-ink-dim'}>{capability.message}</p>
         {!capability.enabled && <div className="space-y-2 border border-line bg-void/40 p-4 text-sm text-ink-dim" aria-label="Connectivity enablement">
           <h3 className="font-display font-bold text-ink">Connectivity tests require explicit server opt-in</h3>
           <code className="block whitespace-pre-wrap break-all text-xs text-ink">./guardbee ui --enable-probes</code>
@@ -185,19 +210,32 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
             <SectionLabel>Target</SectionLabel>
             <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {allNamespaces && <Field label="Source namespace">
-                <input value={sourceNamespace} list="connection-namespaces" required maxLength={63} pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" className={inputClass} placeholder="Choose a namespace" onChange={(e) => setSourceNamespace(e.target.value)} />
-                <datalist id="connection-namespaces">{namespaces.map((ns) => <option key={ns} value={ns} />)}</datalist>
+                <input value={sourceNamespace} list={ids.namespaces} required maxLength={63} pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" className={inputClass} placeholder="Choose a namespace" onChange={(e) => setSourceNamespace(e.target.value)} />
+                <datalist id={ids.namespaces}>{namespaces.map((ns) => <option key={ns} value={ns} />)}</datalist>
               </Field>}
               <Field label="Source Pod"><select aria-label="Source Pod" value={selectedPod?.uid ?? ''} required className={inputClass} onChange={(e) => setSelection({ namespace, uid: e.target.value })}>
                 <option value="">{podPlaceholder}</option>
                 {pods.map((pod) => <option key={pod.uid} value={pod.uid}>{pod.name}</option>)}
               </select></Field>
-              <Field label="Host or IP"><input value={host} required maxLength={253} aria-describedby="connection-host-help" aria-invalid={!!host && !validProbeHost(host)} className={inputClass} placeholder="db.myapp.svc.cluster.local" onChange={(e) => setHost(e.target.value)} /></Field>
+              <Field label="Host or IP"><SuggestInput
+                value={host}
+                multi={false}
+                suggestions={serviceHostSuggestions(services.list, seenServices, namespace)}
+                placeholder="db.myapp.svc.cluster.local"
+                className={inputClass}
+                inputProps={{ required: true, maxLength: 253, 'aria-describedby': ids.hostHelp, 'aria-invalid': !!host && !validProbeHost(host) }}
+                onChange={(v) => {
+                  setHost(v)
+                  // Picking a known Service fills its port for this protocol.
+                  const p = servicePortFor(services.list, v, protocol)
+                  if (p) setPort(p)
+                }}
+              /></Field>
               <Field label="Port"><input value={port} required inputMode="numeric" maxLength={5} pattern="[0-9]{1,5}" aria-invalid={!validProbePort(port)} className={inputClass} onChange={(e) => setPort(e.target.value)} /></Field>
               <Field label="Protocol"><select value={protocol} className={inputClass} onChange={(e) => setProtocol(e.target.value as ProbeProtocol)}>{(['TCP', 'UDP'] as const).map((p) => <option key={p} value={p} disabled={!!server.protocols && !server.protocols.includes(p) || !imageSupports(p)}>{p}{!imageSupports(p) && selectedImage ? ` (not in ${selectedImage.name})` : ''}</option>)}</select></Field>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-dim">
-              <p id="connection-host-help">{protocol === 'UDP' ? 'Sends one bounded datagram with a fixed payload (27 bytes); delivery is never proven.' : 'Opens one bounded TCP connection; not an application login.'} Host: an IP address or a Kubernetes Service name; for an external site, use its IP.</p>
+              <p id={ids.hostHelp}>{protocol === 'UDP' ? 'Sends one bounded datagram with a fixed payload (27 bytes); delivery is never proven.' : 'Opens one bounded TCP connection; not an application login.'} Host: an IP address or a Kubernetes Service name ({services.forbidden ? 'suggestions are Services seen in flows: GuardBee may not list Services' : 'pick one of the cluster\'s Services to fill its port'}); for an external site, use its IP.</p>
               <button type="button" className="cursor-pointer text-signal disabled:opacity-40" disabled={!validProbeNamespace(namespace) || inventory.loading} onClick={() => setPodRefresh((value) => value + 1)}>Refresh running Pods</button>
             </div>
             {currentInventory && inventory.error && <p role="alert" className="break-words text-sm text-drop">Could not list running Pods: {inventory.error}</p>}
@@ -206,7 +244,7 @@ export function ConnectivityTestsPanel({ active, candidateYAML, namespace: verdi
           </fieldset>
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-line pt-4">
             <p className="text-xs text-ink-dim">Adds an ephemeral container to the Pod · you confirm first</p>
-            <button type="submit" disabled={!ready || running} aria-describedby="connection-capability" className={buttonClass}>{running ? 'Running connection test…' : 'Review & run connection test'}</button>
+            <button type="submit" disabled={!ready || running} aria-describedby={ids.capability} className={buttonClass}>{running ? 'Running connection test…' : 'Review & run connection test'}</button>
           </div>
         </form>
         {attempt && <section aria-label="Submitted connection test" className="rise-in min-w-0 space-y-4 border-t border-line pt-5 break-words">

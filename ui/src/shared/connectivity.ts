@@ -1,4 +1,4 @@
-import type { ConnectionProbeResponse } from '../api'
+import type { ClusterService, ConnectionProbeResponse } from '../api'
 
 export type ConnectivityDecision = 'ALLOWED' | 'BLOCKED' | 'INCONCLUSIVE'
 
@@ -21,6 +21,33 @@ export function connectivityDecision(response: ConnectionProbeResponse, side: 'b
   if (decisions.every((value) => value === true)) return 'ALLOWED'
   if (decisions.every((value) => value === false)) return 'BLOCKED'
   return 'INCONCLUSIVE'
+}
+
+// A Service's in-cluster DNS name, what a connectivity test's Host takes.
+export function serviceHost(namespace: string, name: string): string {
+  return `${name}.${namespace}.svc.cluster.local`
+}
+
+// Host suggestions: the cluster's Services (or, when listing them isn't
+// allowed, the "ns/name" Services seen in flows), the scope namespace first.
+export function serviceHostSuggestions(services: ClusterService[], seen: string[], preferNamespace: string): string[] {
+  const refs = services.length
+    ? services.map((s) => ({ namespace: s.namespace, name: s.name }))
+    : seen.flatMap((ref) => {
+        const [namespace, name] = ref.split('/')
+        return namespace && name ? [{ namespace, name }] : []
+      })
+  const first = refs.filter((r) => r.namespace === preferNamespace)
+  const rest = refs.filter((r) => r.namespace !== preferNamespace)
+  return [...new Set([...first, ...rest].map((r) => serviceHost(r.namespace, r.name)))]
+}
+
+// The port to fill in when Host names a known Service: its first port for
+// the chosen protocol, or null to leave the Port field alone.
+export function servicePortFor(services: ClusterService[], host: string, protocol: string): string | null {
+  const svc = services.find((s) => serviceHost(s.namespace, s.name) === host.trim())
+  const port = svc?.ports?.find((p) => p.protocol === protocol)
+  return port ? String(port.port) : null
 }
 
 // Middle-ellipsis for the path diagram's endpoint labels: keeps both the

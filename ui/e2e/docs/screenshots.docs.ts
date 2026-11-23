@@ -249,6 +249,8 @@ test('ui-connectivity-test', async ({ page }) => {
   const main = visibleForm(page)
   await main.locator('input').first().fill('observability')
   await main.locator('textarea').fill(LOOKS_CORRECT_CNP)
+  // Tests live in a verdict run's card, against that run's candidate.
+  await main.getByRole('button', { name: 'Run verdict', exact: true }).click()
   const panel = page.getByRole('region', { name: 'Connectivity tests', exact: true })
   await panel.getByRole('button', { name: /Connectivity tests/ }).click()
   const form = page.getByRole('form', { name: 'Connection test configuration' })

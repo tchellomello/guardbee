@@ -17,6 +17,7 @@ export function SuggestInput({
   multi,
   placeholder,
   className,
+  inputProps,
 }: {
   value: string
   onChange: (value: string) => void
@@ -26,6 +27,9 @@ export function SuggestInput({
   multi: boolean
   placeholder?: string
   className?: string
+  // Extra attributes for the <input> (aria-*, required, maxLength…); the
+  // combobox wiring below always wins.
+  inputProps?: React.InputHTMLAttributes<HTMLInputElement>
 }) {
   const listId = useId()
   const [open, setOpen] = useState(false)
@@ -44,6 +48,7 @@ export function SuggestInput({
   return (
     <div className="relative">
       <input
+        {...inputProps}
         ref={inputRef}
         value={value}
         placeholder={placeholder}

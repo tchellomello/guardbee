@@ -44,10 +44,13 @@ rules:
   # Connectivity tests against a Service name (db.app.svc) correlate Hubble
   # flows through the Service's ClusterIPs and backend addresses: socket-level
   # load balancing rewrites the ClusterIP before Hubble sees the packet. A
-  # denied read leaves such a test inconclusive, never guessed.
+  # denied read leaves such a test inconclusive, never guessed. "list" only
+  # feeds the connectivity test's Host suggestions (Service names and
+  # ports, GET /api/services); without it the UI suggests Services seen in
+  # flows instead.
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get"]
+    verbs: ["get", "list"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["list"]
