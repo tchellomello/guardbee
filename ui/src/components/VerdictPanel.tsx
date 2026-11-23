@@ -40,7 +40,7 @@ function rowsToMarkdownTable(rows: VerdictRow[]): string {
   const header = '| Change | Source | Destination | Port | Seen | Why |\n| --- | --- | --- | --- | --- | --- |'
   const lines = rows.map(
     (r) =>
-      `| ${r.change} | ${escapeCell(r.source)} | ${escapeCell(r.destination)} | ${r.protocol}:${r.port} | ${
+      `| ${r.change} | ${escapeCell(r.source)} | ${escapeCell(r.destination)}${r.destinationNames?.length ? ` (${r.destinationNames.join(', ')})` : ''} | ${r.protocol}:${r.port} | ${
         r.count > 1 ? `${r.count}×` : '—'
       } | ${escapeCell(r.explanation)}${l7Text(r) ? ` (L7 ${escapeCell(l7Text(r))})` : ''} |`
   )
@@ -1055,6 +1055,11 @@ function RunCard({
                         >
                           {row.destination}
                         </GraphNodeLink>
+                        {row.destinationNames?.length ? (
+                          <span data-testid="verdict-destination-names" className="ml-1 text-ink-dim">
+                            ({row.destinationNames.join(', ')})
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-ink">
                         {row.protocol}:{row.port}

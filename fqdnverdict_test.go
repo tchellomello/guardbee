@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -181,5 +182,33 @@ func TestFQDNWithoutNamesIsNotSimulated(t *testing.T) {
 	pod := fqdnFlow(2000, []string{"k8s:app=postgres", "k8s:io.kubernetes.pod.namespace=postgres"})
 	if got := j.change(pod); got != "NEWLY_DROPPED" {
 		t.Errorf("pod destination: got %q, want NEWLY_DROPPED", got)
+	}
+}
+
+func TestFQDNRowNamesTheDestination(t *testing.T) {
+	// "reserved:world" alone doesn't say which site a toFQDNs verdict is
+	// about: the row carries the names, and each name is its own row.
+	j := newFQDNJudge(t, "", fqdnPolicy("matchName: api.github.com"))
+	logger := slog.Default()
+	allowed := judgeFlow(logger, j.baseline, j.candidate, worldFlow("api.github.com"), &j.counts, true)
+	dropped := judgeFlow(logger, j.baseline, j.candidate, worldFlow("evil.example.com"), &j.counts, true)
+	if allowed == nil || dropped == nil {
+		t.Fatal("want a row for each flow")
+	}
+	if got := toRowOut(dropped, 1).DestinationNames; len(got) != 1 || got[0] != "evil.example.com" {
+		t.Errorf("JSON destinationNames: got %v, want [evil.example.com]", got)
+	}
+	if got := dropped.line(1); !strings.Contains(got, "reserved:world (evil.example.com)") {
+		t.Errorf("CLI line doesn't name the destination: %s", got)
+	}
+	other := judgeFlow(logger, j.baseline, j.candidate, worldFlow("other.example.com"), &j.counts, true)
+	if other.key() == dropped.key() {
+		t.Error("drops to two different names must not merge into one row")
+	}
+
+	// A pod's names (its Service's DNS name) add nothing: not shown.
+	pod := fqdnFlow(2000, []string{"k8s:app=postgres", "k8s:io.kubernetes.pod.namespace=postgres"}, "postgres.postgres.svc.cluster.local")
+	if row := judgeFlow(logger, j.baseline, j.candidate, pod, &j.counts, true); row == nil || row.dstNames != nil {
+		t.Errorf("pod destination: want a row without names, got %+v", row)
 	}
 }

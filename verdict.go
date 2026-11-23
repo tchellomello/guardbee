@@ -556,6 +556,11 @@ type verdictRow struct {
 	// key(): one row's flows can reach the same pod with or without a
 	// Service in front, and that doesn't change the verdict.
 	dstService string
+	// dstNames are the DNS names Hubble recorded for a world/CIDR
+	// destination (destination_names), which toFQDNs is judged on
+	// (fqdnverdict.go); "reserved:world" alone doesn't say which site a row
+	// is about. Part of key(): each name can get its own verdict.
+	dstNames []string
 	// l7Baseline/l7Candidate name the L7 rules the proxy applies to this
 	// flow on each side (joinL7), "" when that side doesn't redirect it.
 	l7Baseline, l7Candidate string
@@ -603,7 +608,7 @@ func serviceString(s *flowpb.Service) string {
 }
 
 func (r *verdictRow) key() string {
-	key := fmt.Sprintf("%s|%s|%s|%s:%d", r.change, r.src, r.dst, r.proto, r.port)
+	key := fmt.Sprintf("%s|%s|%s|%s:%d", r.change, r.src, r.dstDisplay(), r.proto, r.port)
 	// Rendered endpoint names need not uniquely identify a security identity
 	// across a sample. Never merge unchanged-allowed with unchanged-denied.
 	if r.baselineAllowed != nil && r.candidateAllowed != nil {
@@ -620,7 +625,16 @@ func (r *verdictRow) line(count int) string {
 		suffix = fmt.Sprintf("  (seen %dx in this sample)", count)
 	}
 	return fmt.Sprintf("%s  %s -> %s  %s:%d  %s%s%s",
-		colorizePadded(changeColor(r.change), r.change, 13), r.src, r.dst, r.proto, r.port, changeExplanation(r.change), r.l7Detail(), suffix)
+		colorizePadded(changeColor(r.change), r.change, 13), r.src, r.dstDisplay(), r.proto, r.port, changeExplanation(r.change), r.l7Detail(), suffix)
+}
+
+// dstDisplay is dst followed by its DNS names, if any: "reserved:world
+// (api.github.com)".
+func (r *verdictRow) dstDisplay() string {
+	if len(r.dstNames) == 0 {
+		return r.dst
+	}
+	return r.dst + " (" + strings.Join(r.dstNames, ", ") + ")"
 }
 
 // judgeFlow is the one piece of judging logic shared by the one-shot and
@@ -825,6 +839,7 @@ func judgeFlow(logger *slog.Logger, baseline, candidate *verdictEngine, f *flowp
 		change: change, src: endpointString(src), dst: endpointString(dst), proto: proto, port: key.DestPort,
 		side: side, srcLabels: src.GetLabels(), dstLabels: dst.GetLabels(),
 		dstService: serviceString(f.GetDestinationService()),
+		dstNames:   fqdnDisplayNames(dst, f.GetDestinationNames()),
 		l7Baseline: joinL7(baseL7In, baseL7Eg), l7Candidate: joinL7(candL7In, candL7Eg),
 		l7Request: request, l7Judge: judge,
 	}

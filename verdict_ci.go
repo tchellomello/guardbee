@@ -268,7 +268,7 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 			if withL7 {
 				l7 = " " + mdCell(strings.TrimSpace(r.l7Detail())) + " |"
 			}
-			fmt.Fprintf(w, "| %s | %s | %s | %s/%d |%s %d |\n", r.change, mdCell(r.src), mdCell(r.dst), r.proto, r.port, l7, comp.rowCounts[i])
+			fmt.Fprintf(w, "| %s | %s | %s | %s/%d |%s %d |\n", r.change, mdCell(r.src), mdCell(r.dstDisplay()), r.proto, r.port, l7, comp.rowCounts[i])
 		}
 	}
 	var changed, unchanged []int

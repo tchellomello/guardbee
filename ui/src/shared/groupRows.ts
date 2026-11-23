@@ -9,7 +9,7 @@ import type { VerdictRow } from '../api'
 export function groupRows(rows: VerdictRow[]): VerdictRow[] {
   const byKey = new Map<string, VerdictRow>()
   for (const r of rows) {
-    const k = [r.change, r.source, r.destination, r.protocol, r.port].join('\u0000')
+    const k = [r.change, r.source, r.destination, (r.destinationNames ?? []).join(','), r.protocol, r.port].join('\u0000')
     const hit = byKey.get(k)
     if (hit) hit.count += r.count
     else byKey.set(k, { ...r })

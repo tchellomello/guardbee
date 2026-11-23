@@ -38,6 +38,9 @@ export interface VerdictRow {
   destinationLabels?: string[]
   // The Kubernetes Service the flow was addressed to ("ns/name"), if any.
   destinationService?: string
+  // DNS names Hubble recorded for a world/CIDR destination, which toFQDNs
+  // is judged on; each name is its own row.
+  destinationNames?: string[]
   // The L7 rules the proxy applies to this flow on each side, absent when
   // that side doesn't redirect it (verdictRow.l7Baseline/l7Candidate).
   l7Baseline?: string
