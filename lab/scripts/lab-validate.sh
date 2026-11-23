@@ -11,6 +11,8 @@
 #   merge-ready.yaml   — must pass clean (exit 0)
 # plus examples/postgres-metrics-http-only.yaml — the scrape newly behind an
 # HTTP rule must be L7_CHANGED (exit 5 with --fail-on-l7)
+# and, with real L7 policies applied (lab/l7/), per-request verdicts: an
+# HTTP path typo and a single-label DNS wildcard must drop real requests.
 # Then the connectivity tests, through the streaming endpoint the UI uses,
 # once per built-in vetted probe image (probes/images.yaml), so "vetted" is
 # re-proven against every pinned Cilium, not just claimed:
@@ -175,6 +177,25 @@ expect_probe() {
 
 expect_probe webapp webapp postgres.postgres.svc.cluster.local 5432 netshoot lab/candidates/looks-correct.yaml "ALLOWED ALLOWED"
 expect_probe observability prometheus postgres.postgres.svc.cluster.local 9187 busybox lab/candidates/looks-correct.yaml "ALLOWED BLOCKED"
+
+# L7 request verdicts. Hubble only records HTTP requests and DNS queries for
+# traffic already behind Cilium's proxy, so these apply real L7 policies to
+# this disposable lab first (after the connectivity tests, which assume no
+# live policy). Each check fails if requests stop being judged per request:
+# an unjudged request falls back to L7_CHANGED, which is exit 0 for the
+# typo/DNS checks (want 2) and exit 5 for the --fail-on-l7 one (want 0).
+# Too few L7 records yet is exit 3, which expect_verdict retries.
+echo
+echo "=== lab-validate: L7 request verdicts against live HTTP and DNS policies ==="
+kubectl apply -f examples/postgres-metrics-http-only.yaml -f lab/l7/webapp-dns-live.yaml
+http=(--replace-existing --type l7 --from-label k8s:app=prometheus --to-port 9187)
+echo "--- an HTTP path typo 403s every real scrape (exit 2)"
+expect_verdict lab/l7/postgres-metrics-typo.yaml 2 "${http[@]}"
+echo "--- a looser path keeps every real scrape (exit 0, even with --fail-on-l7)"
+expect_verdict lab/l7/postgres-metrics-any-subpath.yaml 0 "${http[@]}" --fail-on-l7
+echo "--- '*.cluster.local' (one DNS label) refuses webapp's postgres lookup (exit 2)"
+NS=webapp expect_verdict examples/webapp-dns-single-label-wildcard.yaml 2 --replace-existing --type l7 --to-port 53
+kubectl delete -f examples/postgres-metrics-http-only.yaml -f lab/l7/webapp-dns-live.yaml
 
 echo
 echo "lab-validate: all lab verdicts and connectivity tests matched against Cilium ${pinned}."

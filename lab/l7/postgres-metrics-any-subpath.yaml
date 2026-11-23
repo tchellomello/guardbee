@@ -1,0 +1,40 @@
+# lab-validate's HTTP request check, against examples/postgres-metrics-http-only.yaml
+# applied live: a looser path that still matches `GET /metrics`. The rules
+# differ, but every recorded request passes both -> UNCHANGED (exit 0, also
+# with --fail-on-l7, which would catch the requests going unjudged).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-allow-webapp
+  namespace: postgres
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: webapp
+            io.kubernetes.pod.namespace: webapp
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app: prometheus
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
+          rules:
+            http:
+              - method: GET
+                path: /metrics.*
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

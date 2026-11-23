@@ -1,0 +1,40 @@
+# lab-validate's HTTP request check, against examples/postgres-metrics-http-only.yaml
+# applied live: the same policy with a one-letter path typo. Cilium's path
+# rule is a full-match regex, so every real `GET /metrics` scrape would get a
+# 403 -> NEWLY_DROPPED (exit 2), judged per request.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-allow-webapp
+  namespace: postgres
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: webapp
+            io.kubernetes.pod.namespace: webapp
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app: prometheus
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
+          rules:
+            http:
+              - method: GET
+                path: /metric
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
