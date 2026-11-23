@@ -325,7 +325,7 @@ test.describe('Connectivity tests', () => {
     await expect(older.getByRole('region', { name: 'Candidate prediction' })).toBeVisible()
   })
 
-  test('a live-following run cannot be tested until it stops', async ({ page }) => {
+  test('a live-following run can be tested once it stops', async ({ page }) => {
     await page.route('**/api/probes/capabilities', (route) => route.fulfill({ json: { enabled: true } }))
     await page.route('**/api/probes/pods?*', (route) => route.fulfill({ json: { pods: [{ name: 'webapp-123', uid: 'uid-original' }] } }))
     await openTab(page, 'Verdict')
@@ -339,6 +339,9 @@ test.describe('Connectivity tests', () => {
     await configuration(page).getByLabel('Source Pod').selectOption('uid-original')
     await configuration(page).getByLabel('Host or IP').fill('postgres.postgres.svc')
     await expect(run(page)).toBeDisabled()
+    await main.getByRole('button', { name: 'Stop', exact: true }).click()
+    await expect(panel(page)).not.toContainText('Stop following to test')
+    await expect(run(page)).toBeEnabled()
   })
 
   test('collapsing the run keeps an in-flight test and its result', async ({ page }) => {
