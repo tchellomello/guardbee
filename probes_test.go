@@ -37,8 +37,8 @@ import (
 
 const testProbeImage = "registry.example/probe@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-func testProbeReq() tcpProbeRequest {
-	return tcpProbeRequest{Namespace: "app", Pod: "client", UID: "uid-1", Host: "192.0.2.2", Port: 443}
+func testProbeReq() connectionProbeRequest {
+	return connectionProbeRequest{Protocol: "TCP", Namespace: "app", Pod: "client", UID: "uid-1", Host: "192.0.2.2", Port: 443}
 }
 func testProbePod() *corev1.Pod {
 	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "client", Namespace: "app", UID: types.UID("uid-1"), ResourceVersion: "7", Labels: map[string]string{"app": "client"}}, Spec: corev1.PodSpec{NodeName: "worker", ServiceAccountName: "workload", Containers: []corev1.Container{{Name: "app", Image: "app:1"}}, Volumes: []corev1.Volume{{Name: "token"}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
@@ -57,21 +57,11 @@ func testProbeServer(t *testing.T) (*uiServer, *fake.Clientset) {
 	core.PrependReactor("create", "selfsubjectaccessreviews", func(a ktesting.Action) (bool, runtime.Object, error) {
 		return true, &authv1.SelfSubjectAccessReview{Status: authv1.SubjectAccessReviewStatus{Allowed: true}}, nil
 	})
-	b.capture = func(context.Context, *uiServer, tcpProbeRequest) (*probeCapture, error) {
+	b.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
 		return &probeCapture{stop: func() {}}, nil
 	}
-	b.logs = func(context.Context, *uiServer, tcpProbeRequest, string) error { return nil }
+	b.logs = func(context.Context, *uiServer, connectionProbeRequest, string) error { return nil }
 	return &uiServer{core: core, cilium: ciliumfake.NewSimpleClientset(), logger: slog.Default(), probes: b}, core
-}
-
-func probePOST(s *uiServer, req tcpProbeRequest) *httptest.ResponseRecorder {
-	b, _ := json.Marshal(req)
-	r := httptest.NewRequest("POST", "http://127.0.0.1:4747/api/probes/tcp", bytes.NewReader(b))
-	r.Header.Set("Origin", "http://127.0.0.1:4747")
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	s.handleTCPProbe(w, r)
-	return w
 }
 
 func noProbeMutation(t *testing.T, core *fake.Clientset) {
@@ -112,7 +102,7 @@ func TestProbeOptInAndListen(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &caps); err != nil || caps.Enabled || !reflect.DeepEqual(caps.Protocols, []string{"TCP", "UDP"}) {
 		t.Fatal(w.Body.String())
 	}
-	w = probePOST(s, testProbeReq())
+	w = connectionPOST(s, testProbeReq())
 	if w.Code != 403 {
 		t.Fatal(w.Code)
 	}
@@ -144,21 +134,21 @@ func TestProbeInputAndCSRF(t *testing.T) {
 		{"method", "http://127.0.0.1:4747", "127.0.0.1:4747", "application/json", string(valid), "", "GET", 405},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest(tt.method, "http://"+tt.host+"/api/probes/tcp", strings.NewReader(tt.body))
+			r := httptest.NewRequest(tt.method, "http://"+tt.host+"/api/probes/connection", strings.NewReader(tt.body))
 			r.Header.Set("Origin", tt.origin)
 			r.Header.Set("Content-Type", tt.ct)
 			r.Header.Set("Sec-Fetch-Site", tt.site)
 			w := httptest.NewRecorder()
-			s.handleTCPProbe(w, r)
+			s.handleConnectionProbe(w, r)
 			if w.Code != tt.code {
 				t.Fatalf("%d: %s", w.Code, w.Body.String())
 			}
 		})
 	}
-	for _, mutate := range []func(*tcpProbeRequest){func(r *tcpProbeRequest) { r.Namespace = "" }, func(r *tcpProbeRequest) { r.Pod = "bad/name" }, func(r *tcpProbeRequest) { r.UID = "" }, func(r *tcpProbeRequest) { r.Port = 0 }, func(r *tcpProbeRequest) { r.Port = 65536 }, func(r *tcpProbeRequest) { r.Host = "--help" }, func(r *tcpProbeRequest) { r.Host = "https://db.app.svc" }, func(r *tcpProbeRequest) { r.Host = "fe80::1%eth0" }, func(r *tcpProbeRequest) { r.Host = "0.0.0.0" }, func(r *tcpProbeRequest) { r.Host = "224.0.0.1" }, func(r *tcpProbeRequest) { r.CandidateYAML = "kind: Pod" }} {
+	for _, mutate := range []func(*connectionProbeRequest){func(r *connectionProbeRequest) { r.Namespace = "" }, func(r *connectionProbeRequest) { r.Pod = "bad/name" }, func(r *connectionProbeRequest) { r.UID = "" }, func(r *connectionProbeRequest) { r.Port = 0 }, func(r *connectionProbeRequest) { r.Port = 65536 }, func(r *connectionProbeRequest) { r.Host = "--help" }, func(r *connectionProbeRequest) { r.Host = "https://db.app.svc" }, func(r *connectionProbeRequest) { r.Host = "fe80::1%eth0" }, func(r *connectionProbeRequest) { r.Host = "0.0.0.0" }, func(r *connectionProbeRequest) { r.Host = "224.0.0.1" }, func(r *connectionProbeRequest) { r.CandidateYAML = "kind: Pod" }} {
 		r := testProbeReq()
 		mutate(&r)
-		if w := probePOST(s, r); w.Code != 400 {
+		if w := connectionPOST(s, r); w.Code != 400 {
 			t.Fatal(w.Code, w.Body.String())
 		}
 	}
@@ -176,7 +166,7 @@ func TestProbeRBACChecksExactSubresources(t *testing.T) {
 				}
 				return true, &authv1.SelfSubjectAccessReview{Status: authv1.SubjectAccessReviewStatus{Allowed: v.Resource+"/"+v.Subresource+"/"+v.Verb != denied}}, nil
 			})
-			w := probePOST(s, testProbeReq())
+			w := connectionPOST(s, testProbeReq())
 			if w.Code != 403 {
 				t.Fatal(w.Code, w.Body.String())
 			}
@@ -185,7 +175,7 @@ func TestProbeRBACChecksExactSubresources(t *testing.T) {
 	}
 	s, core := testProbeServer(t)
 	core.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("RBAC unavailable") })
-	if w := probePOST(s, testProbeReq()); w.Code != 403 {
+	if w := connectionPOST(s, testProbeReq()); w.Code != 403 {
 		t.Fatal(w.Code)
 	}
 	noProbeMutation(t, core)
@@ -197,7 +187,7 @@ func TestProbeUIDReReadAndEligibility(t *testing.T) {
 			s, core := testProbeServer(t)
 			reads := 0
 			stopped := false
-			s.probes.capture = func(context.Context, *uiServer, tcpProbeRequest) (*probeCapture, error) {
+			s.probes.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
 				return &probeCapture{stop: func() { stopped = true }}, nil
 			}
 			core.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
@@ -208,7 +198,7 @@ func TestProbeUIDReReadAndEligibility(t *testing.T) {
 				}
 				return true, p, nil
 			})
-			w := probePOST(s, testProbeReq())
+			w := connectionPOST(s, testProbeReq())
 			if w.Code != 409 {
 				t.Fatal(w.Code, w.Body.String())
 			}
@@ -236,7 +226,7 @@ func TestProbeUIDReReadAndEligibility(t *testing.T) {
 			p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, corev1.EphemeralContainer{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: fmt.Sprint(prefix, i)}})
 		}
 		core.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) { return true, p, nil })
-		if w := probePOST(s, testProbeReq()); w.Code != 409 {
+		if w := connectionPOST(s, testProbeReq()); w.Code != 409 {
 			t.Fatal(w.Code)
 		}
 		noProbeMutation(t, core)
@@ -254,14 +244,14 @@ func TestProbeRuntimeOutcomesSecurityAndNoWorkloadMutation(t *testing.T) {
 			capturing := false
 			stopped := false
 			logged := false
-			s.probes.capture = func(ctx context.Context, _ *uiServer, _ tcpProbeRequest) (*probeCapture, error) {
+			s.probes.capture = func(ctx context.Context, _ *uiServer, _ connectionProbeRequest) (*probeCapture, error) {
 				if _, ok := ctx.Deadline(); !ok {
 					t.Fatal("capture needs deadline")
 				}
 				capturing = true
 				return &probeCapture{stop: func() { stopped = true }}, nil
 			}
-			s.probes.logs = func(ctx context.Context, _ *uiServer, _ tcpProbeRequest, name string) error {
+			s.probes.logs = func(ctx context.Context, _ *uiServer, _ connectionProbeRequest, name string) error {
 				logged = true
 				if !strings.HasPrefix(name, "guardbee-connection-") {
 					t.Fatal(name)
@@ -300,11 +290,11 @@ func TestProbeRuntimeOutcomesSecurityAndNoWorkloadMutation(t *testing.T) {
 				stored.Status.EphemeralContainerStatuses = []corev1.ContainerStatus{{Name: ec.Name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: tt.reason, ExitCode: tt.exit}}}}
 				return true, p, nil
 			})
-			w := probePOST(s, testProbeReq())
+			w := connectionPOST(s, testProbeReq())
 			if w.Code != 200 {
 				t.Fatal(w.Code, w.Body.String())
 			}
-			var resp tcpProbeResponse
+			var resp connectionProbeResponse
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 				t.Fatal(err)
 			}
@@ -325,21 +315,21 @@ func TestProbeRuntimeOutcomesSecurityAndNoWorkloadMutation(t *testing.T) {
 
 func TestProbeCaptureFailureTimeoutUpdateFailureConcurrency(t *testing.T) {
 	s, core := testProbeServer(t)
-	s.probes.capture = func(context.Context, *uiServer, tcpProbeRequest) (*probeCapture, error) {
+	s.probes.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
 		return nil, errors.New("relay unavailable")
 	}
-	w := probePOST(s, testProbeReq())
+	w := connectionPOST(s, testProbeReq())
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "no container injected") {
 		t.Fatal(w.Body.String())
 	}
 	noProbeMutation(t, core)
 	s, core = testProbeServer(t)
 	stops := 0
-	s.probes.capture = func(context.Context, *uiServer, tcpProbeRequest) (*probeCapture, error) {
+	s.probes.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
 		return &probeCapture{stop: func() { stops++ }}, nil
 	}
 	start := time.Now()
-	w = probePOST(s, testProbeReq())
+	w = connectionPOST(s, testProbeReq())
 	if time.Since(start) > time.Second || !strings.Contains(w.Body.String(), "inconclusive") || stops == 0 {
 		t.Fatal(w.Body.String(), stops)
 	}
@@ -348,20 +338,20 @@ func TestProbeCaptureFailureTimeoutUpdateFailureConcurrency(t *testing.T) {
 	}
 	s, core = testProbeServer(t)
 	core.PrependReactor("update", "pods", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("conflict") })
-	w = probePOST(s, testProbeReq())
+	w = connectionPOST(s, testProbeReq())
 	if !strings.Contains(w.Body.String(), "inspect the Pod before retrying") {
 		t.Fatal(w.Body.String())
 	}
 	s, core = testProbeServer(t)
 	s.probes.slots <- struct{}{}
 	s.probes.slots <- struct{}{}
-	if w = probePOST(s, testProbeReq()); w.Code != 429 {
+	if w = connectionPOST(s, testProbeReq()); w.Code != 429 {
 		t.Fatal(w.Code)
 	}
 	noProbeMutation(t, core)
 	s, core = testProbeServer(t)
 	s.probes.active["app/client"] = true
-	if w = probePOST(s, testProbeReq()); w.Code != 429 {
+	if w = connectionPOST(s, testProbeReq()); w.Code != 429 {
 		t.Fatal(w.Code)
 	}
 	noProbeMutation(t, core)
@@ -394,7 +384,7 @@ func TestProbeSimulationRealEngineCrossNamespaceAndUnverifiedGroups(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp := tcpProbeResponse{Namespace: "app"}
+	resp := connectionProbeResponse{Namespace: "app"}
 	s.simulateProbe(context.Background(), rules, candidate, []*flowpb.Flow{testProbeFlow(time.Now())}, &resp)
 	if resp.Simulation == nil || resp.Simulation.BaselineRuleCount != 1 || resp.Simulation.Counts.NewlyAllowed != 1 {
 		t.Fatalf("missing full baseline %+v simulation %+v", resp, resp.Simulation)
@@ -410,7 +400,7 @@ func TestProbeSimulationRealEngineCrossNamespaceAndUnverifiedGroups(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp = tcpProbeResponse{}
+	resp = connectionProbeResponse{}
 	s.simulateProbe(context.Background(), groupRules, groupCandidate, []*flowpb.Flow{testProbeFlow(time.Now())}, &resp)
 	if resp.Simulation != nil || !strings.Contains(strings.Join(resp.Warnings, " "), "unverified") {
 		t.Fatal(resp)
@@ -422,7 +412,7 @@ func TestProbeSimulationRealEngineCrossNamespaceAndUnverifiedGroups(t *testing.T
 	if !probeProxyRules(proxy) {
 		t.Fatal("FQDN not gated")
 	}
-	resp = tcpProbeResponse{}
+	resp = connectionProbeResponse{}
 	s.simulateProbe(context.Background(), proxy, "", []*flowpb.Flow{testProbeFlow(time.Now())}, &resp)
 	if resp.Simulation != nil || !strings.Contains(strings.Join(resp.Warnings, " "), "proxy") {
 		t.Fatal(resp)
@@ -583,14 +573,14 @@ func TestProbeNonPolicyTargetsAndSystemPodsRejected(t *testing.T) {
 	for _, host := range []string{"127.0.0.1", "::1", "169.254.169.254", "fe80::1", "ff02::1", "255.255.255.255", "::"} {
 		r := testProbeReq()
 		r.Host = host
-		if validateTCPProbe(r) == nil {
+		if validateConnectionProbe(r) == nil {
 			t.Fatal("unsafe target", host)
 		}
 	}
 	for _, ns := range []string{"kube-system", "kube-public", "kube-node-lease", "cilium-system", "hubble-system"} {
 		r := testProbeReq()
 		r.Namespace = ns
-		if validateTCPProbe(r) == nil {
+		if validateConnectionProbe(r) == nil {
 			t.Fatal("unsafe namespace", ns)
 		}
 		p := testProbePod()
@@ -615,7 +605,7 @@ func TestProbeHostnameValidationCommandAndCorrelation(t *testing.T) {
 	for _, host := range []string{"db.app.svc", "DB.APP.SVC.", "example.com", "db"} {
 		req := testProbeReq()
 		req.Host = host
-		if err := validateTCPProbe(req); err != nil {
+		if err := validateConnectionProbe(req); err != nil {
 			t.Fatal(host, err)
 		}
 		ec := secureProbeContainer("dns", testProbeImage, req)
@@ -631,7 +621,7 @@ func TestProbeHostnameValidationCommandAndCorrelation(t *testing.T) {
 	for _, host := range []string{"-x", "example.com;id", "https://example.com", "db:443", "db/path", "db name", "db\nname", "a..b", "localhost", "test.localhost", "example.com.."} {
 		req := testProbeReq()
 		req.Host = host
-		if validateTCPProbe(req) == nil {
+		if validateConnectionProbe(req) == nil {
 			t.Fatal("invalid hostname accepted", host)
 		}
 	}
@@ -680,7 +670,7 @@ func TestProbeSimulationNetworkPolicyAndReplacement(t *testing.T) {
 	}
 	base := &ciliumv2.CiliumNetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "edit", Namespace: "database"}, Spec: decoded.rule}
 	s.cilium = ciliumfake.NewSimpleClientset(base)
-	resp := tcpProbeResponse{Namespace: "app"}
+	resp := connectionProbeResponse{Namespace: "app"}
 	flows := []*flowpb.Flow{testProbeFlow(time.Now())}
 	s.simulateProbe(context.Background(), rules, candidate, flows, &resp)
 	if resp.Simulation == nil || resp.Simulation.Counts.NewlyDropped != 1 || !strings.Contains(noteText(resp), "replaces live") {
@@ -690,7 +680,7 @@ func TestProbeSimulationNetworkPolicyAndReplacement(t *testing.T) {
 	if row.BaselineAllowed == nil || row.CandidateAllowed == nil || !*row.BaselineAllowed || *row.CandidateAllowed {
 		t.Fatal("newly dropped decisions lost", row)
 	}
-	additive := tcpProbeResponse{Namespace: "app"}
+	additive := connectionProbeResponse{Namespace: "app"}
 	s.simulateProbeWithMode(context.Background(), rules, candidate, flows, &additive, false)
 	if additive.Simulation == nil || additive.Simulation.Counts.Unchanged != 1 || additive.Simulation.Counts.NewlyDropped != 0 || !strings.Contains(noteText(additive), "Additive simulation") {
 		t.Fatalf("explicit additive mode not honored: %+v", additive)
@@ -701,7 +691,7 @@ func TestProbeSimulationNetworkPolicyAndReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp = tcpProbeResponse{}
+	resp = connectionProbeResponse{}
 	s.simulateProbe(context.Background(), rules, candidate, flows, &resp)
 	if resp.Simulation == nil {
 		t.Fatal("unrelated-namespace NetworkPolicy blocked simulation", resp.Warnings)
@@ -711,13 +701,13 @@ func TestProbeSimulationNetworkPolicyAndReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp = tcpProbeResponse{}
+	resp = connectionProbeResponse{}
 	s.simulateProbe(context.Background(), rules, candidate, flows, &resp)
 	if resp.Simulation != nil || !strings.Contains(strings.Join(resp.Warnings, " "), "NetworkPolicy objects in namespace database") {
 		t.Fatal(resp)
 	}
 	core.PrependReactor("list", "networkpolicies", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("list forbidden") })
-	resp = tcpProbeResponse{}
+	resp = connectionProbeResponse{}
 	s.simulateProbe(context.Background(), rules, candidate, flows, &resp)
 	if resp.Simulation != nil || !strings.Contains(strings.Join(resp.Warnings, " "), "inventory unavailable") {
 		t.Fatal(resp)
@@ -745,7 +735,7 @@ func TestProbeIncompleteCaptureSuppressesSimulation(t *testing.T) {
 			req := testProbeReq()
 			req.CandidateYAML = "apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: allow\nspec:\n  endpointSelector: {}\n  ingress:\n    - fromEntities: [all]\n"
 			stored := testProbePod()
-			s.probes.capture = func(context.Context, *uiServer, tcpProbeRequest) (*probeCapture, error) {
+			s.probes.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
 				c := &probeCapture{stop: func() {}}
 				if scenario == "overflow" {
 					c.overflow = true
@@ -761,8 +751,8 @@ func TestProbeIncompleteCaptureSuppressesSimulation(t *testing.T) {
 				stored.Status.EphemeralContainerStatuses = []corev1.ContainerStatus{{Name: p.Spec.EphemeralContainers[0].Name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed", ExitCode: 0}}}}
 				return true, p, nil
 			})
-			w := probePOST(s, req)
-			var resp tcpProbeResponse
+			w := connectionPOST(s, req)
+			var resp connectionProbeResponse
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 				t.Fatal(err)
 			}
@@ -777,7 +767,7 @@ func TestProbeCancellationStopsCaptureAndReleasesSlot(t *testing.T) {
 	s, core := testProbeServer(t)
 	stopped := false
 	injected := false
-	s.probes.capture = func(ctx context.Context, _ *uiServer, _ tcpProbeRequest) (*probeCapture, error) {
+	s.probes.capture = func(ctx context.Context, _ *uiServer, _ connectionProbeRequest) (*probeCapture, error) {
 		return &probeCapture{stop: func() { stopped = true }}, nil
 	}
 	core.PrependReactor("update", "pods", func(a ktesting.Action) (bool, runtime.Object, error) {
@@ -785,7 +775,7 @@ func TestProbeCancellationStopsCaptureAndReleasesSlot(t *testing.T) {
 		return true, a.(ktesting.UpdateAction).GetObject(), nil
 	})
 	body, _ := json.Marshal(testProbeReq())
-	r := httptest.NewRequest("POST", "http://127.0.0.1:4747/api/probes/tcp", bytes.NewReader(body))
+	r := httptest.NewRequest("POST", "http://127.0.0.1:4747/api/probes/connection", bytes.NewReader(body))
 	r.Header.Set("Origin", "http://127.0.0.1:4747")
 	r.Header.Set("Content-Type", "application/json")
 	ctx, cancel := context.WithCancel(r.Context())
@@ -797,7 +787,7 @@ func TestProbeCancellationStopsCaptureAndReleasesSlot(t *testing.T) {
 		return true, testProbePod(), nil
 	})
 	w := httptest.NewRecorder()
-	s.handleTCPProbe(w, r)
+	s.handleConnectionProbe(w, r)
 	if !stopped || len(s.probes.slots) != 0 || len(s.probes.active) != 0 || !strings.Contains(w.Body.String(), "inconclusive") {
 		t.Fatal("cancellation leak", w.Body.String())
 	}

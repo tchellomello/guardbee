@@ -23,7 +23,7 @@ func TestProbeRejectsPreviousPendingContainer(t *testing.T) {
 			pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: name}}}
 			pod.Status.EphemeralContainerStatuses = []corev1.ContainerStatus{{Name: name, State: state}}
 			core.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) { return true, pod.DeepCopy(), nil })
-			w := probePOST(s, testProbeReq())
+			w := connectionPOST(s, testProbeReq())
 			if w.Code != 409 || !strings.Contains(w.Body.String(), name) {
 				t.Fatalf("pending attempt not blocked: %d %s", w.Code, w.Body.String())
 			}
@@ -47,7 +47,7 @@ func TestProbeRechecksPendingContainerBeforeUpdate(t *testing.T) {
 		}
 		return true, p, nil
 	})
-	if w := probePOST(s, testProbeReq()); w.Code != 409 {
+	if w := connectionPOST(s, testProbeReq()); w.Code != 409 {
 		t.Fatalf("concurrent pending attempt not blocked: %d", w.Code)
 	}
 	noProbeMutation(t, core)
@@ -72,7 +72,7 @@ func TestProbeResultCarriesReviewContext(t *testing.T) {
 	s.probes.capture = func(context.Context, *uiServer, connectionProbeRequest) (*probeCapture, error) {
 		return nil, context.DeadlineExceeded
 	}
-	w := probePOST(s, testProbeReq())
+	w := connectionPOST(s, testProbeReq())
 	var result connectionProbeResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestProbeRejectsAmbiguousNumericHosts(t *testing.T) {
 	for _, host := range []string{"127.1", "2130706433", "0177.0.0.1", "999.999.999.999"} {
 		req := testProbeReq()
 		req.Host = host
-		if validateTCPProbe(req) == nil {
+		if validateConnectionProbe(req) == nil {
 			t.Errorf("accepted ambiguous numeric target %s", host)
 		}
 	}
@@ -110,7 +110,7 @@ func TestUnavailableProbeRuntimeCannotUseUnrelatedWorkloadTraffic(t *testing.T) 
 		capture.flows = []*flowpb.Flow{testProbeFlow(time.Now())}
 		return true, stored.DeepCopy(), nil
 	})
-	w := probePOST(s, req)
+	w := connectionPOST(s, req)
 	var response connectionProbeResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)

@@ -144,17 +144,6 @@ func (r *connectionProbeResponse) note(code, text string) {
 	r.Notes = append(r.Notes, probeNote{code, text})
 }
 
-// Keep the legacy TCP boundary compatible while callers migrate to connection.
-type tcpProbeRequest = connectionProbeRequest
-type tcpProbeResponse = connectionProbeResponse
-
-func probeProtocol(req connectionProbeRequest) string {
-	if req.Protocol == "" {
-		return "TCP"
-	}
-	return req.Protocol
-}
-
 // Hooks isolate the cluster boundary in tests, not the Cilium engine.
 type probeBackend struct {
 	// images is the catalog the browser may pick from, by id; the first
@@ -382,11 +371,6 @@ func probeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func validateTCPProbe(req tcpProbeRequest) error {
-	req.Protocol = probeProtocol(req)
-	return validateConnectionProbe(req)
-}
-
 func validateConnectionProbe(req connectionProbeRequest) error {
 	if req.Protocol != "TCP" && req.Protocol != "UDP" {
 		return fmt.Errorf("protocol must be exactly TCP or UDP")
@@ -463,12 +447,8 @@ func (s *uiServer) probeAccess(ctx context.Context, ns, name, resource, subresou
 	return nil
 }
 
-func (s *uiServer) handleTCPProbe(w http.ResponseWriter, r *http.Request) {
-	s.handleProbe(w, r, true, false)
-}
-
 func (s *uiServer) handleConnectionProbe(w http.ResponseWriter, r *http.Request) {
-	s.handleProbe(w, r, false, false)
+	s.handleProbe(w, r, false)
 }
 
 // handleConnectionProbeStream is the same probe, reported as it happens: one
@@ -477,7 +457,7 @@ func (s *uiServer) handleConnectionProbe(w http.ResponseWriter, r *http.Request)
 // first stage stay ordinary HTTP errors, so "nothing was injected" keeps its
 // status-code meaning for both endpoints.
 func (s *uiServer) handleConnectionProbeStream(w http.ResponseWriter, r *http.Request) {
-	s.handleProbe(w, r, false, true)
+	s.handleProbe(w, r, true)
 }
 
 // The probe stages, in order, as streamed and as the UI draws them.
@@ -540,7 +520,7 @@ func (o *probeOutput) result(resp connectionProbeResponse) {
 	}{resp})
 }
 
-func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP, stream bool) {
+func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, stream bool) {
 	requestStart := time.Now()
 	out := &probeOutput{w: w, stream: stream}
 	if s.probes == nil {
@@ -577,15 +557,6 @@ func (s *uiServer) handleProbe(w http.ResponseWriter, r *http.Request, legacyTCP
 	if err := d.Decode(new(any)); err != io.EOF {
 		out.fail("exactly one JSON object is required", 400)
 		return
-	}
-	if legacyTCP {
-		if req.Protocol == "" {
-			req.Protocol = "TCP"
-		}
-		if req.Protocol != "TCP" {
-			out.fail("legacy TCP endpoint only supports TCP", 400)
-			return
-		}
 	}
 	if err := validateConnectionProbe(req); err != nil {
 		out.fail(err.Error(), 400)
@@ -884,7 +855,7 @@ func (s *uiServer) resolveProbeService(ctx context.Context, req connectionProbeR
 	}
 	portName, found := "", false
 	for _, p := range svc.Spec.Ports {
-		if int(p.Port) == req.Port && string(p.Protocol) == probeProtocol(req) {
+		if int(p.Port) == req.Port && string(p.Protocol) == req.Protocol {
 			portName, found = p.Name, true
 			if p.TargetPort.IntValue() > 0 {
 				out.ports[uint32(p.TargetPort.IntValue())] = true
@@ -978,7 +949,7 @@ func secureProbeContainer(name, image string, req connectionProbeRequest) corev1
 		host = strings.ToLower(host)
 	}
 	command = append(command, "-z", "-v", "-w", "5", host, strconv.Itoa(req.Port))
-	if probeProtocol(req) == "UDP" {
+	if req.Protocol == "UDP" {
 		command = []string{"timeout", "-k", "1s", "8s", "python3", "-I", "-c", udpProbeScript, host, strconv.Itoa(req.Port)}
 	}
 	return corev1.EphemeralContainer{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: name, Image: image, ImagePullPolicy: pullPolicy, Command: command, SecurityContext: &corev1.SecurityContext{RunAsNonRoot: &t, RunAsUser: &uid, RunAsGroup: &uid, Privileged: &f, AllowPrivilegeEscalation: &f, ReadOnlyRootFilesystem: &t, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}}}
@@ -1116,7 +1087,7 @@ func startProbeCapture(ctx context.Context, s *uiServer, req connectionProbeRequ
 			ports = append(ports, strconv.FormatUint(uint64(p), 10))
 		}
 	}
-	filter := &flowpb.FlowFilter{SourcePod: []string{req.Namespace + "/" + req.Pod}, DestinationPort: ports, Protocol: []string{probeProtocol(req)}}
+	filter := &flowpb.FlowFilter{SourcePod: []string{req.Namespace + "/" + req.Pod}, DestinationPort: ports, Protocol: []string{req.Protocol}}
 	if _, err := netip.ParseAddr(req.Host); err == nil {
 		filter.DestinationIp = []string{req.Host}
 	}
@@ -1250,9 +1221,9 @@ func probeFlowMismatch(f *flowpb.Flow, req connectionProbeRequest, start, end ti
 	l4 := f.GetL4()
 	var dport uint32
 	switch {
-	case probeProtocol(req) == "TCP" && l4.GetTCP() != nil:
+	case req.Protocol == "TCP" && l4.GetTCP() != nil:
 		dport = l4.GetTCP().GetDestinationPort()
-	case probeProtocol(req) == "UDP" && l4.GetUDP() != nil:
+	case req.Protocol == "UDP" && l4.GetUDP() != nil:
 		dport = l4.GetUDP().GetDestinationPort()
 	default:
 		return "protocol differs"

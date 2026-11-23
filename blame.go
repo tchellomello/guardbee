@@ -368,7 +368,7 @@ Flags:
 		return
 	}
 
-	flows, err := fetchFlows(core, cfg, namespace, filter, last)
+	flows, err := fetchFlows(context.Background(), core, cfg, namespace, filter, last)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" blame: %v\n", err)
 		os.Exit(1)

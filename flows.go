@@ -112,7 +112,7 @@ Flags:
 		return
 	}
 
-	flows, err := fetchFlows(core, cfg, namespace, filter, last)
+	flows, err := fetchFlows(context.Background(), core, cfg, namespace, filter, last)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" flows: %v\n", err)
 		os.Exit(1)
@@ -128,19 +128,21 @@ Flags:
 // hubble-relay. Shared by the "flows" subcommand (prints them) and "verdict"
 // (judges them against a candidate policy). Bounded: returns once hubble-relay
 // has sent `number` flows and closed the stream.
-func fetchFlows(core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, number uint64) ([]*flowpb.Flow, error) {
+func fetchFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Config, namespace string, filter flowFilter, number uint64) ([]*flowpb.Flow, error) {
 	whitelist, err := flowWhitelist(namespace, filter)
 	if err != nil {
 		return nil, err
 	}
-	client, closeFn, err := dialHubble(core, cfg)
+	// The caller's ctx (the UI's request context) cancels a fetch whose
+	// browser tab went away instead of holding the port-forward open.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	client, closeFn, err := dialHubbleContext(ctx, core, cfg)
 	if err != nil {
 		return nil, err
 	}
 	defer closeFn()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	stream, err := client.GetFlows(ctx, &observerpb.GetFlowsRequest{
 		Number:    number,
@@ -198,7 +200,7 @@ func streamFlows(ctx context.Context, core kubernetes.Interface, cfg *rest.Confi
 	if err != nil {
 		return 0, err
 	}
-	client, closeFn, err := dialHubble(core, cfg)
+	client, closeFn, err := dialHubbleContext(ctx, core, cfg)
 	if err != nil {
 		return 0, err
 	}
@@ -624,10 +626,6 @@ func dialHubbleContext(ctx context.Context, core kubernetes.Interface, cfg *rest
 	}, nil
 }
 
-func findHubbleRelayPod(core kubernetes.Interface) (string, error) {
-	return findHubbleRelayPodContext(context.Background(), core)
-}
-
 func findHubbleRelayPodContext(ctx context.Context, core kubernetes.Interface) (string, error) {
 	pods, err := core.CoreV1().Pods(hubbleNamespace).List(ctx, metav1.ListOptions{LabelSelector: hubbleLabel})
 	if err != nil {
@@ -656,12 +654,9 @@ func findHubbleRelayPodContext(ctx context.Context, core kubernetes.Interface) (
 	return "", fmt.Errorf("no running hubble-relay pod found in namespace %s", hubbleNamespace)
 }
 
-// startPortForward opens a local port tunneled to the hubble-relay pod's grpc port
-// and returns the local port plus a function to tear the tunnel down.
-func startPortForward(core kubernetes.Interface, cfg *rest.Config, podName string) (int, func(), error) {
-	return startPortForwardContext(context.Background(), core, cfg, podName)
-}
-
+// startPortForwardContext opens a local port tunneled to the hubble-relay
+// pod's grpc port and returns the local port plus a function to tear the
+// tunnel down.
 func startPortForwardContext(ctx context.Context, core kubernetes.Interface, cfg *rest.Config, podName string) (int, func(), error) {
 	req := core.CoreV1().RESTClient().Post().
 		Resource("pods").
