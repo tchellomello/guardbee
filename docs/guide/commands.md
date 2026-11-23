@@ -165,6 +165,16 @@ kustomize build overlays/prod | guardbee verdict -n myapp --per-policy --replace
 
 `--format json` then prints `{"policies": [...], "result", "exitCode"}`, each entry the same object a single run prints, and `--format markdown` prints an overall line followed by one section per policy. The shape follows the flag, not the number of policies, so a pipeline parsing it never has to guess. Documents that aren't policies are skipped with a warning.
 
+### Testing a `toFQDNs` candidate
+
+Cilium labels an IP `fqdn:<selector>` only for selectors already in a live policy, so a new `toFQDNs` selector is judged against the names Hubble recorded for each flow's destination, with Cilium's own pattern rules. Hubble records those names only when the source pod's DNS goes through Cilium's DNS proxy, so:
+
+1. **Send the pod's DNS through the proxy first, for real.** A live policy with an egress rule to kube-dns on port 53 and `rules: {dns: [{matchPattern: "*"}]}` (for example `lab/l7/webapp-dns-live.yaml`). It allows the same DNS as before; it only puts the proxy in the path. A `rules.dns` only in the candidate doesn't help: it hasn't touched any traffic yet.
+2. **Check that Hubble has the names.** `--to-fqdn` filters on them, so `guardbee flows -n myapp --to-fqdn api.github.com` shows flows only once the proxy has seen the lookup.
+3. **Run the candidate**, with `--replace-existing` if it edits that live policy: `guardbee verdict -n myapp --replace-existing --to-port 443 candidate.yaml`. Traffic to a name the candidate allows is `UNCHANGED` (or `NEWLY_ALLOWED`), traffic to any other name is `NEWLY_DROPPED`.
+
+A flow with no recorded names that the candidate would drop is counted **not simulated**, not reported as a drop, and `--min-flows` doesn't count it. The names are the source pod's own lookups, while Cilium labels an IP from every pod's, so a pod connecting to an IP it never looked up itself also reads as not simulated. A `toFQDNs` with no `rules.dns` anywhere in the candidate gets a warning: Cilium accepts it but can never learn the name's IPs. `examples/webapp-fqdn-with-dns-rule.yaml` shows the working shape, and the Lab's [Step 7](lab.html) walks through it on a real cluster.
+
 ### CI mode
 
 For a pull-request check:

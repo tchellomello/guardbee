@@ -12,9 +12,8 @@
 # DNS lookups and the postgres connection) becomes NEWLY_DROPPED too.
 #
 # The fix is an egress rule to kube-dns on port 53 with
-# `rules: {dns: [{matchPattern: "*"}]}` in the same policy (see
-# examples/webapp-dns-single-label-wildcard.yaml for the shape, and its
-# wildcard caveat).
+# `rules: {dns: [{matchPattern: "*"}]}` in the same policy:
+# examples/webapp-fqdn-with-dns-rule.yaml.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

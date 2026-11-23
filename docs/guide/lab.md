@@ -527,19 +527,90 @@ kubectl delete -f examples/postgres-metrics-http-only.yaml -f lab/l7/webapp-dns-
 `mise run lab-validate` runs 6a–6c on a fresh lab too (exit codes 5, 2, 0
 and 2), so they're re-checked against every pinned Cilium.
 
-### `toFQDNs` (not part of this lab)
+---
 
-The lab's workloads never leave the cluster, so the guide has no `toFQDNs`
-step. `examples/webapp-fqdn-without-dns-rule.yaml` shows the warning for a
-`toFQDNs` with no `rules.dns` anywhere, which Cilium accepts but which can
-never learn the name's IPs. `mise run lab-validate` does check `toFQDNs`
-verdicts (`lab/fqdn/`): a client calling example.com, its DNS behind the DNS
-proxy, judged against a new `toFQDNs` selector for that name and for another.
-See [how verdict works](how-it-works.html).
+## Step 7 — `toFQDNs`: names that aren't allowed yet (optional)
+
+This step needs the kind cluster to reach the internet (DNS and HTTPS to
+example.com).
+
+A `toFQDNs` rule allows a DNS name, not an address. Cilium learns the
+name's IPs from the DNS answers its DNS proxy sees, and labels each IP
+`fqdn:<selector>`, but only for selectors already in a **live** policy. A
+candidate's new name has no label yet, so `verdict` matches it against the
+names Hubble recorded for each flow (its destination names), the same way
+Cilium will once the policy is applied. Hubble records those names only
+when the pod's DNS goes through the DNS proxy, so a live `rules.dns` rule
+has to come first; the candidate's own doesn't count, because it hasn't
+touched any traffic yet.
+
+`lab/fqdn/fqdn-client-live.yaml` adds a small `fqdn-client` in `webapp` that
+calls `https://example.com` every two seconds, with a live policy that sends
+its DNS through the proxy and allows HTTPS to anywhere (`toEntities: world`),
+with no `toFQDNs`:
+
+```
+kubectl apply -f lab/fqdn/fqdn-client-live.yaml
+kubectl -n webapp rollout status deployment/fqdn-client
+```
+
+Check that Hubble knows the name. `--to-fqdn` matches the destination
+names, so this shows flows only once the DNS proxy has seen the lookup:
+
+```
+guardbee flows -n webapp --from-label k8s:app=fqdn-client --to-fqdn example.com --last 10
+```
+
+Then replace the live policy with a `toFQDNs` one, first for the name the
+client really calls, then for another one:
+
+```
+guardbee verdict -n webapp --replace-existing --fail-on-dropped \
+  --from-label k8s:app=fqdn-client --to-port 443 lab/fqdn/fqdn-client-example-com.yaml
+guardbee verdict -n webapp --replace-existing --fail-on-dropped \
+  --from-label k8s:app=fqdn-client --to-port 443 lab/fqdn/fqdn-client-example-org.yaml
+```
+
+<div class="expect" markdown="1">
+<div class="expect-titlebar"><span class="expect-dot red"></span><span class="expect-dot yellow"></span><span class="expect-dot green"></span><span class="expect-label">Expected output</span></div>
+<div class="expect-body" markdown="1">
+
+`example.com`: no changed rows, exit code `0`. The client keeps working,
+even though no live policy has that selector yet.
+
+`example.org`:
+
+```
+NEWLY_DROPPED  webapp/fqdn-client-… -> reserved:world  TCP:443  (currently allowed; this candidate would start blocking it)
+```
+
+Exit code `2`: the client's HTTPS calls would be refused.
+
+</div>
+</div>
+
+If the flows never carry names (DNS not behind the proxy, or the lookups
+already gone from Hubble's buffer), a flow the candidate would drop is
+counted as **not simulated** rather than reported as a drop, and
+`--min-flows` doesn't count it. The names are the client pod's own lookups;
+Cilium uses every pod's, so a pod connecting to an IP it never looked up
+itself also reads as not simulated.
+
+`examples/webapp-fqdn-without-dns-rule.yaml` shows the other mistake
+`verdict` warns about: a `toFQDNs` with no `rules.dns` anywhere, which
+Cilium accepts but which can never learn the name's IPs.
+
+Clean up:
+
+```
+kubectl delete -f lab/fqdn/fqdn-client-live.yaml
+```
+
+`mise run lab-validate` runs this step too (exit codes `0` and `2`).
 
 ---
 
-## Step 7 — Tear down
+## Step 8 — Tear down
 
 ```
 mise run lab-down
