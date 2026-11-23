@@ -62,6 +62,15 @@ func fqdnCandidate(ep *flowpb.Endpoint) bool {
 	return nid.HasLocalScope()
 }
 
+// fqdnDisplayNames is names for a destination toFQDNs could select, nil for
+// any other: a pod's names (its Service's DNS name) add nothing to its row.
+func fqdnDisplayNames(dst *flowpb.Endpoint, names []string) []string {
+	if !fqdnCandidate(dst) || len(names) == 0 {
+		return nil
+	}
+	return names
+}
+
 // withFQDNLabels returns dst with the fqdn: label of every selector matching
 // one of names, or dst itself when nothing is added. A labelled reserved
 // world identity becomes a local-scope one, as Cilium allocates a CIDR

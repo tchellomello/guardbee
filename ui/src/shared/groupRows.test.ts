@@ -33,6 +33,18 @@ describe('groupRows', () => {
     expect(out).toHaveLength(5)
   })
 
+  it('keeps two DNS names behind reserved:world apart', () => {
+    const out = groupRows([
+      row({ destinationNames: ['api.github.com'] }),
+      row({ destinationNames: ['evil.example.com'] }),
+      row({ destinationNames: ['api.github.com'] }),
+    ])
+    expect(out.map((r) => [r.destinationNames, r.count])).toEqual([
+      [['api.github.com'], 2],
+      [['evil.example.com'], 1],
+    ])
+  })
+
   it('does not mutate its input', () => {
     const input = [row(), row()]
     groupRows(input)

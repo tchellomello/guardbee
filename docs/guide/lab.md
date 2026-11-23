@@ -581,10 +581,12 @@ even though no live policy has that selector yet.
 `example.org`:
 
 ```
-NEWLY_DROPPED  webapp/fqdn-client-… -> reserved:world  TCP:443  (currently allowed; this candidate would start blocking it)
+NEWLY_DROPPED  webapp/fqdn-client-… -> reserved:world (example.com)  TCP:443  (currently allowed; this candidate would start blocking it)
 ```
 
-Exit code `2`: the client's HTTPS calls would be refused.
+Exit code `2`: the client's HTTPS calls would be refused. The name in
+parentheses is what Hubble recorded for that IP, the name the candidate
+didn't match.
 
 </div>
 </div>

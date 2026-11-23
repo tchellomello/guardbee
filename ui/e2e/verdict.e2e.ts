@@ -112,6 +112,31 @@ test.describe('Verdict tab', () => {
     await expect(dns.getByRole('button', { name: /Allow \/ Deny/ })).toHaveCount(0)
   })
 
+  test('a toFQDNs drop names the site, not just reserved:world', async ({ page }) => {
+    const worldRow = (name: string) => ({
+      ...VERDICT.rows[0],
+      side: 'egress' as const,
+      destination: 'reserved:world',
+      destinationLabels: ['reserved:world'],
+      destinationNames: [name],
+      port: 443,
+    })
+    await page.route('**/api/verdict', (r) =>
+      r.fulfill({ json: { ...VERDICT, rows: [worldRow('evil.example.com'), worldRow('other.example.org')] } })
+    )
+    await openTab(page, 'Verdict')
+    const form = visibleForm(page)
+    await form.locator('input').first().fill('postgres')
+    await form.locator('textarea').fill(LOOKS_CORRECT_CNP)
+    await page.getByRole('button', { name: 'Run verdict', exact: true }).click()
+
+    const rows = page.locator('table:visible tbody tr', { hasText: 'TCP:443' })
+    await expect(rows.getByTestId('verdict-destination-names')).toHaveText(['(evil.example.com)', '(other.example.org)'])
+    // The name rides alongside the destination, so a world peer still
+    // classifies as the world entity for an exception.
+    await expect(rows.first().getByRole('button', { name: /Allow \/ Deny/ })).toBeVisible()
+  })
+
   test('a candidate warning (toFQDNs without rules.dns) is shown on the run', async ({ page }) => {
     const warning = 'CiliumNetworkPolicy webapp/egress uses toFQDNs, but the candidate has no egress rule with rules.dns'
     await page.route('**/api/verdict', (r) => r.fulfill({ json: { ...VERDICT, warnings: [warning] } }))
