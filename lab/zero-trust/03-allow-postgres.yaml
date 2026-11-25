@@ -1,0 +1,32 @@
+# Layer 2: accumulate Postgres egress (TCP 5432) alongside DNS; ingress stays denied.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: worker-policy
+  namespace: worker
+spec:
+  description: "Layer 2: allow DNS and Postgres egress, keep ingress denied"
+  endpointSelector:
+    matchLabels:
+      app: worker
+  ingressDeny:
+    - {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app: postgres
+            io.kubernetes.pod.namespace: postgres
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

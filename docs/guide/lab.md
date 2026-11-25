@@ -610,6 +610,13 @@ kubectl delete -f lab/fqdn/fqdn-client-live.yaml
 
 `mise run lab-validate` runs this step too (exit codes `0` and `2`).
 
+> **Want to build a policy from deny-all up instead?** Before tearing down the
+> cluster, try the companion [Zero-trust walkthrough](zero-trust-walkthrough.html)
+> (or watch it directly in [Videos → Zero-trust](videos.html#zero-trust)): it
+> deploys a new `worker` Pod, locks down all ingress and egress, and
+> accumulates allow rules one layer at a time using `NEWLY_ALLOWED` verdicts
+> and live TCP/UDP connectivity tests.
+
 ---
 
 ## Step 8 — Tear down

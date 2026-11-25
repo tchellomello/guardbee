@@ -1,0 +1,88 @@
+# Disposable workload for the accumulative zero-trust walkthrough
+# (docs/guide/zero-trust-walkthrough.md). Reuses the postgres:16-alpine image
+# already pulled by lab-up, so rollout is fast.
+#
+# - worker (namespace: worker): connects to postgres:5432 every 4s (requiring
+#   DNS egress on UDP/TCP:53 and Postgres egress on TCP:5432) and listens on
+#   TCP:8080. Deliberately has no network readinessProbe so it stays Ready
+#   under full deny-all and remains eligible as a Connectivity Test source Pod.
+# - worker-caller (namespace: webapp): hits worker.worker.svc.cluster.local:8080
+#   every 5s so ingress to worker:8080 is visible in live Hubble flows too.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: worker
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 8080
+              name: http
+          command:
+            - sh
+            - -c
+            - |
+              (while true; do
+                printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok' | nc -l -p 8080 >/dev/null 2>&1 || true
+              done) &
+              while true; do
+                pg_isready -h postgres.postgres.svc.cluster.local -p 5432 -t 2 >/dev/null 2>&1 || true
+                sleep 4
+              done
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: worker
+spec:
+  selector:
+    app: worker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-caller
+  namespace: webapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-caller
+  template:
+    metadata:
+      labels:
+        app: worker-caller
+    spec:
+      containers:
+        - name: caller
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                wget -q -T 2 -O /dev/null http://worker.worker.svc.cluster.local:8080 || true
+                sleep 5
+              done

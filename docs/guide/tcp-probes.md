@@ -354,3 +354,8 @@ line per captured flow with the reason it was or wasn't correlated
 which namespace's Kubernetes NetworkPolicy gated the simulation. The UI shows
 the attempt's own problems as warnings; the standing caveats every test
 carries are under **Evidence & limitations → About this test**.
+
+> **See TCP and UDP probes live:** the [Zero-trust walkthrough](zero-trust-walkthrough.html)
+> (video: [Videos → Zero-trust](videos.html#zero-trust)) demonstrates both a
+> `netshoot` **UDP** probe and `BusyBox 1.37` **TCP** probes flipping from
+> `BLOCKED` to `ALLOWED` as each policy layer is added.

@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   build:
+    # Skip non-version asset releases (e.g. docs-media) so hosting walkthrough
+    # videos as release assets never triggers binary builds.
+    if: startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

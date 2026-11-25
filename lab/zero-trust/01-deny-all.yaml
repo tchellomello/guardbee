@@ -1,0 +1,16 @@
+# Layer 0: full ingress AND egress default-deny for worker.
+# Identical to Policy Editor's "Default Deny (Isolation)" starter preset.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: worker-policy
+  namespace: worker
+spec:
+  description: "Deny all ingress and egress for worker until rules are added"
+  endpointSelector:
+    matchLabels:
+      app: worker
+  ingressDeny:
+    - {}
+  egressDeny:
+    - {}

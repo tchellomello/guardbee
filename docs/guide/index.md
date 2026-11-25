@@ -19,3 +19,8 @@ description: GuardBee documentation — commands, the verdict engine, building, 
   generation through an ephemeral container in an existing workload Pod.
 - **[Lab](lab.html)** — a self-paced, copy-paste lab that reproduces a real
   catch end-to-end on your own machine, no cluster of your own required.
+- **[Zero-trust walkthrough](zero-trust-walkthrough.html)** — build an
+  accumulative least-privilege policy from full Default Deny up in the Lab,
+  proving every layer with `NEWLY_ALLOWED` verdicts and live TCP/UDP probes.
+- **[Videos](videos.html)** — direct-linkable showcase videos (full Lab
+  walkthrough and zero-trust accumulative walkthrough).

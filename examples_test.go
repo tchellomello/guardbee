@@ -12,7 +12,8 @@ func TestExamplesParse(t *testing.T) {
 	files, _ := filepath.Glob("examples/*.yaml")
 	labs, _ := filepath.Glob("lab/candidates/*.yaml")
 	fqdn, _ := filepath.Glob("lab/fqdn/fqdn-client-example-*.yaml")
-	files = append(append(files, labs...), fqdn...)
+	zt, _ := filepath.Glob("lab/zero-trust/0*.yaml")
+	files = append(append(append(files, labs...), fqdn...), zt...)
 	if len(files) == 0 {
 		t.Fatal("no examples found")
 	}

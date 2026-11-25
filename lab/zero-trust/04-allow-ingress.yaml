@@ -1,0 +1,43 @@
+# Layer 3: accumulate explicit ingress on TCP 8080 from worker-caller (and webapp).
+# Both directions are now least-privilege allowlists — everything else stays denied.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: worker-policy
+  namespace: worker
+spec:
+  description: "Layer 3: least-privilege ingress (:8080) and egress (DNS + Postgres)"
+  endpointSelector:
+    matchLabels:
+      app: worker
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: worker-caller
+            io.kubernetes.pod.namespace: webapp
+        - matchLabels:
+            app: webapp
+            io.kubernetes.pod.namespace: webapp
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app: postgres
+            io.kubernetes.pod.namespace: postgres
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP

@@ -28,7 +28,9 @@
     <a href="build.html"{% if page.url contains 'build' %} class="active"{% endif %}>Build</a>
     <a href="run.html"{% if page.url contains 'run' %} class="active"{% endif %}>Run</a>
     <a href="tcp-probes.html"{% if page.url contains 'tcp-probes' %} class="active"{% endif %}>Connectivity tests</a>
-    <a href="lab.html"{% if page.url contains 'lab' %} class="active"{% endif %}>Lab</a>
+    <a href="lab.html"{% if page.url contains '/lab' %} class="active"{% endif %}>Lab</a>
+    <a href="zero-trust-walkthrough.html"{% if page.url contains 'zero-trust' %} class="active"{% endif %}>Zero-trust lab</a>
+    <a href="videos.html"{% if page.url contains 'videos' %} class="active"{% endif %}>Videos</a>
   </nav>
 
   {{ content }}
@@ -40,6 +42,7 @@
 
 <script src="../assets/lightbox.js"></script>
 <script src="../assets/copy-button.js"></script>
+<script src="../assets/video-links.js"></script>
 
 </body>
 </html>

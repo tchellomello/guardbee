@@ -1,0 +1,25 @@
+# Layer 1: keep ingress denied, open egress ONLY to CoreDNS (UDP/TCP 53).
+# DNS must open before Service-name TCP connections or probes can resolve names.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: worker-policy
+  namespace: worker
+spec:
+  description: "Layer 1: allow DNS egress to CoreDNS, keep everything else denied"
+  endpointSelector:
+    matchLabels:
+      app: worker
+  ingressDeny:
+    - {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
