@@ -35,8 +35,8 @@ authoring in **Policy Editor** with cluster-grounded labels, catching silent
     <span class="demo-player-title">guardbee-demo · full lab walkthrough</span>
   </div>
   <video class="demo-video" controls playsinline preload="metadata" poster="../assets/guardbee-demo-poster.png">
-    <source src="../assets/guardbee-demo.mp4" type="video/mp4">
-    <source src="../assets/guardbee-demo.webm" type="video/webm">
+    <source src="https://github.com/tchellomello/guardbee/releases/download/docs-media/guardbee-demo.mp4" type="video/mp4">
+    <source src="https://github.com/tchellomello/guardbee/releases/download/docs-media/guardbee-demo.webm" type="video/webm">
     Your browser does not support the video tag.
   </video>
 </div>
