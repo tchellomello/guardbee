@@ -9,6 +9,31 @@ test('header shows the binary and pinned engine versions', async ({ page }) => {
   await expect(page.getByText(/^dev-[0-9a-f]+(-dirty)? · cilium engine \d+\.\d+\.\d+$/)).toBeVisible()
 })
 
+test('responses carry anti-framing headers and same-origin /api calls are served', async ({ page }) => {
+  const doc = await page.goto('/')
+  expect(doc!.headers()).toMatchObject({
+    'x-frame-options': 'DENY',
+    'content-security-policy': "frame-ancestors 'none'",
+    'x-content-type-options': 'nosniff',
+  })
+  const api = await page.evaluate(async () => {
+    const r = await fetch('/api/compat')
+    return { status: r.status, frame: r.headers.get('x-frame-options') }
+  })
+  expect(api).toEqual({ status: 200, frame: 'DENY' })
+})
+
+test('a request from another site is refused', async ({ page, baseURL }) => {
+  // localhost and 127.0.0.1 are different sites, so this fetch is cross-site,
+  // like an <img> or no-cors fetch from a hostile page. Its response is
+  // opaque to the page; Playwright still sees the real status.
+  await page.goto(baseURL!.replace('127.0.0.1', 'localhost'))
+  const target = `${baseURL}/api/compat`
+  const res = page.waitForResponse(target)
+  await page.evaluate((u) => fetch(u, { mode: 'no-cors' }).catch(() => {}), target)
+  expect((await res).status()).toBe(403)
+})
+
 test('Compatibility modal lists the version gates from the real backend', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: 'Version compatibility' }).click()
