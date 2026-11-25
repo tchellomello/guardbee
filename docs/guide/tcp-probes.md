@@ -87,9 +87,12 @@ resolved IPv4/IPv6 address, and calls `sendto` **exactly once** with the fixed
 performs no retry, and never permits an arbitrary payload. Unlike `nc -uz`, it
 actually generates a datagram. Host and port are separate argv values, never
 interpolated into the program. The socket has a five-second timeout; external
-`timeout` also bounds DNS resolution. Unsafe resolved addresses (loopback,
-link-local, multicast, unspecified, scoped IPv6, and limited broadcast, including
-IPv4-mapped IPv6) fail before sending.
+`timeout` also bounds DNS resolution. The UDP program refuses unsafe resolved
+addresses (loopback, link-local, multicast, unspecified, scoped IPv6, and limited
+broadcast, including IPv4-mapped IPv6) before sending. The TCP path (`nc`) does
+not re-check the address a hostname resolves to inside the Pod; it relies on the
+hostname naming a readable Service in the cluster domain (see the hostname rules
+below).
 
 **Confirm each request explicitly before submitting it.** For UDP, confirmation
 must disclose the selected target/port, one packet, and the exact marker above.
@@ -171,10 +174,15 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
 - `POST /api/probes/connection/stream`: the same request, reported as NDJSON
   stages and one terminal line; see [Live progress](#live-progress).
 - DNS hostnames (case-insensitive, optional trailing dot) resolve inside the
-  Pod, never server-side. Hostname flow correlation needs positive evidence,
+  Pod, never server-side. A hostname whose every label is a number in some
+  `inet_aton` base (decimal, leading-`0` octal, or `0x` hex, e.g. `127.1`,
+  `2130706433`, `0177.0.0.1`, `0x7f.1`, `0x7f000001`) is refused as a legacy
+  numeric address form, since some resolvers and `nc` builds read it as an IP
+  that skipped the literal address checks; names like `api-0`, `v1` or
+  `0a.example` are unaffected. Hostname flow correlation needs positive evidence,
   never just the port: an exact normalized Hubble destination name, the flow's
   destination Service, or, for an in-cluster Service name (`<svc>`,
-  `<svc>.<ns>`, `<svc>.<ns>.svc[.<cluster-domain>]`), a destination that is one
+  `<svc>.<ns>`, `<svc>.<ns>.svc[.cluster.local]`), a destination that is one
   of that Service's ClusterIPs or current EndpointSlice addresses, on the
   requested port or the target port it maps to. That last form is read from the
   API (`get` services, `list` endpointslices) because socket-level load
@@ -184,7 +192,8 @@ produce a failed/inconclusive attempt, not evidence that traffic was generated.
   port; without that permission it suggests the Services seen in this
   session's verdict flows. Any other hostname (an
   external site such as `www.google.com`, a name the Service lookup doesn't
-  find) is **refused with `422` before anything is injected**: without Hubble
+  find, or `<svc>.<ns>.svc.<anything-but-cluster.local>`, which `nc` would
+  resolve as an external name; a custom cluster domain is not supported yet) is **refused with `422` before anything is injected**: without Hubble
   DNS visibility nothing on a flow ties it to that name, so the run could only
   end inconclusive. Target the IP instead (resolve it inside the Pod, for
   example with `nslookup`). A Service-shaped name GuardBee may not read

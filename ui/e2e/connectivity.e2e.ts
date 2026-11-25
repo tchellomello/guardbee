@@ -66,6 +66,21 @@ test.describe('Connectivity tests', () => {
     await expect(form).toContainText('suggestions are Services seen in flows')
   })
 
+  // Hex/octal inet_aton spellings read as an address by some resolvers; the
+  // server refuses them, so the form must not offer to run them either.
+  test('Host refuses hex and octal numeric spellings but keeps real names', async ({ page }) => {
+    const form = await enabled(page)
+    const host = form.getByLabel('Host or IP')
+    for (const value of ['0x7f.1', '0x7f000001', '0177.0.0.1']) {
+      await host.fill(value)
+      await expect(host, value).toHaveAttribute('aria-invalid', 'true')
+      await expect(run(page), value).toBeDisabled()
+    }
+    await host.fill('0a.example')
+    await expect(host).toHaveAttribute('aria-invalid', 'false')
+    await expect(run(page)).toBeEnabled()
+  })
+
   test('disabled capability and capability failure fail closed', async ({ page }) => {
     let podLookups = 0
     await page.route('**/api/probes/pods?*', (route) => { podLookups++; return route.fulfill({ json: { pods: [] } }) })

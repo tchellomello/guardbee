@@ -390,9 +390,21 @@ func validateConnectionProbe(req connectionProbeRequest) error {
 	ip, err := netip.ParseAddr(req.Host)
 	if err != nil {
 		host := normalizeProbeDNS(req.Host)
-		// Legacy numeric address forms (127.1, 2130706433, 0177.0.0.1)
-		// are accepted by some resolvers but bypass literal address checks.
-		numeric := strings.Trim(host, "0123456789.") == ""
+		// Legacy numeric address forms (127.1, 2130706433, 0177.0.0.1,
+		// 0x7f.1, 0x7f000001) are accepted by inet_aton-style resolvers and
+		// some nc builds but bypass literal address checks. inet_aton only
+		// takes the whole string as an address when every label is a number
+		// in some base (decimal, leading-0 octal, 0x hex), so refusing exactly
+		// that shape catches every spelling while api-0, v1, 0a.example and
+		// 123abc stay valid DNS names.
+		numeric := true
+		for _, label := range strings.Split(host, ".") {
+			digits := "0123456789"
+			if hex, ok := strings.CutPrefix(label, "0x"); ok {
+				label, digits = hex, "0123456789abcdef"
+			}
+			numeric = numeric && strings.Trim(label, digits) == ""
+		}
 		if host == "" || numeric || len(validation.IsDNS1123Subdomain(host)) > 0 || host == "localhost" || strings.HasSuffix(host, ".localhost") {
 			return fmt.Errorf("host must be a valid DNS hostname or unicast IP literal, not a URL or command option")
 		}
@@ -889,13 +901,19 @@ func (s *uiServer) resolveProbeService(ctx context.Context, req connectionProbeR
 
 // probeServiceRef maps the in-cluster DNS forms of a Service name to
 // (name, namespace): "<svc>" (resolved in the Pod's own namespace first),
-// "<svc>.<ns>", "<svc>.<ns>.svc" and "<svc>.<ns>.svc.<cluster-domain>".
+// "<svc>.<ns>", "<svc>.<ns>.svc" and "<svc>.<ns>.svc.cluster.local".
 func probeServiceRef(host, podNamespace string) (string, string, bool) {
 	labels := strings.Split(normalizeProbeDNS(host), ".")
 	switch {
 	case len(labels) == 1:
 		return labels[0], podNamespace, true
-	case len(labels) == 2 || labels[2] == "svc":
+	case len(labels) == 2 || len(labels) == 3 && labels[2] == "svc":
+		return labels[0], labels[1], true
+	// Only the default cluster domain: nc resolves the full name inside the
+	// Pod, so "<svc>.<ns>.svc.evil.com" would reach an external host while its
+	// flows were attributed to Service svc/ns. A custom cluster domain would
+	// need a flag; until then such names take the refused non-Service path.
+	case len(labels) == 5 && labels[2] == "svc" && labels[3] == "cluster" && labels[4] == "local":
 		return labels[0], labels[1], true
 	default:
 		return "", "", false
