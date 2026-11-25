@@ -3,6 +3,12 @@
 /guardbee
 AGENTS.local.md
 
+# Kubeconfigs can hold live bearer tokens; never commit one. The e2e
+# fixture is a dummy with no credentials.
+*.kubeconfig
+kubeconfig*
+!ui/e2e/fixtures/dummy.kubeconfig
+
 
 ## AI stuff
 .playwright-mcp

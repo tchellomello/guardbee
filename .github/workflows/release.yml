@@ -8,7 +8,7 @@ on:
     types: [published]
 
 permissions:
-  contents: write # softprops/action-gh-release needs to upload assets to the release
+  contents: read
 
 jobs:
   build:
@@ -16,16 +16,20 @@ jobs:
     # videos as release assets never triggers binary builds.
     if: startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # softprops/action-gh-release needs to upload assets to the release
+      id-token: write # attest-build-provenance: OIDC token for the Sigstore signing cert
+      attestations: write # attest-build-provenance: store the attestation on the repo
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Installs the exact Go version pinned in mise.toml, so CI never drifts
       # from what `mise run build` uses locally. Node is deliberately not
       # pinned via mise (see mise.toml's own comment on this) — setup-node
       # below handles it instead.
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
 
@@ -59,8 +63,16 @@ jobs:
           done
           ( cd dist && sha256sum ./*.tar.gz > SHA256SUMS )
 
+      # Signed SLSA provenance for every tarball, so a user can check one
+      # was built by this workflow from this repo:
+      # gh attestation verify <tarball> --repo tchellomello/guardbee
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+
       - name: Upload release artifacts
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             dist/*.tar.gz

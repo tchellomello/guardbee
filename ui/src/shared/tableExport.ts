@@ -11,8 +11,11 @@ function flowCells(f: Flow): string[] {
 // A cell that starts with = + - @ (or a control char) is executed as a
 // formula by spreadsheets. Labels and names in these tables come from the
 // cluster, so they are untrusted; a leading apostrophe makes the cell text.
+// Applies to the clipboard text too: it is pasted into the same spreadsheets.
+const formulaSafe = (v: string) => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v)
+
 function csvCell(v: string): string {
-  const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v
+  const safe = formulaSafe(v)
   return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
 }
 
@@ -23,7 +26,7 @@ function toCSV(header: readonly string[], body: string[][]): string {
 // Tab-separated, so it pastes straight into a spreadsheet and stays readable
 // as plain text. Tabs/newlines inside a value would break the columns.
 function toText(header: readonly string[], body: string[][]): string {
-  const clean = (v: string) => v.replace(/[\t\r\n]+/g, ' ')
+  const clean = (v: string) => formulaSafe(v.replace(/[\t\r\n]+/g, ' '))
   return [header, ...body].map((r) => r.map(clean).join('\t')).join('\n') + '\n'
 }
 

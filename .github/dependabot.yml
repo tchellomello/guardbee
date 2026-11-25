@@ -1,0 +1,9 @@
+# Bumps the SHA-pinned actions in .github/workflows. Deliberately no gomod
+# (Cilium bumps go through `mise run bump-cilium`) and no npm (any
+# package-lock.json change stales nix/package.nix's npmDepsHash).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

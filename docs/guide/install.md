@@ -34,6 +34,12 @@ tar -xzf guardbee_${VERSION}_${OS}_${ARCH}.tar.gz
 install -m 0755 guardbee-${OS}-${ARCH} ~/.local/bin/guardbee
 ```
 
+Each tarball also has a signed build provenance attestation, proving it was built by this repo's release workflow. With the [GitHub CLI](https://cli.github.com):
+
+```
+gh attestation verify guardbee_${VERSION}_${OS}_${ARCH}.tar.gz --repo tchellomello/guardbee
+```
+
 The tarball also contains shell completions in `completions/`. Install the one for your shell:
 
 ```
