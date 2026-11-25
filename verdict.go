@@ -49,6 +49,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -146,8 +148,10 @@ finding outranks a thin sample, a dropped flow outranks a newly allowed one,
 and both outrank an L7 change.
 
 A candidate file may hold several documents (e.g. rendered kustomize output):
-documents that are not a CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy are
-skipped with a warning on stderr. Pass several files, or "-" to read stdin.
+the items of a List (kind: List, CiliumNetworkPolicyList, ...) are judged like
+top-level documents, as kubectl apply would apply them; documents that are not a
+CiliumNetworkPolicy/CiliumClusterwideNetworkPolicy are skipped and named in the
+output ("Not judged"). A Kubernetes NetworkPolicy is not simulated either. Pass several files, or "-" to read stdin.
 By default every policy is judged together as one candidate; --per-policy
 judges each on its own (one section per policy) and exits with the worst
 result: a dropped flow, then a newly allowed one, then an L7 change, then too
@@ -199,7 +203,7 @@ Flags:
 	warnOnVersionSkew(core, cfg)
 	target := resolveKubeTarget(flags.kubeconfig, cfg)
 
-	docs, sources, err := loadCandidateDocs(logger, fs.Args(), os.Stdin, namespace)
+	docs, sources, skippedDocs, err := loadCandidateDocs(logger, fs.Args(), os.Stdin, namespace)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, binName+" verdict: %v\n", err)
 		os.Exit(1)
@@ -222,6 +226,7 @@ Flags:
 		for _, r := range replaced {
 			fmt.Printf("Replacing live %s with the candidate (--replace-existing).\n", r)
 		}
+		printSkippedDocuments(skippedDocs)
 
 		counts := &verdictCounts{}
 		fmt.Printf("Judging %d candidate rule(s) from %s against %d live rule(s) already in %s%s%s — streaming flows live, Ctrl+C to stop.\n\n",
@@ -251,6 +256,7 @@ Flags:
 	codes := make([]int, len(runs))
 	for i, r := range runs {
 		codes[i] = r.code
+		r.comp.skippedDocuments = skippedDocs
 	}
 	code := worstExitCode(codes)
 
@@ -267,6 +273,7 @@ Flags:
 	case perPolicy && format == formatMarkdown:
 		writeMultiVerdictMarkdown(os.Stdout, runs, minFlows, code)
 	case perPolicy:
+		printSkippedDocuments(skippedDocs)
 		for i, r := range runs {
 			if i > 0 {
 				fmt.Println()
@@ -283,10 +290,22 @@ Flags:
 	case format == formatMarkdown:
 		writeVerdictMarkdown(os.Stdout, runs[0].comp, runs[0].label, runs[0].replaced, minFlows, code)
 	default:
+		printSkippedDocuments(skippedDocs)
 		printVerdictRun(runs[0], minFlows)
 	}
 	if code != 0 {
 		os.Exit(code)
+	}
+}
+
+// printSkippedDocuments is the table output's skippedDocumentNotes, printed
+// once ahead of the verdict, however many policies --per-policy judges.
+func printSkippedDocuments(skipped []string) {
+	for _, n := range skippedDocumentNotes(skipped, func(s string) string { return s }) {
+		fmt.Println(colorize(ansiYellow, n))
+	}
+	if len(skipped) > 0 {
+		fmt.Println()
 	}
 }
 
@@ -316,6 +335,7 @@ type verdictComputation struct {
 	rows                                  []*verdictRow
 	rowCounts                             []int    // seen-Nx count, same index as rows
 	skippedPolicies                       []string // live baseline policies the engine could not load, see fetchBaselineRules
+	skippedDocuments                      []string // CLI only: candidate documents not judged, see loadCandidateDocs
 	warnings                              []string // candidateWarnings
 	// CLI only: wall clock of the whole run, set by runVerdict (0 = not
 	// measured). The UI times its runs browser-side instead, so its clock
@@ -1034,6 +1054,11 @@ func flattenCandidateRules(docs []candidateDoc) api.Rules {
 // are left out and described in skipped ("kind name") instead of failing the
 // run; a file with no policy at all still fails, so a wrong path can't read
 // as an empty pass.
+//
+// A list document (kind: List, CiliumNetworkPolicyList, …) is expanded the
+// way kubectl apply expands it, and each item goes through exactly what a
+// top-level document does. Skipping a List as a non-policy bystander let a
+// policy wrapped in one ship unjudged past --fail-on-dropped.
 func parseCandidateDocs(logger *slog.Logger, raw []byte, defaultNamespace string, skipNonPolicy bool) (policies []candidateDoc, skipped []string, err error) {
 	docs, err := splitYAMLDocuments(raw)
 	if err != nil {
@@ -1044,7 +1069,30 @@ func parseCandidateDocs(logger *slog.Logger, raw []byte, defaultNamespace string
 		// the same "unsupported kind" error a single empty document always did.
 		docs = [][]byte{raw}
 	}
-	for i, doc := range docs {
+	var visit func(doc []byte, where string) error
+	visit = func(doc []byte, where string) error {
+		wrap := func(err error) error {
+			if where == "" {
+				return err
+			}
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		items, isList, err := listItems(doc)
+		if err != nil {
+			return wrap(err)
+		}
+		if isList {
+			for j, item := range items {
+				itemWhere := fmt.Sprintf("item %d", j+1)
+				if where != "" {
+					itemWhere = where + ", " + itemWhere
+				}
+				if err := visit(item, itemWhere); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		if skipNonPolicy {
 			var meta struct {
 				Kind     string `json:"kind"`
@@ -1056,7 +1104,7 @@ func parseCandidateDocs(logger *slog.Logger, raw []byte, defaultNamespace string
 			// decodeCandidateYAML, which reports the real error.
 			if yaml.Unmarshal(doc, &meta) == nil && meta.Kind != policyKindCNP && meta.Kind != policyKindCCNP {
 				skipped = append(skipped, strings.TrimSpace(meta.Kind+" "+meta.Metadata.Name))
-				continue
+				return nil
 			}
 		}
 		decoded, err := decodeCandidateYAML(doc, defaultNamespace)
@@ -1065,17 +1113,70 @@ func parseCandidateDocs(logger *slog.Logger, raw []byte, defaultNamespace string
 			docRules, err = decoded.parse(logger)
 		}
 		if err != nil {
-			if len(docs) > 1 {
-				return nil, nil, fmt.Errorf("document %d: %w", i+1, err)
-			}
-			return nil, nil, err
+			return wrap(err)
 		}
 		policies = append(policies, candidateDoc{kind: decoded.kind, name: decoded.name, namespace: decoded.namespace, rules: docRules})
+		return nil
 	}
-	if skipNonPolicy && len(policies) == 0 {
-		return nil, nil, fmt.Errorf("no CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy document found (skipped: %s)", strings.Join(skipped, ", "))
+	for i, doc := range docs {
+		where := ""
+		if len(docs) > 1 {
+			where = fmt.Sprintf("document %d", i+1)
+		}
+		if err := visit(doc, where); err != nil {
+			return nil, nil, err
+		}
+	}
+	// Checked for the UI path too since list expansion: an empty List is no
+	// longer an "unsupported kind" error, and must not read as an empty
+	// candidate.
+	if len(policies) == 0 {
+		msg := "no CiliumNetworkPolicy or CiliumClusterwideNetworkPolicy document found"
+		if len(skipped) > 0 {
+			msg += " (skipped: " + strings.Join(skipped, ", ") + ")"
+		}
+		return nil, nil, errors.New(msg)
 	}
 	return policies, skipped, nil
+}
+
+// listItems reports whether doc is a list and returns its items, decided the
+// way kubectl decides it (apimachinery's unstructuredJSONScheme): any object
+// with an "items" field is a list, whatever its kind. An item with neither
+// kind nor apiVersion inherits them from the list (CiliumNetworkPolicyList
+// → CiliumNetworkPolicy), as kubectl does; without that, such an item would
+// be skipped here as kind "" but still applied by kubectl.
+func listItems(doc []byte) (items [][]byte, isList bool, err error) {
+	asJSON, err := yaml.YAMLToJSON(doc)
+	if err != nil {
+		// Not this function's error to report: decodeCandidateYAML gives the
+		// real one for a document that doesn't parse.
+		return nil, false, nil
+	}
+	var list struct {
+		APIVersion string          `json:"apiVersion"`
+		Kind       string          `json:"kind"`
+		Items      json.RawMessage `json:"items"`
+	}
+	if json.Unmarshal(asJSON, &list) != nil || list.Items == nil {
+		return nil, false, nil
+	}
+	var raws []map[string]any
+	if err := json.Unmarshal(list.Items, &raws); err != nil {
+		return nil, true, fmt.Errorf("%s items: %w", list.Kind, err)
+	}
+	for _, item := range raws {
+		if item["kind"] == nil && item["apiVersion"] == nil {
+			item["kind"] = strings.TrimSuffix(list.Kind, "List")
+			item["apiVersion"] = list.APIVersion
+		}
+		b, err := json.Marshal(item)
+		if err != nil {
+			return nil, true, err
+		}
+		items = append(items, b)
+	}
+	return items, true, nil
 }
 
 // splitYAMLDocuments splits a multi-document YAML stream on "---",

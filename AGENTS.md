@@ -214,6 +214,15 @@ Consequences that follow directly from this, non-negotiably:
   port 0 doesn't error, but the ancestor-LPM walk then only matches other
   full-wildcard-port entries, silently missing any specific-port rule. Seen
   on real clusters for UDP flows Hubble reports with `DestinationPort` 0.
+- **Only CNP/CCNP candidates are simulated.** A Kubernetes `NetworkPolicy`
+  in a candidate file is skipped like any other non-policy document, even
+  though Cilium enforces it; `skippedDocumentNotes` (`verdict_ci.go`) names
+  it apart under "Not judged" in table, markdown and JSON
+  (`skippedDocuments`) so a reviewer sees the gate's scope was narrower
+  than the file. List documents are not skipped: `parseCandidateDocs`
+  expands their items the way kubectl does (`listItems`: any object with
+  `items`, bare items inherit the list's kind minus `List`), so a policy
+  wrapped in a `List` can't ship past `--fail-on-dropped` unjudged.
 
 ## Repo layout
 

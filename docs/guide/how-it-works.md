@@ -29,6 +29,7 @@ Documented in code, not silent:
 | `--last` is a ceiling | Hubble's flow buffer is a small recent-flow ring, not persisted history — it may hold fewer flows than requested. Use `--follow` to accumulate more over time instead of raising `--last` further. |
 | `blame` reads Hubble's attribution | `blame` doesn't run the engine: it shows the policy Cilium's agent attributed each policy-verdict event to. When Hubble attached none, it says "not attributed" instead of guessing; only a `POLICY_DENIED` drop is reported as default deny. |
 | `--pod` combines freely | Unlike `hubble observe`, `--pod` can be combined with `--from-pod`, `--to-pod` and `--to-ip`; every filter ANDs. |
+| Kubernetes `NetworkPolicy` | Not simulated: only `CiliumNetworkPolicy` and `CiliumClusterwideNetworkPolicy` go through the engine. Cilium enforces a `NetworkPolicy` too, so a candidate file holding one is not fully covered by the verdict; the CLI names it under "Not judged" in every output format rather than dropping it silently. |
 | Port-0 TCP/UDP flows | Counted as `not simulated` — Cilium's own policy engine can't be queried with a wildcard port, so a flow Hubble reports with no concrete destination port isn't guessed at. |
 
 > A `0 newly dropped` result can mean "nothing in the sample touched the port

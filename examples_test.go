@@ -18,7 +18,7 @@ func TestExamplesParse(t *testing.T) {
 		t.Fatal("no examples found")
 	}
 	for _, f := range files {
-		docs, _, err := loadCandidateDocs(slog.Default(), []string{f}, nil, "")
+		docs, _, _, err := loadCandidateDocs(slog.Default(), []string{f}, nil, "")
 		if err != nil {
 			t.Errorf("%s: %v", f, err)
 			continue
