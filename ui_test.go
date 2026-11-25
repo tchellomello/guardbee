@@ -85,6 +85,36 @@ func TestHandleVerdictRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
+// A body past policyBodyLimit must be refused before decoding: leading JSON
+// whitespace keeps it a valid request, so only the limit can reject it.
+func TestPolicyPostBodyLimit(t *testing.T) {
+	srv := &uiServer{logger: slog.Default()}
+	big := strings.Repeat(" ", policyBodyLimit+1) + "{}"
+	for path, h := range map[string]http.HandlerFunc{
+		"/api/verdict":          srv.handleVerdict,
+		"/api/policy/validate":  srv.handlePolicyValidate,
+		"/api/policy/parse":     srv.handlePolicyParse,
+		"/api/policy/workloads": srv.handlePolicyWorkloads,
+	} {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(big)))
+		if rec.Code < 400 || rec.Code >= 500 || !strings.Contains(rec.Body.String(), "too large") {
+			t.Errorf("%s oversized body: got %d %q, want 4xx body too large", path, rec.Code, rec.Body.String())
+		}
+	}
+	small := `{"candidateYAML":"apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: x\n  namespace: testing\nspec:\n  endpointSelector: {}\n  ingress:\n  - {}\n"}`
+	for path, h := range map[string]http.HandlerFunc{
+		"/api/policy/validate": srv.handlePolicyValidate,
+		"/api/policy/parse":    srv.handlePolicyParse,
+	} {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(small)))
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "error") {
+			t.Errorf("%s small body: got %d %q, want 200 without error", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // A scoped egressDeny (toCIDR+toPorts) must parse as valid but be flagged
 // Lossy: templatePolicyModel can only hold the empty catchall `- {}`, so
 // converting it would silently turn "block one CIDR:443" into "deny all

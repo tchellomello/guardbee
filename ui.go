@@ -325,6 +325,10 @@ func (s *uiServer) handleCompat(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// policyBodyLimit caps the non-probe JSON POST bodies: candidate policies are
+// KiB, and decoding plus YAML parsing amplifies an unbounded body ~10x in RSS.
+const policyBodyLimit = 1 << 20
+
 // verdictRequest is the "ui" subcommand's JSON request body for POST
 // /api/verdict, mirroring the "verdict" subcommand's own flags/argument:
 // Namespace "" means cluster-wide (same as omitting --namespace or passing
@@ -473,6 +477,7 @@ type verdictResponse struct {
 
 func (s *uiServer) handleVerdict(w http.ResponseWriter, r *http.Request) {
 	var req verdictRequest
+	r.Body = http.MaxBytesReader(w, r.Body, policyBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("decoding request: %v", err), http.StatusBadRequest)
 		return
@@ -984,6 +989,7 @@ func (s *uiServer) handlePolicyValidate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req policyValidateRequest
+	r.Body = http.MaxBytesReader(w, r.Body, policyBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
 		return
@@ -1052,6 +1058,7 @@ func (s *uiServer) handlePolicyParse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req policyValidateRequest
+	r.Body = http.MaxBytesReader(w, r.Body, policyBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
 		return
