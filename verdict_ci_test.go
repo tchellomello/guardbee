@@ -13,6 +13,7 @@ import (
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	cilium_v2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/cilium/cilium/pkg/k8s/client/clientset/versioned/fake"
+	"github.com/cilium/cilium/pkg/policy/api"
 	"sigs.k8s.io/yaml"
 )
 
@@ -245,9 +246,9 @@ func TestWriteVerdictMarkdown(t *testing.T) {
 	for _, want := range []string{
 		"### GuardBee verdict: `web.yaml`",
 		"**FAIL**: 1 sampled flow(s) would break",
-		"| NEWLY_DROPPED | alpha/client-1 | alpha/web-1 | TCP/81 | 1 |",
+		"| NEWLY_DROPPED | `alpha/client-1` | `alpha/web-1` | TCP/81 | 1 |",
 		"<details><summary>1 unchanged flow(s)</summary>",
-		"Replaces live CiliumNetworkPolicy alpha/web",
+		"Replaces live `CiliumNetworkPolicy alpha/web`",
 		"- Context: `kind-lab` (https://127.0.0.1:6443)",
 		"- Duration: 3.2s",
 	} {
@@ -468,6 +469,65 @@ func TestJudgeGroupPerPolicyWorstExitCode(t *testing.T) {
 	for _, want := range []string{"## GuardBee verdict: 2 policies, overall **DROPPED**", "### GuardBee verdict: `CiliumNetworkPolicy alpha/web (rendered.yaml)`", "### GuardBee verdict: `CiliumNetworkPolicy alpha/cache (rendered.yaml)`"} {
 		if !strings.Contains(mdBuf.String(), want) {
 			t.Errorf("multi markdown missing %q:\n%s", want, mdBuf.String())
+		}
+	}
+}
+
+func TestMdCell(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"", ""},
+		{"alpha/web-1", "`alpha/web-1`"},
+		{"a|b", "`a\\|b`"},
+		{"a\nb\r\nc", "`a b  c`"},
+		{"a`b", "``a`b``"},
+		{"a``b`c", "```a``b`c```"},
+		{"`x`", "`` `x` ``"},
+		{"x`", "`` x` ``"},
+	} {
+		if got := mdCell(c.in); got != c.want {
+			t.Errorf("mdCell(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Any HTTP client of a workload behind an L7 rule picks the request path a
+// verdict row names; in the CI comment it must stay text, not become a link,
+// an @mention or bold.
+func TestWriteVerdictMarkdownL7RequestIsInert(t *testing.T) {
+	live := api.Rules{backendHTTPRule(t, api.PortRuleHTTP{Method: "GET", Path: "/api/.*"})}
+	cand := api.Rules{backendHTTPRule(t, api.PortRuleHTTP{Method: "GET", Path: "/api/v2/.*"})}
+	base, candE := l7Engines(t, live, cand)
+	f := httpFlow("GET", "http://backend/api/v1/@octocat/[click](https://evil.example)/**b**?q=`x`")
+	row := judgeFlow(slog.Default(), base, candE, f, &verdictCounts{}, false)
+	if row == nil || row.change != "NEWLY_DROPPED" {
+		t.Fatalf("want a NEWLY_DROPPED row, got %+v", row)
+	}
+	var buf bytes.Buffer
+	comp := &verdictComputation{counts: &verdictCounts{newlyDropped: 1, total: 1}, rows: []*verdictRow{row}, rowCounts: []int{1}}
+	writeVerdictMarkdown(&buf, comp, "c.yaml", nil, 0, exitVerdictDropped)
+
+	var line string
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if strings.HasPrefix(l, "| NEWLY_DROPPED |") {
+			line = l
+		}
+	}
+	start := strings.Index(line, "/80 | ")
+	end := strings.LastIndex(line, " | ")
+	if start < 0 || end <= start {
+		t.Fatalf("no L7 cell in:\n%s", buf.String())
+	}
+	cell := line[start+len("/80 | ") : end]
+	inner, ok := strings.CutPrefix(cell, "``")
+	if ok {
+		inner, ok = strings.CutSuffix(inner, "``")
+	}
+	if !ok || strings.Contains(inner, "``") {
+		t.Fatalf("L7 cell must be one code span fenced by two backticks: %q", cell)
+	}
+	for _, want := range []string{"[click](https://evil.example)", "@octocat", "**b**", "`x`"} {
+		if !strings.Contains(inner, want) {
+			t.Errorf("L7 cell lost %q: %q", want, cell)
 		}
 	}
 }
