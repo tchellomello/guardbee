@@ -204,9 +204,38 @@ func writeVerdictJSON(w io.Writer, comp *verdictComputation, candidatePath strin
 	return enc.Encode(newCLIVerdictOutput(comp, candidatePath, replaced, minFlows, code))
 }
 
-// mdCell keeps a value from breaking a markdown table row.
+// mdCode renders untrusted text (an HTTP path any client of the workload
+// chose, a name from the candidate or the cluster) as one inert code span in
+// a comment a CI bot posts. Backslash-escaping punctuation isn't enough:
+// GitHub still autolinks a bare URL and notifies an @mention outside code.
+// The fence is one backtick longer than any run inside, and a value starting
+// or ending with a backtick is padded, since CommonMark strips one space
+// from each side.
+func mdCode(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
+	longest, run := 0, 0
+	for _, c := range s {
+		if c == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") {
+		s = " " + s + " "
+	}
+	fence := strings.Repeat("`", longest+1)
+	return fence + s + fence
+}
+
+// mdCell is mdCode for a table cell: GFM splits a row on | before it parses
+// code spans, and drops the backslash of a \| inside one.
 func mdCell(s string) string {
-	return strings.ReplaceAll(s, "|", `\|`)
+	return mdCode(strings.ReplaceAll(s, "|", `\|`))
 }
 
 func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath string, replaced []string, minFlows, code int) {
@@ -228,7 +257,7 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 			status = "**PASS**: no sampled flow would break"
 		}
 	}
-	fmt.Fprintf(w, "### GuardBee verdict: `%s`\n\n%s\n\n", candidatePath, status)
+	fmt.Fprintf(w, "### GuardBee verdict: %s\n\n%s\n\n", mdCode(candidatePath), status)
 	if comp.target.context != "" {
 		fmt.Fprintf(w, "- Context: `%s` (%s)\n", comp.target.context, comp.target.apiServer)
 	}
@@ -240,13 +269,13 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 		fmt.Fprintf(w, "- Duration: %s\n", formatElapsed(comp.elapsed))
 	}
 	for _, r := range replaced {
-		fmt.Fprintf(w, "- Replaces live %s\n", r)
+		fmt.Fprintf(w, "- Replaces live %s\n", mdCode(r))
 	}
 	for _, msg := range comp.warnings {
-		fmt.Fprintf(w, "- Warning: %s\n", msg)
+		fmt.Fprintf(w, "- Warning: %s\n", mdCode(msg))
 	}
 	for _, s := range comp.skippedPolicies {
-		fmt.Fprintf(w, "- Live policy not simulated (fromNodes/toNodes): %s\n", s)
+		fmt.Fprintf(w, "- Live policy not simulated (fromNodes/toNodes): %s\n", mdCode(s))
 	}
 
 	// The L7 column only appears when a row in the table has L7 rules, so a

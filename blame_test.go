@@ -179,7 +179,7 @@ func TestBlameOutput(t *testing.T) {
 	var buf bytes.Buffer
 	writeBlameMarkdown(&buf, "app", flowFilter{pods: []string{"app/netshoot"}}, []flowOut{row})
 	out := buf.String()
-	for _, want := range []string{"`--pod app/netshoot`", "| EGRESS |", "denied by CNP:app/deny-world | POLICY_DENY |"} {
+	for _, want := range []string{"`--pod app/netshoot`", "| EGRESS |", "| `denied by CNP:app/deny-world` | POLICY_DENY |"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("markdown missing %q:\n%s", want, out)
 		}
