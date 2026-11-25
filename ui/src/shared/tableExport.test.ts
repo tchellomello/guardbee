@@ -51,6 +51,14 @@ describe('flowsToText', () => {
     expect(out.split('\n')[0]).toBe('Time\tVerdict\tDirection\tSource\tDestination\tL4\tDecided By\tDrop Reason')
     expect(out.split('\n')[1].split('\t')[3]).toBe('a b c')
   })
+
+  it('neutralises spreadsheet formulas', () => {
+    const cells = flowsToText([flow({ source: '=HYPERLINK("x")', destination: '@cmd', l4: '+1', verdict: '-2' })]).split('\n')[1].split('\t')
+    expect(cells[3]).toBe(`'=HYPERLINK("x")`)
+    expect(cells[4]).toBe(`'@cmd`)
+    expect(cells[5]).toBe(`'+1`)
+    expect(cells[1]).toBe(`'-2`)
+  })
 })
 
 describe('verdict rows export', () => {

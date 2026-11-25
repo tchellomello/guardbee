@@ -10,7 +10,9 @@ go = "1.26.8"
 [tasks.ui-install]
 description = "Install the \"ui\" subcommand's frontend dependencies (run once, or after package.json changes)"
 dir = "ui"
-run = "npm install"
+# ci, not install: a package.json/package-lock.json mismatch fails instead of
+# silently rewriting the lockfile (which would also stale the nix npmDepsHash).
+run = "npm ci"
 
 [tasks.ui-build]
 description = "Build the frontend's production assets into ui/dist, embedded into the Go binary by \"build\""
