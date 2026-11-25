@@ -70,6 +70,7 @@ func serviceAccountOf(p *corev1.Pod) string {
 
 func (s *uiServer) handlePolicyWorkloads(w http.ResponseWriter, r *http.Request) {
 	var req workloadsRequest
+	r.Body = http.MaxBytesReader(w, r.Body, policyBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
 		return
