@@ -156,7 +156,20 @@ Flags:
 	mux.Handle("/", root)
 
 	fmt.Printf("%s ui: listening on http://%s\n", binName, addr)
-	if err := http.ListenAndServe(addr, rebindingGuard(addr, srv.debugLogRequests(mux))); err != nil {
+	if !loopbackListenAddr(addr) {
+		fmt.Fprintf(os.Stderr, "%s ui: WARNING: --addr %s is not loopback. The UI has no authentication: every /api route serves cluster data with this kubeconfig's identity to anyone who can reach that address.\n", binName, addr)
+	}
+	// ReadHeaderTimeout bounds slowloris-style header dribbling. No
+	// ReadTimeout/WriteTimeout: /api/verdict/stream, /api/flows/stream and the
+	// probe stream are long-lived SSE/NDJSON responses that a write deadline
+	// would cut off mid-stream.
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           rebindingGuard(addr, srv.debugLogRequests(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	if err := httpSrv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, binName+" ui: %v\n", err)
 		os.Exit(1)
 	}
@@ -168,8 +181,26 @@ Flags:
 // same-origin. Its requests still carry that name in Host, so only an IP
 // literal, localhost or the exact --addr is served. A rebinding attack needs
 // a DNS name, so an IP literal Host is never one.
+//
+// It also refuses cross-site and same-site requests by Sec-Fetch-Site: a
+// hostile page can't read the responses, but an <img src=.../api/flows/stream>
+// would still open hubble-relay port-forwards and List calls with the
+// operator's credentials. A missing header (curl, scripts, older browsers) is
+// allowed, and so is Origin-less GET, since browsers omit Origin on plain
+// navigations and subresource loads; the probe POST keeps its stricter
+// probeSameOrigin check. The headers stop the UI from being framed
+// (clickjacking) or content-sniffed; a full CSP is out of scope because
+// index.html loads Google Fonts and an inline theme script.
 func rebindingGuard(addr string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
+			http.Error(w, "cross-site request refused: open the UI directly at its own address", http.StatusForbidden)
+			return
+		}
 		if !trustedHost(r.Host, addr) {
 			http.Error(w, "unexpected Host header (DNS-rebinding protection): open the UI by IP address, localhost, or the exact --addr", http.StatusForbidden)
 			return
@@ -190,6 +221,20 @@ func trustedHost(host, addr string) bool {
 		return true
 	}
 	return strings.EqualFold(h, "localhost")
+}
+
+// loopbackListenAddr reports whether --addr only accepts local connections:
+// an empty host (":4747") or 0.0.0.0 listens on every interface.
+func loopbackListenAddr(addr string) bool {
+	h, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(h)
+	return err == nil && ip.IsLoopback()
 }
 
 type statusRecorder struct {

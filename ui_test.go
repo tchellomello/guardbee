@@ -47,6 +47,72 @@ func TestRebindingGuard(t *testing.T) {
 	}
 }
 
+func TestRebindingGuardSecFetchSite(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	h := rebindingGuard("127.0.0.1:4747", ok)
+	for site, want := range map[string]int{
+		"":            200, // curl, scripts, older browsers
+		"none":        200, // typed URL / bookmark
+		"same-origin": 200, // the UI itself, and the vite dev proxy's forwarded requests
+		"cross-site":  403,
+		"same-site":   403,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/flows/stream", nil)
+		req.Host = "127.0.0.1:4747"
+		if site != "" {
+			req.Header.Set("Sec-Fetch-Site", site)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Sec-Fetch-Site %q: got %d, want %d", site, rec.Code, want)
+		}
+	}
+}
+
+func TestRebindingGuardSecurityHeaders(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	h := rebindingGuard("127.0.0.1:4747", ok)
+	for name, mod := range map[string]func(*http.Request){
+		"ok":         func(*http.Request) {},
+		"cross-site": func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") },
+		"bad host":   func(r *http.Request) { r.Host = "evil.example:4747" },
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = "127.0.0.1:4747"
+		mod(req)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		for k, v := range map[string]string{
+			"X-Frame-Options":         "DENY",
+			"Content-Security-Policy": "frame-ancestors 'none'",
+			"X-Content-Type-Options":  "nosniff",
+		} {
+			if got := rec.Header().Get(k); got != v {
+				t.Errorf("%s: %s = %q, want %q", name, k, got, v)
+			}
+		}
+	}
+}
+
+func TestLoopbackListenAddr(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:4747":   true,
+		"127.0.0.2:4747":   true,
+		"[::1]:4747":       true,
+		"localhost:4747":   true,
+		"0.0.0.0:4747":     false,
+		":4747":            false,
+		"[::]:4747":        false,
+		"192.168.1.5:4747": false,
+		"myhost.lan:4747":  false,
+	} {
+		if got := loopbackListenAddr(addr); got != want {
+			t.Errorf("%s: got %v, want %v", addr, got, want)
+		}
+	}
+}
+
 func TestHandleVerdictRejectsMissingCandidateYAML(t *testing.T) {
 	srv := &uiServer{logger: slog.Default()}
 	body, _ := json.Marshal(verdictRequest{Namespace: "testing"})
