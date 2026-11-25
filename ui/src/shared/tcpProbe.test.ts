@@ -3,12 +3,12 @@ import { validProbeHost, validProbeNamespace, validProbePort } from './tcpProbe'
 
 describe('finite TCP inputs', () => {
   it('accepts DNS names and IPv4/IPv6 literals', () => {
-    for (const host of ['postgres', 'db.postgres.svc.cluster.local', 'example.com.', '10.0.0.1', '::1', '2001:db8::1']) {
+    for (const host of ['postgres', 'db.postgres.svc.cluster.local', 'example.com.', 'api-0', 'v1.ns', '0a.example', '123abc', 'web.app.svc', '10.0.0.1', '::1', '2001:db8::1']) {
       expect(validProbeHost(host), host).toBe(true)
     }
   })
   it('rejects command syntax, URLs, invalid IPs and embedded ports', () => {
-    for (const host of ['', 'db:5432', 'https://db', 'db;id', '-v', 'db host', '999.0.0.1', '01.2.3.4', '[::1]', '::wrong', 'db/path', 'a'.repeat(64), '.']) {
+    for (const host of ['', 'db:5432', 'https://db', 'db;id', '-v', 'db host', '999.0.0.1', '01.2.3.4', '0x7f000001', '0x7f.1', '0x7f.0.0.1', '0X7F.0.0.1', '017700000001', '0177.0.0.1', '2130706433', '127.1', '[::1]', '::wrong', 'db/path', 'a'.repeat(64), '.']) {
       expect(validProbeHost(host), host).toBe(false)
     }
   })

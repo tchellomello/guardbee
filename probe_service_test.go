@@ -31,15 +31,20 @@ func TestProbeServiceRef(t *testing.T) {
 		"db.database":                   {"db", "database"},
 		"DB.database.svc.":              {"db", "database"},
 		"db.database.svc.cluster.local": {"db", "database"},
-		"db.database.svc.corp.internal": {"db", "database"},
+		"web.app.svc":                   {"web", "app"},
 	} {
 		name, ns, ok := probeServiceRef(host, "app")
 		if !ok || name != want[0] || ns != want[1] {
 			t.Errorf("%s: got %s/%s %v, want %s/%s", host, ns, name, ok, want[1], want[0])
 		}
 	}
-	if _, _, ok := probeServiceRef("api.example.com", "app"); ok {
-		t.Error("external three-label name treated as a Service")
+	// nc resolves the full name in the Pod, so an unknown suffix after .svc
+	// is an external host, not Service svc/ns (custom cluster domains would
+	// need a flag).
+	for _, host := range []string{"api.example.com", "web.app.svc.evil.com", "web.app.svc.corp.internal", "web.app.svc.cluster.local.evil.com"} {
+		if _, _, ok := probeServiceRef(host, "app"); ok {
+			t.Errorf("%s treated as a Service", host)
+		}
 	}
 }
 

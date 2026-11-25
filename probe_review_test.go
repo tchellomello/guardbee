@@ -86,7 +86,7 @@ func TestProbeResultCarriesReviewContext(t *testing.T) {
 }
 
 func TestProbeRejectsAmbiguousNumericHosts(t *testing.T) {
-	for _, host := range []string{"127.1", "2130706433", "0177.0.0.1", "999.999.999.999"} {
+	for _, host := range []string{"127.1", "2130706433", "0177.0.0.1", "999.999.999.999", "0x7f000001", "0x7f.1", "0x7f.0.0.1", "0X7F.0.0.1", "017700000001"} {
 		req := testProbeReq()
 		req.Host = host
 		if validateConnectionProbe(req) == nil {

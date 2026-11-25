@@ -602,7 +602,7 @@ func TestProbeNonPolicyTargetsAndSystemPodsRejected(t *testing.T) {
 }
 
 func TestProbeHostnameValidationCommandAndCorrelation(t *testing.T) {
-	for _, host := range []string{"db.app.svc", "DB.APP.SVC.", "example.com", "db"} {
+	for _, host := range []string{"db.app.svc", "DB.APP.SVC.", "example.com", "db", "api-0", "v1.ns", "0a.example", "123abc", "web", "web.app", "web.app.svc", "web.app.svc.cluster.local"} {
 		req := testProbeReq()
 		req.Host = host
 		if err := validateConnectionProbe(req); err != nil {
