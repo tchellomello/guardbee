@@ -124,6 +124,9 @@ Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the
 - [ ] `fromNodes`/`toNodes` policies — today a live policy using them is
       skipped and named in the UI banner / CLI warning, not simulated
       (Hubble flows carry no node labels to match them against)
+- [ ] Kubernetes `NetworkPolicy` — Cilium enforces it, but today only
+      CNP/CCNP are simulated; a `NetworkPolicy` in a candidate file is
+      named under "Not judged" in the CLI output, not judged
 - [ ] Natural-language policy authoring — describe the intent in plain
       English, GuardBee drafts and validates the candidate (exploring)
 

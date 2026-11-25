@@ -178,6 +178,7 @@ type cliVerdictOutput struct {
 	verdictResponse
 	Candidate        string   `json:"candidate"`
 	ReplacedPolicies []string `json:"replacedPolicies,omitempty"`
+	SkippedDocuments []string `json:"skippedDocuments,omitempty"`
 	JudgedFlows      int      `json:"judgedFlows"`
 	MinFlows         int      `json:"minFlows,omitempty"`
 	Result           string   `json:"result"`
@@ -190,6 +191,7 @@ func newCLIVerdictOutput(comp *verdictComputation, candidatePath string, replace
 		verdictResponse:  toVerdictResponse(comp),
 		Candidate:        candidatePath,
 		ReplacedPolicies: replaced,
+		SkippedDocuments: comp.skippedDocuments,
 		JudgedFlows:      judgedFlows(comp.counts),
 		MinFlows:         minFlows,
 		Result:           verdictResult(code),
@@ -277,6 +279,9 @@ func writeVerdictMarkdown(w io.Writer, comp *verdictComputation, candidatePath s
 	for _, s := range comp.skippedPolicies {
 		fmt.Fprintf(w, "- Live policy not simulated (fromNodes/toNodes): %s\n", mdCode(s))
 	}
+	for _, n := range skippedDocumentNotes(comp.skippedDocuments, mdCode) {
+		fmt.Fprintf(w, "- %s\n", n)
+	}
 
 	// The L7 column only appears when a row in the table has L7 rules, so a
 	// PR comment for an L3/L4-only policy keeps its familiar shape.
@@ -354,10 +359,11 @@ type candidateGroup struct {
 }
 
 // loadCandidateDocs reads the verdict command's candidate arguments: file
-// paths, or "-" for stdin. Documents of other kinds are skipped with a
-// warning; a source that holds no policy at all is an error. Each doc is
-// returned with the source it came from.
-func loadCandidateDocs(logger *slog.Logger, args []string, stdin io.Reader, defaultNamespace string) (docs []candidateDoc, sources []string, err error) {
+// paths, or "-" for stdin. Documents of other kinds are skipped and returned
+// in skipped ("kind name (source)"), which every output format reports; a
+// source that holds no policy at all is an error. Each doc is returned with
+// the source it came from.
+func loadCandidateDocs(logger *slog.Logger, args []string, stdin io.Reader, defaultNamespace string) (docs []candidateDoc, sources, skipped []string, err error) {
 	for _, arg := range args {
 		var raw []byte
 		name := arg
@@ -368,19 +374,19 @@ func loadCandidateDocs(logger *slog.Logger, args []string, stdin io.Reader, defa
 			raw, err = os.ReadFile(arg)
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("reading candidate %s: %w", name, err)
+			return nil, nil, nil, fmt.Errorf("reading candidate %s: %w", name, err)
 		}
 		// Only the CLI skips non-policy documents: a file here is often
 		// rendered kustomize/helm output with Deployments and ConfigMaps next
 		// to the policies. The UI's editor keeps rejecting an unsupported
 		// kind, since there a non-policy document is a mistake, not a
 		// bystander.
-		parsed, skipped, err := parseCandidateDocs(logger, raw, defaultNamespace, true)
+		parsed, skippedHere, err := parseCandidateDocs(logger, raw, defaultNamespace, true)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parsing candidate %s: %w", name, err)
+			return nil, nil, nil, fmt.Errorf("parsing candidate %s: %w", name, err)
 		}
-		for _, s := range skipped {
-			fmt.Fprintf(os.Stderr, "%s verdict: skipping non-policy document in %s: %s\n", binName, name, s)
+		for _, s := range skippedHere {
+			skipped = append(skipped, s+" ("+name+")")
 		}
 		docs = append(docs, parsed...)
 		sources = append(sources, name)
@@ -388,7 +394,32 @@ func loadCandidateDocs(logger *slog.Logger, args []string, stdin io.Reader, defa
 			docs[i].source = name
 		}
 	}
-	return docs, sources, nil
+	return docs, sources, skipped, nil
+}
+
+// skippedDocumentNotes says what a candidate file held that the gate did not
+// judge, so a PR comment or JSON result can't look like it covered the whole
+// file. quote renders each "kind name (source)" (mdCode for markdown). A
+// Kubernetes NetworkPolicy is named apart: unlike a Deployment, Cilium
+// enforces it, so it can break traffic this verdict never saw (a v1
+// simplification: only CNP/CCNP are simulated).
+func skippedDocumentNotes(skipped []string, quote func(string) string) []string {
+	var netpol, other []string
+	for _, s := range skipped {
+		if strings.HasPrefix(s, "NetworkPolicy ") {
+			netpol = append(netpol, quote(s))
+		} else {
+			other = append(other, quote(s))
+		}
+	}
+	var notes []string
+	if len(netpol) > 0 {
+		notes = append(notes, "Not judged (Kubernetes NetworkPolicy: Cilium enforces it, GuardBee does not simulate it): "+strings.Join(netpol, ", "))
+	}
+	if len(other) > 0 {
+		notes = append(notes, "Not judged (not a Cilium policy): "+strings.Join(other, ", "))
+	}
+	return notes
 }
 
 // groupCandidates turns the parsed documents into what gets judged: one

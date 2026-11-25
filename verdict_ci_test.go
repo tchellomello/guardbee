@@ -374,7 +374,7 @@ func TestLoadCandidateDocsFilesAndStdin(t *testing.T) {
 	if err := os.WriteFile(file, []byte(narrowedWebCandidate+"---\n"+unrelatedConfigMap), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	docs, sources, err := loadCandidateDocs(slog.Default(), []string{file, "-"}, strings.NewReader(secondCandidatePolicy), "alpha")
+	docs, sources, skipped, err := loadCandidateDocs(slog.Default(), []string{file, "-"}, strings.NewReader(secondCandidatePolicy), "alpha")
 	if err != nil {
 		t.Fatalf("loadCandidateDocs: %v", err)
 	}
@@ -383,6 +383,9 @@ func TestLoadCandidateDocsFilesAndStdin(t *testing.T) {
 	}
 	if docs[0].source != file || docs[1].source != "stdin" || len(sources) != 2 {
 		t.Errorf("sources wrong: %q %q %v", docs[0].source, docs[1].source, sources)
+	}
+	if len(skipped) != 1 || skipped[0] != "ConfigMap settings ("+file+")" {
+		t.Errorf("skipped = %v, want the ConfigMap named with its source", skipped)
 	}
 
 	merged := groupCandidates(docs, sources, false)
@@ -394,7 +397,7 @@ func TestLoadCandidateDocsFilesAndStdin(t *testing.T) {
 		t.Errorf("per-policy groups wrong: %+v", per)
 	}
 
-	if _, _, err := loadCandidateDocs(slog.Default(), []string{filepath.Join(dir, "missing.yaml")}, strings.NewReader(""), ""); err == nil {
+	if _, _, _, err := loadCandidateDocs(slog.Default(), []string{filepath.Join(dir, "missing.yaml")}, strings.NewReader(""), ""); err == nil {
 		t.Error("a missing file must be an error")
 	}
 }
