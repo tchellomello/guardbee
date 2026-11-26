@@ -131,7 +131,7 @@ prints a summary you can post as a PR comment.
 | [Install](https://tchellomello.github.io/guardbee/guide/install.html) | Release binaries, Nix flake (NixOS, Home Manager), versioning |
 | [Run on your cluster](https://tchellomello.github.io/guardbee/guide/run.html) | Prerequisites, read-only RBAC, kubeconfig |
 | [Gate PRs in CI](https://tchellomello.github.io/guardbee/guide/ci.html) | A copy-paste GitHub Actions workflow that comments and fails on regressions |
-| [Lab](https://tchellomello.github.io/guardbee/guide/lab.html) · [Zero-trust walkthrough](https://tchellomello.github.io/guardbee/guide/zero-trust-walkthrough.html) | Hands-on deep dives: L7, `toFQDNs`, connectivity tests, least privilege from default deny |
+| [Lab](https://tchellomello.github.io/guardbee/guide/lab.html) · [Lab extras](https://tchellomello.github.io/guardbee/guide/lab-extras.html) · [Zero-trust walkthrough](https://tchellomello.github.io/guardbee/guide/zero-trust-walkthrough.html) | Hands-on: the full regression story, then connectivity tests, L7 rules, `toFQDNs`, and least privilege from default deny |
 | [Commands](https://tchellomello.github.io/guardbee/guide/commands.html) | Every subcommand and flag |
 | [How it works](https://tchellomello.github.io/guardbee/guide/how-it-works.html) · [FAQ](https://tchellomello.github.io/guardbee/guide/faq.html) | The engine, its known limits, how it differs from hubble, dry-run and audit mode |
 | [Build from source](https://tchellomello.github.io/guardbee/guide/build.html) | `mise` or plain Go |
