@@ -25,6 +25,7 @@ Every command reads the cluster and changes nothing in it. The only exception is
 | `--kubeconfig` | Path to kubeconfig (default: `$KUBECONFIG` or `~/.kube/config`) |
 | `-n`, `--namespace` | Namespace to scope the query to (every command except `ui`, `version` and `compat`) |
 | `-A`, `--all-namespaces` | Query cluster-wide instead of one namespace — needed to see a CCNP's full blast radius |
+| `--hubble-namespace` | Namespace Cilium is installed in, where `hubble-relay` runs and `cilium-config` lives (default `kube-system`; every command except `compat`) |
 | `-D`, `--debug` | Debug logging to stderr: Cilium policy distillation, HTTP requests, connectivity-test rejections, and Hubble port-forward/dial traces |
 
 ---
@@ -85,7 +86,7 @@ The filter flags use `hubble observe`'s own names and semantics.
 - **Applied in Hubble's query,** so `--last 50` means 50 *matching* flows.
 - Dropped flows also print their drop reason.
 
-> Port-forwards to the cluster's `hubble-relay` pod (`cilium-system`) and streams via Hubble's `Observer.GetFlows` gRPC API. With `--hubble-addr` it dials the address you give instead, which needs no `pods` or `pods/portforward` RBAC. That suits an in-cluster CI runner reaching the `hubble-relay` Service directly, e.g. `--hubble-addr hubble-relay.cilium-system.svc:80`.
+> Port-forwards to the cluster's `hubble-relay` pod (in `--hubble-namespace`, default `kube-system`) and streams via Hubble's `Observer.GetFlows` gRPC API. With `--hubble-addr` it dials the address you give instead, which needs no `pods` or `pods/portforward` RBAC. That suits an in-cluster CI runner reaching the `hubble-relay` Service directly, e.g. `--hubble-addr hubble-relay.kube-system.svc:80`.
 
 ### Filters in the UI
 

@@ -8,8 +8,10 @@
 #
 # hubble.relay is the one setting that matters beyond Cilium's own
 # defaults: guardbee's flows/verdict subcommands port-forward directly to
-# hubble-relay in cilium-system (hardcoded, see flows.go's hubbleNamespace
-# constant) — without it, there's nothing for guardbee to talk to.
+# hubble-relay — without it, there's nothing for guardbee to talk to.
+# lab-up.sh installs into kube-system, Cilium's own default and guardbee's
+# --hubble-namespace default, so the lab (and CI's lab job) exercises the
+# path most clusters take with no extra flags.
 hubble:
   enabled: true
   relay:

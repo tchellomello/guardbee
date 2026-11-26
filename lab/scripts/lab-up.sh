@@ -20,19 +20,26 @@ fi
 
 kubectl config use-context "kind-$CLUSTER_NAME" >/dev/null
 
-echo "guardbee lab: installing Cilium $CILIUM_VERSION into cilium-system (hubble-relay is what \"guardbee flows\"/\"verdict\" port-forward to)..."
+# Labs created before Cilium moved to kube-system have it in cilium-system;
+# installing again here would put a second Cilium on the same nodes.
+if helm status cilium --namespace cilium-system >/dev/null 2>&1; then
+  echo "guardbee lab: this cluster still has Cilium in cilium-system from an older lab-up." >&2
+  echo "guardbee lab: run \"mise run lab-down\", then \"mise run lab-up\" again." >&2
+  exit 1
+fi
+
+echo "guardbee lab: installing Cilium $CILIUM_VERSION into kube-system (hubble-relay is what \"guardbee flows\"/\"verdict\" port-forward to)..."
 helm repo add cilium https://helm.cilium.io/ >/dev/null 2>&1 || true
 helm repo update cilium >/dev/null
 helm upgrade --install cilium cilium/cilium \
   --version "$CILIUM_VERSION" \
-  --namespace cilium-system \
-  --create-namespace \
+  --namespace kube-system \
   --values "$LAB_DIR/cilium-values.yaml" \
   --wait
 
 echo "guardbee lab: waiting for Cilium and hubble-relay to report ready..."
-kubectl -n cilium-system wait --for=condition=ready pod -l k8s-app=cilium --timeout=300s
-kubectl -n cilium-system wait --for=condition=ready pod -l k8s-app=hubble-relay --timeout=300s
+kubectl -n kube-system wait --for=condition=ready pod -l k8s-app=cilium --timeout=300s
+kubectl -n kube-system wait --for=condition=ready pod -l k8s-app=hubble-relay --timeout=300s
 
 echo "guardbee lab: deploying webapp / postgres / observability workloads..."
 kubectl apply -f "$LAB_DIR/manifests/00-namespaces.yaml"

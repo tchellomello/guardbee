@@ -15,7 +15,8 @@ test, and house style. If a `AGENTS.local.md` exists next to this file
 - `guardbee policies [-n <ns>|-A]` — lists live CNPs (namespaced) + CCNPs
   (cluster-wide) via the generated Cilium clientset. Pure read, proves RBAC.
 - `guardbee flows [-n <ns>|-A] [filters] [--last N] [-f]` — port-forwards to
-  `hubble-relay` (`cilium-system` namespace) and streams real flows via
+  `hubble-relay` (in `--hubble-namespace`, default `kube-system`, Cilium's
+  own default) and streams real flows via
   Hubble's `Observer.GetFlows` gRPC API. Filters (`--pod`/`--from-*`/
   `--to-*`/`--verdict`/`--drop-reason-desc`/`--type`, hubble's names) are
   `flowFilter` in `flows.go`, shared by `blame`, `verdict` and the UI, and
@@ -331,13 +332,18 @@ Needs a kubeconfig with read access — either the user's own, or the scoped
 `guardbee` ServiceAccount (`kubernetes/rbac.yaml`), validated live against
 the actual cluster (not admin credentials — no RBAC gaps found). RBAC is a
 ClusterRole (get/list/watch on CNP/CCNP/CiliumIdentity/CiliumEndpoint/
-namespaces) plus a `cilium-system`-scoped Role (pods get/list +
+namespaces) plus a Role scoped to Cilium's namespace (`kube-system` by
+default; pods get/list +
 pods/portforward create — required because `kubectl port-forward
 svc/hubble-relay` resolves to a backing pod client-side, so RBAC can't be
 scoped tighter than the Service's selector — plus get on the one
 `cilium-config` ConfigMap, read only when HTTP requests are judged, to know
 whether Hubble redacts URL queries). Hubble relay itself listens on
-containerPort 4245 in `cilium-system`. Give the ServiceAccount its own
+containerPort 4245 in Cilium's namespace. `--hubble-namespace` (default
+`kube-system`, `defaultHubbleNamespace` in `flows.go`) sets where relay is
+found and `cilium-config` is read, on every command that reaches relay;
+the Lab installs Cilium into `kube-system` so CI exercises that default.
+Give the ServiceAccount its own
 namespace rather than reusing `default` — it's a credential/identity, not a
 disposable workload. **Never commit a kubeconfig holding a live SA bearer
 token** (one was generated and briefly left around during RBAC smoke

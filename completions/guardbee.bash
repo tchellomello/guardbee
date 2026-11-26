@@ -6,7 +6,7 @@ _guardbee_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     subcommands="policies flows blame verdict ui version compat"
-    common_flags="--debug -D --kubeconfig --namespace -n --all-namespaces -A"
+    common_flags="--debug -D --kubeconfig --hubble-namespace --namespace -n --all-namespaces -A"
     # Flow filters (flowFilter in flows.go), shared by flows, blame and verdict.
     filter_flags="--pod --from-pod --from-label --from-ip --to-pod --to-service --to-label --to-ip --to-port --verdict --drop-reason-desc --type"
 
@@ -33,10 +33,10 @@ _guardbee_complete() {
             fi
             ;;
         ui)
-            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --addr --enable-probes --probe-image --probe-images-file" -- "$cur"))
+            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --hubble-namespace --addr --enable-probes --probe-image --probe-images-file" -- "$cur"))
             ;;
         version)
-            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --client" -- "$cur"))
+            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --hubble-namespace --client" -- "$cur"))
             ;;
         compat)
             COMPREPLY=($(compgen -W "--debug -D" -- "$cur"))

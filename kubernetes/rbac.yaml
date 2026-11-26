@@ -68,15 +68,23 @@ subjects:
     name: guardbee
     namespace: guardbee
 ---
-# Scoped to cilium-system only: lets the CLI port-forward to hubble-relay. RBAC for
+# Scoped to the namespace Cilium is installed in: kube-system, Cilium's own default
+# and guardbee's --hubble-namespace default. If yours differs (cilium-system is
+# common), change both `namespace: kube-system` lines below and pass
+# --hubble-namespace. Lets the CLI port-forward to hubble-relay. RBAC for
 # `kubectl port-forward svc/hubble-relay` resolves to a backing pod client-side, so it
 # needs get/list on pods (to resolve the Service's selector) plus create on
 # pods/portforward - there is no way to further scope this to one Service by label.
+#
+# In kube-system that reaches every pod there, control-plane ones included on
+# clusters that run them as pods. Where that is too broad, drop the two pods rules
+# and reach relay through its Service with --hubble-addr instead (from inside the
+# cluster, or via your own port-forward): guardbee then needs no pod access at all.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: guardbee-hubble-relay
-  namespace: cilium-system
+  namespace: kube-system
 rules:
   - apiGroups: [""]
     resources: ["pods"]
@@ -97,7 +105,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: guardbee-hubble-relay
-  namespace: cilium-system
+  namespace: kube-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

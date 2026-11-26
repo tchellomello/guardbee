@@ -76,6 +76,9 @@ GLOBAL FLAGS
                           full blast radius when it spans more than one namespace; a
                           plain CiliumNetworkPolicy should always get --namespace instead,
                           since it can only ever affect its own namespace
+  --hubble-namespace ns   namespace Cilium is installed in, where hubble-relay runs and
+                          cilium-config lives (default: kube-system, Cilium's own default;
+                          every command except compat)
 
 Run "%[1]s <command> --help" for that command's flags and examples.
 
