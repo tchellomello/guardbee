@@ -8,6 +8,7 @@
     - { title: Quickstart, url: quickstart.html }
     - { title: Install, url: install.html }
     - { title: Lab, url: lab.html }
+    - { title: Lab extras, url: lab-extras.html }
     - { title: Zero-trust lab, url: zero-trust-walkthrough.html }
     - { title: Videos, url: videos.html }
 - title: Guides

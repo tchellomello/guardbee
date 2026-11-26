@@ -216,7 +216,7 @@ test('ui-mobile-filters', async ({ page }) => {
 })
 
 // New: the connectivity test result, prometheus → postgres:9187 with the
-// built-in BusyBox image, as the Lab's Step 5 walks through.
+// built-in BusyBox image, as the Lab extras' connectivity test walks through.
 test('ui-connectivity-test', async ({ page }) => {
   const images = [
     { id: 'netshoot', name: 'netshoot', image: 'docker.io/nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70', protocols: ['TCP', 'UDP'], description: 'Network troubleshooting toolbox (nc, Python 3, dig, curl). Larger pull, supports TCP and UDP.', pinned: true },
