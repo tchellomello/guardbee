@@ -582,8 +582,10 @@ func narrowPodPrefixes(a, b []string) (out []string, ok bool) {
 // touch every call site for a value that never changes within a process.
 var hubbleAddr string
 
-// registerHubbleAddrFlag adds --hubble-addr to a subcommand that talks to
-// hubble-relay (flows, blame, verdict).
+// registerHubbleAddrFlag adds --hubble-addr to every subcommand that talks
+// to hubble-relay: flows, blame and verdict for their flows, policies and
+// version for the version-skew check, and ui for both. A subcommand without
+// it would still need the pod RBAC that --hubble-addr exists to avoid.
 func registerHubbleAddrFlag(fs *pflag.FlagSet) {
 	fs.StringVar(&hubbleAddr, "hubble-addr", "", "dial hubble-relay at this host:port (plaintext gRPC) instead of port-forwarding to its pod, e.g. hubble-relay.kube-system.svc:80 from an in-cluster runner; skips the pods and pods/portforward RBAC the port-forward needs")
 }

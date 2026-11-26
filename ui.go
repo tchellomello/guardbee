@@ -53,6 +53,7 @@ func runUI(args []string) {
 	fs.StringVar(&probeImagesFile, "probe-images-file", "", "YAML/JSON catalog of probe images the UI may pick from, replacing the built-in vetted one (see probes/images.yaml)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	registerHubbleNamespaceFlag(fs)
+	registerHubbleAddrFlag(fs)
 	fs.StringVar(&addr, "addr", "127.0.0.1:4747", "address to listen on")
 	fs.StringVar(&templatesDir, "templates-dir", "", "directory of generic/ingress/egress CiliumNetworkPolicy YAML presets (default: built-in templates/)")
 	fs.Usage = func() {
@@ -86,6 +87,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s ui\n  %[1]s ui --addr 127.0.0.1:9000\n  %[1]s ui --templates-dir ./my-presets\n  %[1]s ui --enable-probes\n  %[1]s ui --enable-probes --probe-images-file ./probe-images.yaml\n", binName)
 	}
 	_ = fs.Parse(args)
+	checkHubbleAddr("ui")
 	probes, err := newProbeBackendFromFlags(enableProbes, probeImage, probeImagesFile)
 	if err == nil && enableProbes {
 		err = validateProbeListenAddr(addr)

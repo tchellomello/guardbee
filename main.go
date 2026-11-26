@@ -79,6 +79,9 @@ GLOBAL FLAGS
   --hubble-namespace ns   namespace Cilium is installed in, where hubble-relay runs and
                           cilium-config lives (default: kube-system, Cilium's own default;
                           every command except compat)
+  --hubble-addr host:port dial hubble-relay at this address (plaintext gRPC) instead of
+                          port-forwarding to its pod; needs no pod RBAC (every command
+                          except compat)
 
 Run "%[1]s <command> --help" for that command's flags and examples.
 
