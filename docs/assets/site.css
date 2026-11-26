@@ -1,20 +1,97 @@
-  :root{
-    --void:#06090a;
-    --panel:#0b1012;
-    --panel-raised:#0f1619;
-    --line:#1c2a2c;
-    --ink:#cfe8e4;
-    --ink-dim:#6e8886;
-    --ink-faint:#45595a;
-    --signal:#22e9c7;
-    --signal-dim:#0f6d5f;
-    --drop:#ff5d5d;
-    --drop-bg:#2a0f12;
-    --unchanged:#5ee8a5;
-    --font-display:"Martian Mono", ui-monospace, monospace;
-    --font-mono:"IBM Plex Mono", ui-monospace, monospace;
-    --wrap: min(1180px, 100% - 48px);
+/* ---------- THEME ----------
+   Dark is the default; light comes from the OS (prefers-color-scheme) or
+   from data-theme, which the inline <head> script sets before first paint
+   and assets/theme.js changes on toggle. Palette shared with the web UI
+   (ui/src/index.css), except two light colours darkened to pass WCAG AA
+   as body-size text here: --signal (the UI's #0891b2 is 3.45:1) and
+   --unchanged (the UI's #15803d drops to 4.1:1 on its own tinted boxes).
+
+   Terminal surfaces (code blocks, expected-output boxes, the video player,
+   the landing page's CLI panels) re-declare the dark palette on themselves,
+   so they stay dark consoles in light mode too. Shadows are not part of
+   that block: a terminal on a light page casts a light page's shadow. */
+:root,
+.docs-page pre,
+.docs-page .code-block,
+.docs-page .expect,
+.demo-player,
+.term{
+  --void:#06090a;
+  --panel:#0b1012;
+  --panel-raised:#0f1619;
+  --line:#1c2a2c;
+  --line-bright:#2a4345;
+  --ink:#cfe8e4;
+  --ink-body:#b9d0cc;
+  --ink-dim:#8aa3a0;
+  --ink-faint:#6e8886;
+  --signal:#22e9c7;
+  --signal-dim:#0f6d5f;
+  --on-signal:#06090a;
+  --drop:#ff5d5d;
+  --drop-bg:#2a0f12;
+  --unchanged:#5ee8a5;
+  color-scheme:dark;
+}
+:root{
+  --grid-line:rgba(34,233,199,0.035);
+  --shadow:0 30px 80px -20px rgba(0,0,0,0.6);
+  --shadow-strong:0 30px 90px -20px rgba(0,0,0,0.85);
+  --glow:0 0 40px -10px rgba(34,233,199,0.18);
+  --dot-red:#ff5d5d;
+  --dot-yellow:#f5c842;
+  --dot-green:#5ee8a5;
+  --font-display:"Martian Mono", ui-monospace, monospace;
+  --font-mono:"IBM Plex Mono", ui-monospace, monospace;
+  --font-sans:"IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --wrap: min(1180px, 100% - 48px);
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --void:#f6f8f8;
+    --panel:#ffffff;
+    --panel-raised:#edf2f2;
+    --line:#d0dddc;
+    --line-bright:#9eb5b3;
+    --ink:#091617;
+    --ink-body:#1d3233;
+    --ink-dim:#43605e;
+    --ink-faint:#56706e;
+    --signal:#0e7490;
+    --signal-dim:#cffafe;
+    --on-signal:#ffffff;
+    --drop:#c81e1e;
+    --drop-bg:#fdecec;
+    --unchanged:#11733a;
+    --grid-line:rgba(14,116,144,0.05);
+    --shadow:0 24px 60px -24px rgba(9,22,23,0.28);
+    --shadow-strong:0 30px 80px -24px rgba(9,22,23,0.35);
+    --glow:0 0 0 1px rgba(14,116,144,0.08);
+    color-scheme:light;
   }
+}
+:root[data-theme="light"]{
+  --void:#f6f8f8;
+  --panel:#ffffff;
+  --panel-raised:#edf2f2;
+  --line:#d0dddc;
+  --line-bright:#9eb5b3;
+  --ink:#091617;
+  --ink-body:#1d3233;
+  --ink-dim:#43605e;
+  --ink-faint:#56706e;
+  --signal:#0e7490;
+  --signal-dim:#cffafe;
+  --on-signal:#ffffff;
+  --drop:#c81e1e;
+  --drop-bg:#fdecec;
+  --unchanged:#11733a;
+  --grid-line:rgba(14,116,144,0.05);
+  --shadow:0 24px 60px -24px rgba(9,22,23,0.28);
+  --shadow-strong:0 30px 80px -24px rgba(9,22,23,0.35);
+  --glow:0 0 0 1px rgba(14,116,144,0.08);
+  color-scheme:light;
+}
 
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -25,7 +102,6 @@
     font-family:var(--font-mono);
     font-size:17px;
     line-height:1.6;
-    overflow-x:hidden;
   }
 
   /* faint scanline / grid texture for the console feel */
@@ -36,8 +112,8 @@
     pointer-events:none;
     z-index:0;
     background-image:
-      linear-gradient(rgba(34,233,199,0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(34,233,199,0.035) 1px, transparent 1px);
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
     background-size:48px 48px;
     mask-image:radial-gradient(ellipse 80% 60% at 50% 0%, #000 0%, transparent 70%);
   }
@@ -61,16 +137,20 @@
   /* ---------- NAV ---------- */
   .nav{
     position:sticky;top:0;z-index:20;
-    background:rgba(6,9,10,0.82);
+    background:color-mix(in srgb, var(--void) 82%, transparent);
     backdrop-filter:blur(10px);
     border-bottom:1px solid var(--line);
   }
   .nav-inner{
     width:var(--wrap);margin-inline:auto;
-    height:64px;display:flex;align-items:center;justify-content:space-between;
+    height:64px;display:flex;align-items:center;justify-content:space-between;gap:12px;
   }
-  .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:0.04em;color:var(--ink)}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-size:14px;font-weight:700;letter-spacing:0.04em;color:var(--ink);text-decoration:none;white-space:nowrap}
+  .brand-logo{width:24px;height:24px;border-radius:4px}
   .brand-dot{width:9px;height:9px;border-radius:50%;background:var(--signal);box-shadow:0 0 12px var(--signal)}
+  .nav-actions{display:flex;align-items:center;gap:12px}
+  .nav-link{font-size:14px;color:var(--ink-dim);text-decoration:none}
+  .nav-link:hover{color:var(--signal)}
   .nav-cta{
     font-family:var(--font-display);font-size:12px;font-weight:700;letter-spacing:0.08em;
     border:1px solid var(--signal);color:var(--signal);
@@ -78,12 +158,24 @@
     transition:background .15s ease, color .15s ease;
     white-space:nowrap;
   }
-  .nav-cta:hover{background:var(--signal);color:var(--void)}
+  .nav-cta:hover{background:var(--signal);color:var(--on-signal)}
+
+  /* Header icon buttons: theme toggle, and the docs' phone menu */
+  .icon-btn{
+    display:inline-grid;place-items:center;flex:none;width:36px;height:36px;padding:0;
+    border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink-dim);
+    cursor:pointer;transition:color .15s ease, border-color .15s ease;
+  }
+  .icon-btn:hover{color:var(--signal);border-color:var(--signal)}
+  .theme-toggle .icon-moon{display:none}
+  :root[data-theme="light"] .theme-toggle .icon-sun{display:none}
+  :root[data-theme="light"] .theme-toggle .icon-moon{display:block}
+  html:not(.js) .theme-toggle,html:not(.js) .menu-toggle{display:none}
 
   /* ---------- HERO ---------- */
   .hero{
     padding:120px 0 96px;
-    background:radial-gradient(ellipse 60% 50% at 50% 0%, rgba(15,109,95,0.35) 0%, transparent 65%);
+    background:radial-gradient(ellipse 60% 50% at 50% 0%, color-mix(in srgb, var(--signal-dim) 35%, transparent) 0%, transparent 65%);
     text-align:center;
     display:flex;flex-direction:column;align-items:center;gap:28px;
   }
@@ -103,7 +195,7 @@
     display:inline-flex;align-items:center;gap:10px;transition:transform .15s ease, opacity .15s ease;
   }
   .btn:hover{transform:translateY(-2px)}
-  .btn-primary{background:var(--signal);color:var(--void)}
+  .btn-primary{background:var(--signal);color:var(--on-signal)}
   .btn-ghost{border:1px solid var(--line);color:var(--ink)}
   .btn-ghost:hover{border-color:var(--signal);color:var(--signal)}
 
@@ -148,6 +240,8 @@
   .section-head{text-align:center;max-width:720px;margin:0 auto 48px}
   .section-head h2{font-size:clamp(28px,4vw,44px);line-height:1.2}
   .section-head p{color:var(--ink-dim);font-size:17px;margin-top:14px}
+  .intro-logo{display:flex;justify-content:center;margin-bottom:16px}
+  .intro-logo img{width:120px;height:120px;border-radius:16px;filter:drop-shadow(0 0 16px color-mix(in srgb, var(--signal) 30%, transparent))}
 
   .grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(260px,1fr));gap:20px}
   .card{
@@ -162,10 +256,10 @@
 
   /* ---------- ACCENT STATEMENT ---------- */
   .statement{
-    background:var(--signal);color:var(--void);padding:96px 0;text-align:center;
+    background:var(--signal);color:var(--on-signal);padding:96px 0;text-align:center;
   }
   .statement h2{
-    color:var(--void);font-size:clamp(30px,5vw,56px);line-height:1.25;max-width:20ch;margin-inline:auto;
+    color:var(--on-signal);font-size:clamp(30px,5vw,56px);line-height:1.25;max-width:20ch;margin-inline:auto;
   }
 
   /* ---------- HOW IT WORKS ---------- */
@@ -176,6 +270,7 @@
   }
   .flow-box small{display:block;color:var(--ink-dim);font-size:13px;margin-top:6px}
   .flow-box.engine{background:var(--signal-dim);border-color:var(--signal)}
+  .flow-box.engine small{color:var(--ink)}
   .flow-box.output{background:var(--drop-bg);border-color:var(--drop);color:var(--drop)}
   .flow-arrow{font-family:var(--font-display);color:var(--signal);font-size:22px;padding:10px 0}
   .flow-pair{display:flex;gap:20px;width:100%}
@@ -192,7 +287,7 @@
     border:1px solid var(--line);
     border-radius:14px;
     overflow:hidden;
-    box-shadow:0 30px 90px -20px rgba(0,0,0,0.85), 0 0 40px -10px rgba(34,233,199,0.18);
+    box-shadow:var(--shadow-strong), var(--glow);
   }
   .docs-page .demo-player{
     max-width:100%;
@@ -203,7 +298,7 @@
     align-items:center;
     gap:8px;
     padding:12px 18px;
-    background:rgba(6,9,10,0.85);
+    background:color-mix(in srgb, var(--void) 85%, transparent);
     border-bottom:1px solid var(--line);
   }
   .demo-player-copy{
@@ -226,22 +321,27 @@
     width:11px;
     height:11px;
     border-radius:50%;
+    flex:none;
   }
-  .demo-player-dot:nth-child(1){background:#ff5d5d}
-  .demo-player-dot:nth-child(2){background:#f3b73e}
-  .demo-player-dot:nth-child(3){background:#5ee8a5}
+  .demo-player-dot:nth-child(1){background:var(--dot-red)}
+  .demo-player-dot:nth-child(2){background:var(--dot-yellow)}
+  .demo-player-dot:nth-child(3){background:var(--dot-green)}
   .demo-player-title{
     margin-left:8px;
     font-family:var(--font-display);
     font-size:12px;
     color:var(--ink-dim);
     letter-spacing:0.04em;
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
   }
   .demo-video{
     display:block;
     width:100%;
     height:auto;
-    background:#06090a;
+    background:var(--void);
   }
 
   .demo-steps{
@@ -262,8 +362,8 @@
     transition:transform .15s ease, border-color .15s ease;
   }
   .step-card:hover{transform:translateY(-2px);border-color:var(--signal)}
-  .step-card.danger{border-color:rgba(255,93,93,0.35);background:rgba(42,15,18,0.3)}
-  .step-card.safe{border-color:rgba(94,232,165,0.35);background:rgba(94,232,165,0.06)}
+  .step-card.danger{border-color:color-mix(in srgb, var(--drop) 35%, transparent);background:color-mix(in srgb, var(--drop-bg) 30%, transparent)}
+  .step-card.safe{border-color:color-mix(in srgb, var(--unchanged) 35%, transparent);background:color-mix(in srgb, var(--unchanged) 6%, transparent)}
   .step-num{
     font-family:var(--font-display);
     font-size:12px;
@@ -300,7 +400,7 @@
   .demo-item.safe h3{color:var(--unchanged)}
   .demo-item img{
     width:100%;max-width:980px;border-radius:14px;border:1px solid var(--line);
-    box-shadow:0 30px 80px -20px rgba(0,0,0,0.6);
+    box-shadow:var(--shadow);
   }
   .demo-item .cap{color:var(--ink-dim);font-size:15px;text-align:center;max-width:560px}
   .demo-item .cap b{color:var(--ink)}
@@ -309,12 +409,12 @@
     border:1px solid var(--drop);background:var(--drop-bg);color:var(--drop);
     border-radius:999px;padding:10px 20px;font-size:14px;
   }
-  .stat-pill.good{border-color:var(--unchanged);background:rgba(94,232,165,0.08);color:var(--unchanged)}
+  .stat-pill.good{border-color:var(--unchanged);background:color-mix(in srgb, var(--unchanged) 8%, transparent);color:var(--unchanged)}
 
   /* ---------- CLI ---------- */
   .cli-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
   .term{
-    border-radius:14px;padding:28px;background:var(--panel-raised);font-size:14.5px;line-height:1.7;
+    border-radius:14px;padding:28px;background:var(--panel-raised);color:var(--ink);font-size:14.5px;line-height:1.7;
   }
   .term.bad{border:1px solid var(--drop)}
   .term.good{border:1px solid var(--unchanged)}
@@ -332,7 +432,7 @@
   table.compare td.label{color:var(--ink-dim)}
   table.compare tr:last-child td{border-bottom:none}
 
-  footer{border-top:1px solid var(--line);padding:32px 0;text-align:center;color:var(--ink-faint);font-size:13px}
+  footer{position:relative;z-index:1;border-top:1px solid var(--line);padding:32px 0;text-align:center;color:var(--ink-dim);font-size:13px}
 
   @media (max-width:760px){
     .cli-grid{grid-template-columns:1fr}
@@ -340,69 +440,149 @@
     table.compare{font-size:14px}
     table.compare th,table.compare td{padding:12px 10px}
   }
+  @media (max-width:600px){
+    .hide-sm{display:none}
+    .nav-cta{padding:8px 12px}
+  }
+  @media (max-width:480px){
+    .nav-link.optional{display:none}
+  }
 
-/* ---------- DOCS PAGES (guide/*.html, generated by Jekyll from guide/*.md) ---------- */
-.docs-page{max-width:760px;margin:0 auto;padding:56px 24px 96px}
-.docs-page h1{font-size:clamp(28px,5vw,44px);margin-bottom:8px}
-.docs-page h2{font-size:24px;margin:40px 0 14px;color:var(--signal)}
-.docs-page h3{font-size:19px;margin:28px 0 10px}
-.docs-page p{margin:0 0 16px;color:var(--ink-dim);line-height:1.7;font-size:16px}
-.docs-page a{color:var(--signal);text-decoration:underline;text-underline-offset:3px}
+/* ---------- DOCS LAYOUT (guide/*.html, _layouts/doc.html) ----------
+   Three columns from 1280px (page list / text / "On this page"), two from
+   1024px, one below that with the page list behind the header's menu
+   button. The text column stays near 75 characters at any width; the side
+   columns are what absorb a wide screen. */
+body.docs{font-family:var(--font-sans)}
+.docs-nav-inner{width:auto;max-width:1440px;padding:0 24px}
+.brand-tag{
+  font-family:var(--font-mono);font-size:12px;font-weight:500;letter-spacing:0.02em;color:var(--ink-dim);
+  border:1px solid var(--line);border-radius:999px;padding:1px 9px;
+}
+.menu-toggle{display:none}
+
+.docs-shell{
+  position:relative;z-index:1;max-width:1440px;margin:0 auto;padding:0 24px;
+  display:grid;grid-template-columns:224px minmax(0,1fr) 216px;gap:56px;
+}
+.doc-sidebar,.doc-toc{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 64px);overflow-y:auto}
+.doc-sidebar{padding:40px 4px 48px 0}
+.doc-sidebar-group{
+  font-family:var(--font-display);font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;
+  color:var(--ink-faint);margin:28px 0 8px 12px;
+}
+.doc-sidebar-group:first-child{margin-top:0}
+.doc-sidebar ul{list-style:none;margin:0;padding:0}
+.doc-sidebar a{
+  display:block;padding:7px 12px;border-radius:8px;color:var(--ink-dim);text-decoration:none;font-size:15px;line-height:1.35;
+}
+.doc-sidebar a:hover{color:var(--ink);background:var(--panel-raised)}
+.doc-sidebar a.active{color:var(--signal);background:color-mix(in srgb, var(--signal) 6%, transparent);font-weight:600}
+
+.doc-toc{padding:46px 0 48px;font-size:13.5px}
+.doc-toc-title{
+  font-family:var(--font-display);font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;
+  color:var(--ink-faint);margin:0 0 12px;
+}
+.doc-toc ul{list-style:none;margin:0;padding:0;border-left:1px solid var(--line)}
+.doc-toc a{
+  display:block;margin-left:-1px;padding:5px 0 5px 14px;border-left:2px solid transparent;
+  color:var(--ink-dim);text-decoration:none;line-height:1.4;
+}
+.doc-toc .toc-sub a{padding-left:26px;font-size:13px}
+.doc-toc a:hover{color:var(--ink)}
+.doc-toc a.active{color:var(--signal);border-left-color:var(--signal)}
+
+/* ---------- DOCS CONTENT ---------- */
+.docs-page{min-width:0;width:100%;max-width:760px;margin:0 auto;padding:48px 0 96px}
+.docs-page h1{font-size:clamp(30px,4.4vw,44px);line-height:1.15;letter-spacing:-0.01em;margin-bottom:18px}
+.docs-page h1 + p{font-size:19px;line-height:1.6;color:var(--ink-dim)}
+.docs-page h2{font-family:var(--font-sans);font-size:27px;line-height:1.3;letter-spacing:-0.01em;margin:60px 0 16px}
+.docs-page h3{font-family:var(--font-sans);font-size:20px;font-weight:600;line-height:1.35;margin:36px 0 12px}
+.docs-page h2,.docs-page h3,.docs-page details{scroll-margin-top:84px}
+.docs-page p{margin:0 0 18px;color:var(--ink-body);line-height:1.7;font-size:17px}
+.docs-page a{color:var(--signal);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .docs-page a:hover{color:var(--ink)}
-.docs-page ul,.docs-page ol{margin:0 0 16px;padding-left:22px;color:var(--ink-dim);line-height:1.7}
-.docs-page li{margin-bottom:6px}
-.docs-page li>p{margin-bottom:6px}
-.docs-page code{font-family:var(--font-mono);background:var(--panel-raised);border:1px solid var(--line);border-radius:4px;padding:2px 6px;font-size:0.92em;color:var(--ink)}
-.docs-page pre{background:var(--panel-raised);border:1px solid var(--line);border-radius:10px;padding:18px 20px;overflow-x:auto;margin:0 0 20px;font-size:14px;line-height:1.6}
-.docs-page pre code{border:none;background:none;padding:0;font-size:1em}
+.docs-page strong,.docs-page b{color:var(--ink);font-weight:600}
+.docs-page ul,.docs-page ol{margin:0 0 18px;padding-left:24px;color:var(--ink-body);line-height:1.7;font-size:17px}
+.docs-page li{margin-bottom:8px}
+.docs-page li::marker{color:var(--ink-faint)}
+.docs-page li>p{margin-bottom:8px}
+.docs-page code{
+  font-family:var(--font-mono);background:var(--panel-raised);border:1px solid var(--line);border-radius:5px;
+  padding:0.1em 0.4em;font-size:0.86em;color:var(--ink);overflow-wrap:anywhere;
+}
+/* Wide output scrolls inside its box; the edge shadows (classic
+   background-attachment: local trick) show there is more to the right,
+   which a phone's overlay scrollbar never does on its own. */
+.docs-page pre{
+  --pre-bg:var(--panel-raised);
+  color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:0 0 22px;
+  font-size:14px;line-height:1.65;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--line-bright) transparent;
+  background:
+    linear-gradient(to right, var(--pre-bg) 30%, transparent) left center / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--pre-bg) 30%, transparent) right center / 32px 100% no-repeat local,
+    linear-gradient(to right, color-mix(in srgb, var(--signal) 30%, transparent), transparent) left center / 12px 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in srgb, var(--signal) 30%, transparent), transparent) right center / 12px 100% no-repeat scroll,
+    var(--pre-bg);
+}
+.docs-page pre code{border:none;background:none;padding:0;font-size:1em;overflow-wrap:normal}
 /* Rouge's diff-lexer spans (```diff fences) — unstyled otherwise */
 .docs-page pre .gd{color:var(--drop)}
 .docs-page pre .gi{color:var(--unchanged)}
 .docs-page pre .p{color:var(--ink-faint)}
-.docs-page blockquote{border-left:3px solid var(--signal);padding-left:16px;color:var(--ink-dim);margin:0 0 16px}
+.docs-page blockquote{
+  border-left:3px solid var(--signal);background:color-mix(in srgb, var(--signal) 6%, transparent);
+  border-radius:0 10px 10px 0;padding:14px 18px;margin:0 0 20px;
+}
+.docs-page blockquote > :last-child{margin-bottom:0}
 .docs-page img{max-width:100%;border-radius:10px;border:1px solid var(--line);margin:8px 0}
 .docs-page .img-row{display:flex;gap:16px;flex-wrap:wrap}
 .docs-page .img-row img,.docs-page .img-row .shot{flex:1;min-width:260px;margin:0}
 .docs-page .img-row .shot img{min-width:0}
+.docs-page table{width:100%;border-collapse:collapse;margin:0 0 28px;font-size:15px;line-height:1.55}
+.docs-page th,.docs-page td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.docs-page th{font-weight:600;font-size:14px;color:var(--ink);background:var(--panel-raised)}
+.docs-page td{color:var(--ink-body)}
+.docs-page td code{color:var(--ink)}
+/* Code in a cell is a flag, a value or a field name: never split it, not
+   even at a hyphen (`--enable-` / `probes`). The column grows instead, and
+   docs.js wraps every table in .table-wrap, so a table wider than the text
+   column scrolls rather than overflowing it. */
+.docs-page th code,.docs-page td code{white-space:nowrap;overflow-wrap:normal}
+.docs-page .table-wrap{overflow-x:auto;margin:0 0 28px;scrollbar-width:thin}
+.docs-page .table-wrap > table{margin:0}
+.docs-page hr{border:none;border-top:1px solid var(--line);margin:48px 0}
+.docs-page h2 code,.docs-page h3 code{color:var(--signal);background:none;border:none;padding:0;font-size:0.92em}
 
 /* ---------- WINDOW CHROME (screenshots framed like the landing page's demo video) ---------- */
 .docs-page .shot{
-  border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 20px;
-  background:var(--panel-raised);
+  border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:0 0 22px;
+  background:var(--panel-raised);box-shadow:var(--shadow);
 }
 .docs-page .shot-titlebar{
   display:flex;align-items:center;gap:8px;padding:10px 16px;
   background:var(--panel);border-bottom:1px solid var(--line);
 }
 .docs-page .shot-dot{width:10px;height:10px;border-radius:50%;flex:none}
-.docs-page .shot-dot.red{background:#ff5d5d}
-.docs-page .shot-dot.yellow{background:#f5c842}
-.docs-page .shot-dot.green{background:#5ee8a5}
+.docs-page .shot-dot.red,.docs-page .expect-dot.red{background:var(--dot-red)}
+.docs-page .shot-dot.yellow,.docs-page .expect-dot.yellow{background:var(--dot-yellow)}
+.docs-page .shot-dot.green,.docs-page .expect-dot.green{background:var(--dot-green)}
 .docs-page .shot-label{
   font-family:var(--font-display);font-size:12px;letter-spacing:0.02em;color:var(--ink-dim);margin-left:6px;
 }
 .docs-page .shot img{display:block;margin:0;border:none;border-radius:0}
-.docs-page table{width:100%;border-collapse:collapse;margin:0 0 24px;font-size:15px}
-.docs-page th,.docs-page td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left}
-.docs-page th{font-family:var(--font-display);font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);font-weight:600}
-.docs-page td{color:var(--ink-dim)}
-.docs-page td code{color:var(--ink)}
-.docs-page hr{border:none;border-top:1px solid var(--line);margin:40px 0}
-.docs-page h2 code{color:var(--signal);background:none;border:none;padding:0;font-size:1em}
-.docs-page .doc-nav{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 40px;font-family:var(--font-display);font-size:13px;letter-spacing:0.04em;text-transform:uppercase}
-.docs-page .doc-nav a{border:1px solid var(--line);padding:8px 14px;border-radius:999px;text-decoration:none;color:var(--ink-dim)}
-.docs-page .doc-nav a:hover,.docs-page .doc-nav a.active{border-color:var(--signal);color:var(--signal)}
 
 /* ---------- LIGHTBOX (click-to-zoom screenshots, see assets/lightbox.js) ---------- */
 .demo-item img.zoomable,.docs-page img.zoomable{cursor:zoom-in}
 .lightbox-overlay{
   position:fixed;inset:0;z-index:999;display:none;align-items:center;justify-content:center;
-  padding:40px;background:rgba(6,9,10,0.92);cursor:zoom-out;
+  padding:40px;background:color-mix(in srgb, var(--void) 92%, transparent);cursor:zoom-out;
 }
 .lightbox-overlay.active{display:flex}
 .lightbox-overlay img{
   max-width:100%;max-height:100%;border-radius:12px;border:1px solid var(--line);
-  box-shadow:0 30px 80px -20px rgba(0,0,0,0.6);
+  box-shadow:var(--shadow);
 }
 
 /* ---------- COPY BUTTON (click-to-copy code blocks, see assets/copy-button.js) ---------- */
@@ -423,28 +603,26 @@
 /* Styled like a terminal screenshot: a title bar (traffic-light dots +
    label) above the actual output, not just a labeled box. */
 .docs-page .expect{
-  border:1px solid var(--unchanged);background:rgba(94,232,165,0.04);border-radius:10px;
-  margin:0 0 20px;overflow:hidden;padding:0;
+  border:1px solid color-mix(in srgb, var(--unchanged) 55%, transparent);background:var(--panel);border-radius:12px;
+  margin:0 0 22px;overflow:hidden;padding:0;
 }
 .docs-page .expect-titlebar{
   display:flex;align-items:center;gap:8px;padding:10px 16px;
-  background:rgba(94,232,165,0.1);border-bottom:1px solid rgba(94,232,165,0.3);
+  background:color-mix(in srgb, var(--unchanged) 10%, var(--panel));
+  border-bottom:1px solid color-mix(in srgb, var(--unchanged) 30%, transparent);
 }
 .docs-page .expect-dot{width:10px;height:10px;border-radius:50%;flex:none}
-.docs-page .expect-dot.red{background:#ff5d5d}
-.docs-page .expect-dot.yellow{background:#f5c842}
-.docs-page .expect-dot.green{background:#5ee8a5}
 .docs-page .expect-titlebar .expect-label{
   font-family:var(--font-display);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;
   color:var(--unchanged);margin-left:6px;
 }
 .docs-page .expect-body{padding:16px 20px}
 .docs-page .expect-body > :last-child{margin-bottom:0}
-.docs-page .expect pre{background:none;border:none;padding:0;margin:0}
+.docs-page .expect pre{--pre-bg:var(--panel);border:none;border-radius:0;padding:0;margin:0}
 
 /* ---------- COLLAPSIBLE ASIDE (native <details>, deeper troubleshooting notes) ---------- */
 .docs-page details{
-  border:1px solid var(--line);border-radius:10px;padding:14px 20px;margin:0 0 20px;
+  border:1px solid var(--line);border-radius:12px;padding:14px 20px;margin:0 0 22px;
   background:var(--panel-raised);
 }
 .docs-page details[open]{padding-bottom:18px}
@@ -464,8 +642,8 @@
 /* ---------- GUARANTEE (safety/read-only claims worth not missing) ---------- */
 .docs-page .guarantee{
   display:flex;align-items:center;gap:12px;
-  border:1px solid var(--unchanged);background:rgba(94,232,165,0.1);
-  border-radius:10px;padding:16px 20px;margin:0 0 20px;
+  border:1px solid var(--unchanged);background:color-mix(in srgb, var(--unchanged) 10%, transparent);
+  border-radius:12px;padding:16px 20px;margin:0 0 22px;
 }
 .docs-page .guarantee::before{
   content:"✓";flex:none;color:var(--unchanged);font-family:var(--font-display);font-size:18px;
@@ -473,4 +651,56 @@
 .docs-page .guarantee p{
   margin:0;color:var(--unchanged);font-family:var(--font-display);font-size:15px;font-weight:700;
   letter-spacing:0.02em;
+}
+
+/* ---------- PREV / NEXT ---------- */
+.docs-page .pager{
+  display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:72px;padding-top:28px;border-top:1px solid var(--line);
+}
+.docs-page .pager a{
+  display:flex;flex-direction:column;gap:4px;padding:16px 20px;border:1px solid var(--line);border-radius:12px;
+  color:var(--ink);text-decoration:none;font-weight:600;font-size:16px;transition:border-color .15s ease;
+}
+.docs-page .pager a:hover{border-color:var(--signal);color:var(--signal)}
+.docs-page .pager span{
+  font-family:var(--font-display);font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);
+}
+.docs-page .pager-next{grid-column:2;text-align:right;align-items:flex-end}
+
+/* ---------- DOCS RESPONSIVE ---------- */
+@media (max-width:1279px){
+  .docs-shell{grid-template-columns:216px minmax(0,1fr);gap:48px}
+  .doc-toc{display:none}
+}
+@media (max-width:1023px){
+  .docs-shell{grid-template-columns:minmax(0,1fr);gap:0}
+  .menu-toggle{display:inline-grid}
+  .docs-page{padding-top:32px}
+  /* Without JS the list just sits above the page; with it, it drops down
+     from the header when the menu button is pressed. */
+  html.js .doc-sidebar{
+    display:none;position:fixed;top:64px;left:0;right:0;z-index:15;max-height:calc(100vh - 64px);
+    padding:20px 24px 28px;background:var(--void);border-bottom:1px solid var(--line);box-shadow:var(--shadow);
+  }
+  html.js body.menu-open .doc-sidebar{display:block}
+  html:not(.js) .doc-sidebar{position:static;max-height:none;padding:24px 0 0}
+}
+@media (max-width:760px){
+  /* Without JS (no .table-wrap), a table wider than a phone still
+     scrolls sideways instead of being cut off. */
+  html:not(.js) .docs-page table{display:block;overflow-x:auto;scrollbar-width:thin}
+  .docs-page th,.docs-page td{padding:9px 12px}
+}
+@media (max-width:600px){
+  .docs-nav-inner{padding:0 16px}
+  .docs-shell{padding:0 16px}
+  html.js .doc-sidebar{padding:16px 16px 24px}
+  .docs-page{padding:24px 0 72px}
+  .docs-page p,.docs-page ul,.docs-page ol{font-size:16.5px}
+  .docs-page h1 + p{font-size:18px}
+  .docs-page h2{font-size:23px;margin-top:48px}
+  .docs-page pre{padding:16px;font-size:13px}
+  .docs-page .expect-body{padding:14px 16px}
+  .docs-page .pager{grid-template-columns:1fr}
+  .docs-page .pager-next{grid-column:auto}
 }

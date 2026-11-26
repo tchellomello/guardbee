@@ -16,7 +16,7 @@ can send someone straight to a specific video without making them click around.
 
 ---
 
-<section id="overview" class="video-anchor">
+<section id="overview" class="video-anchor" markdown="1">
 
 ## Full GuardBee walkthrough
 
@@ -47,7 +47,7 @@ Follow along locally with [Lab](lab.html).
 
 ---
 
-<section id="zero-trust" class="video-anchor">
+<section id="zero-trust" class="video-anchor" markdown="1">
 
 ## Building an accumulative zero-trust policy
 

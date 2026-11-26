@@ -5,41 +5,81 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ page.title }} — GuardBee Docs</title>
 <meta name="description" content="{{ page.description | default: 'GuardBee documentation' }}">
+<meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/svg+xml" href="../branding/guardbee-logo.svg">
+{%- comment -%}
+  Runs before first paint so the page never flashes the wrong theme: a
+  saved choice wins, otherwise the OS preference. Same storage key and
+  values as the web UI (ui/src/theme.tsx). The `js` class lets the CSS keep
+  the sidebar visible when scripts are off. Duplicated in ../index.html,
+  which is plain HTML outside Jekyll's layouts.
+{%- endcomment %}
+<script>(function(){var d=document.documentElement,t;d.classList.add('js');try{t=localStorage.getItem('cilium-theme')}catch(e){}if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';d.setAttribute('data-theme',t)})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../assets/site.css">
 </head>
-<body>
+<body class="docs">
 
-<nav class="nav">
-  <div class="nav-inner">
-    <a href="../index.html" class="brand" style="text-decoration:none"><img src="../branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</a>
-    <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">View on GitHub</a>
+{%- assign current = page.name | replace: '.md', '.html' -%}
+
+<header class="nav">
+  <div class="nav-inner docs-nav-inner">
+    <a href="../index.html" class="brand"><img src="../branding/guardbee-logo.svg" class="brand-logo" alt="">GUARDBEE <span class="brand-tag">docs</span></a>
+    <div class="nav-actions">
+      <button type="button" class="icon-btn menu-toggle" aria-controls="doc-sidebar" aria-expanded="false" aria-label="Show page list">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      {% include theme-toggle.html %}
+      <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener"><span class="hide-sm">View on </span>GitHub</a>
+    </div>
   </div>
-</nav>
+</header>
 
-<main class="wrap docs-page">
-  <nav class="doc-nav">
-    <a href="install.html"{% if page.url contains 'install' %} class="active"{% endif %}>Install</a>
-    <a href="commands.html"{% if page.url contains 'commands' %} class="active"{% endif %}>Commands</a>
-    <a href="how-it-works.html"{% if page.url contains 'how-it-works' %} class="active"{% endif %}>How it works</a>
-    <a href="build.html"{% if page.url contains 'build' %} class="active"{% endif %}>Build</a>
-    <a href="run.html"{% if page.url contains 'run' %} class="active"{% endif %}>Run</a>
-    <a href="tcp-probes.html"{% if page.url contains 'tcp-probes' %} class="active"{% endif %}>Connectivity tests</a>
-    <a href="lab.html"{% if page.url contains '/lab' %} class="active"{% endif %}>Lab</a>
-    <a href="zero-trust-walkthrough.html"{% if page.url contains 'zero-trust' %} class="active"{% endif %}>Zero-trust lab</a>
-    <a href="videos.html"{% if page.url contains 'videos' %} class="active"{% endif %}>Videos</a>
+<div class="docs-shell">
+  <nav class="doc-sidebar" id="doc-sidebar" aria-label="Documentation">
+    {%- for group in site.data.nav %}
+    <p class="doc-sidebar-group">{{ group.title }}</p>
+    <ul>
+      {%- for p in group.pages %}
+      <li><a href="{{ p.url }}"{% if p.url == current %} class="active" aria-current="page"{% endif %}>{{ p.title }}</a></li>
+      {%- endfor %}
+    </ul>
+    {%- endfor %}
   </nav>
 
-  {{ content }}
-</main>
+  <main class="docs-page">
+    {{ content }}
+
+    {%- assign prev = nil -%}
+    {%- assign next = nil -%}
+    {%- assign last = nil -%}
+    {%- assign found = false -%}
+    {%- for group in site.data.nav -%}
+      {%- for p in group.pages -%}
+        {%- if found and next == nil -%}{%- assign next = p -%}{%- endif -%}
+        {%- if p.url == current -%}{%- assign found = true -%}{%- assign prev = last -%}{%- endif -%}
+        {%- assign last = p -%}
+      {%- endfor -%}
+    {%- endfor %}
+    {%- if prev or next %}
+    <nav class="pager" aria-label="Previous and next page">
+      {%- if prev %}<a class="pager-prev" href="{{ prev.url }}"><span>Previous</span>{{ prev.title }}</a>{% endif %}
+      {%- if next %}<a class="pager-next" href="{{ next.url }}"><span>Next</span>{{ next.title }}</a>{% endif %}
+    </nav>
+    {%- endif %}
+  </main>
+
+  <aside class="doc-toc" aria-label="On this page"></aside>
+</div>
 
 <footer>
   <div class="wrap">GuardBee — open source · built on Cilium's own policy engine</div>
 </footer>
 
+<script src="../assets/theme.js"></script>
+<script src="../assets/docs.js"></script>
 <script src="../assets/lightbox.js"></script>
 <script src="../assets/copy-button.js"></script>
 <script src="../assets/video-links.js"></script>
