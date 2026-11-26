@@ -240,7 +240,7 @@ review the NEWLY_DROPPED rows above before shipping it.
 
 <div class="shot">
 <div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict — looks-correct.yaml</span></div>
-<img src="../images/lab-04-verdict-regression.png" alt="Verdict tab showing 12 NEWLY_DROPPED flows for the looks-correct candidate, with red dashed edges on the flow graph" />
+<img src="../images/lab-04-verdict-regression.png" alt="Verdict tab showing 17 NEWLY_DROPPED flows for the looks-correct candidate, with red dashed edges on the flow graph" />
 </div>
 
 Same regression, in the UI — the two `NEWLY_DROPPED` rows and the red
