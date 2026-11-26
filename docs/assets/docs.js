@@ -53,6 +53,18 @@
     }
   }
 
+  // Each table scrolls sideways inside its own box when it is wider than
+  // the text column, instead of overflowing the page.
+  if (page) {
+    page.querySelectorAll('table').forEach(function (table) {
+      if (table.parentElement.classList.contains('table-wrap')) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      table.parentNode.insertBefore(wrap, table);
+      wrap.appendChild(table);
+    });
+  }
+
   // Phone/tablet: the sidebar folds behind the header's menu button.
   var btn = document.querySelector('.menu-toggle');
   var sidebar = document.getElementById('doc-sidebar');

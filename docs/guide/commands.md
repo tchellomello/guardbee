@@ -6,9 +6,18 @@ description: GuardBee's subcommands — policies, flows, blame, verdict, ui, and
 
 # Commands
 
-All of these are read-only against the cluster by default. Explicitly opted-in
-UI connectivity tests in Verdict append ephemeral containers to generate TCP/UDP
-traffic for a verdict run's candidate; see [Connectivity tests](tcp-probes.html).
+Every command reads the cluster and changes nothing in it. The only exception is the opt-in [connectivity tests](tcp-probes.html) in the UI.
+
+| Command | Answers | |
+|---|---|---|
+| [`policies`](#policies) | Which policies are live right now? | read-only |
+| [`flows`](#flows) | What traffic is actually flowing? | read-only |
+| [`blame`](#blame) | Which live policy allowed or dropped this traffic? | read-only |
+| [`verdict`](#verdict) | What would this candidate policy break or newly allow? | read-only |
+| [`ui`](#ui) | All of the above in the browser, plus a policy editor | read-only unless `--enable-probes` |
+| [`version`](#version) | Which build is this, and which Cilium does it judge with? | read-only |
+
+---
 
 ## `policies`
 
@@ -35,6 +44,12 @@ Streams real traffic from Hubble.
 guardbee flows [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f]
 ```
 
+```
+guardbee flows -n myapp --verdict DROPPED --drop-reason-desc POLICY_DENIED
+guardbee flows -n myapp --from-label reserved:world --to-port 443 -f
+guardbee flows -A --from-ip 10.0.0.0/8 --verdict DROPPED
+```
+
 | Flag | Meaning |
 |---|---|
 | `-n`, `--namespace` / `-A`, `--all-namespaces` | Scope flows to one namespace or every namespace |
@@ -48,28 +63,36 @@ guardbee flows [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reaso
 | `--type` | Only events of this Hubble type: `policy-verdict`, `drop`, `trace`, `l7`, … (hubble's own names) |
 | `--hubble-addr host:port` | Dial hubble-relay at this address instead of port-forwarding to its pod. Plaintext gRPC, like the port-forward. Also on `blame` and `verdict` |
 
-All filter flags use `hubble observe`'s own names and semantics. They're repeatable: repeats of one flag are ORed, different flags ANDed. A bare pod/service name means the `-n` namespace (with `-A`, the `default` namespace, as in hubble). One difference: hubble refuses `--pod` together with `--from-pod`/`--to-pod`/`--to-ip`; here they simply AND, so `--pod web --to-ip 10.0.0.1` is web's own traffic to that IP. They're applied in Hubble's query, so `--last 50` means 50 *matching* flows. Dropped flows also print their drop reason.
+### How the filters combine
 
-```
-guardbee flows -n myapp --verdict DROPPED --drop-reason-desc POLICY_DENIED
-guardbee flows -n myapp --from-label reserved:world --to-port 443 -f
-guardbee flows -A --from-ip 10.0.0.0/8 --verdict DROPPED
-```
+The filter flags use `hubble observe`'s own names and semantics.
 
-The UI's **Flows** tab has the same filters (under **Filters**) plus a **Follow (live)** option, and each run card shows the filter it ran with. A followed run keeps its newest 2000 flows. **Quick** buttons set common filters in one click (Dropped, Policy drops, Policy verdicts, From the internet, From nodes, To the API server). Each row also shows its **Direction** and **Decided by**, the same attribution `blame` prints. As you type, each field autocompletes from the traffic already fetched: pods (as workload prefixes like `app/web-` and as exact names), the identity labels Hubble reported (`k8s:app=web`, `reserved:world`), ports, verdicts, and every drop reason Cilium defines.
-
-<div class="shot">
-<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — filters</span></div>
-<img src="../images/ui-flows-filters.png" alt="Flows tab with the Policy drops and From the internet quick filters on: only dropped flows from reserved:world into webapp are fetched, and the run card shows the filter it ran with" />
-</div>
-
-<div class="shot">
-<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — autocomplete</span></div>
-<img src="../images/ui-flows-autocomplete.png" alt="Typing app into the From label field offers k8s:app=prometheus and k8s:app=webapp, identity labels seen in the fetched flows" />
-</div>
-
+- **Repeatable:** repeats of one flag are ORed, different flags are ANDed.
+- **Bare names:** a pod or Service name without a namespace means the `-n` namespace (with `-A`, the `default` namespace, as in hubble).
+- **One difference from hubble:** hubble refuses `--pod` together with `--from-pod`/`--to-pod`/`--to-ip`. Here they simply AND, so `--pod web --to-ip 10.0.0.1` is web's own traffic to that IP.
+- **Applied in Hubble's query,** so `--last 50` means 50 *matching* flows.
+- Dropped flows also print their drop reason.
 
 > Port-forwards to the cluster's `hubble-relay` pod (`cilium-system`) and streams via Hubble's `Observer.GetFlows` gRPC API. With `--hubble-addr` it dials the address you give instead, which needs no `pods` or `pods/portforward` RBAC. That suits an in-cluster CI runner reaching the `hubble-relay` Service directly, e.g. `--hubble-addr hubble-relay.cilium-system.svc:80`.
+
+### Filters in the UI
+
+The **Flows** tab has the same filters (under **Filters**) plus a **Follow (live)** option, and each run card shows the filter it ran with. A followed run keeps its newest 2000 flows.
+
+- **Quick** buttons set common filters in one click: Dropped, Policy drops, Policy verdicts, From the internet, From nodes, To the API server.
+- Each row shows its **Direction** and **Decided by**, the same attribution `blame` prints.
+- Fields autocomplete from the traffic already fetched: pods (as workload prefixes like `app/web-` and as exact names), the identity labels Hubble reported (`k8s:app=web`, `reserved:world`), ports, verdicts, and every drop reason Cilium defines.
+
+<div class="img-row">
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">flows — filters</span></div>
+<img src="../images/ui-flows-filters.png" alt="Flows tab with the Policy drops and From the internet quick filters on: only dropped flows from reserved:world into webapp are fetched, and the run card shows the filter it ran with" />
+</div>
+<div class="shot">
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">flows — autocomplete</span></div>
+<img src="../images/ui-flows-autocomplete.png" alt="Typing app into the From label field offers k8s:app=prometheus and k8s:app=webapp, identity labels seen in the fetched flows" />
+</div>
+</div>
 
 ---
 
@@ -81,6 +104,13 @@ Which live policy allowed or denied real traffic. Nothing is simulated: this rea
 guardbee blame [[namespace/]<pod-name>] [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--type ...] [--last N] [-f] [--format table|json|markdown]
 ```
 
+```
+guardbee blame myapp/api
+guardbee blame -n myapp api --verdict DROPPED
+guardbee blame myapp/netshoot --to-ip 169.254.169.254 -f
+guardbee blame -A --verdict DROPPED --format markdown
+```
+
 | Flag | Meaning |
 |---|---|
 | `[namespace/]<pod-name>` | Same as `--pod`: flows where that pod is the source or the destination. Without `-n`/`-A`, its namespace becomes the scope |
@@ -88,12 +118,7 @@ guardbee blame [[namespace/]<pod-name>] [-n <namespace>|-A] [--pod|--from-*|--to
 | `--format` | `table` (default), `json` (one object per line with `--follow`), or `markdown` (one-shot only) for a ticket |
 | everything else | Same as `flows` |
 
-```
-guardbee blame myapp/api
-guardbee blame -n myapp api --verdict DROPPED
-guardbee blame myapp/netshoot --to-ip 169.254.169.254 -f
-guardbee blame -A --verdict DROPPED --format markdown
-```
+### Who decided
 
 Each line shows the verdict, the side it was taken on (`INGRESS`/`EGRESS`), and who decided:
 
@@ -106,18 +131,21 @@ Each line shows the verdict, the side it was taken on (`INGRESS`/`EGRESS`), and 
 | `audit: would be denied by …` | Audit mode let it through; enforcement would drop it |
 | `allowed, no policy attributed by Hubble` | Allowed, but Hubble attached no policy. It doesn't prove no policy selects the endpoint, so it isn't reported as such |
 
-Kinds are Cilium's own: `CNP`, `CCNP`, or spelled out (`NetworkPolicy:ns/name`). Attribution needs Hubble's policy correlation, which is on by default (`hubble-network-policy-correlation-enabled`). It can also be missing for flows with no port.
+> Kinds are Cilium's own: `CNP`, `CCNP`, or spelled out (`NetworkPolicy:ns/name`). Attribution needs Hubble's policy correlation, which is on by default (`hubble-network-policy-correlation-enabled`). It can also be missing for flows with no port.
 
-In the UI's **Flows** tab, the **Policy verdicts** quick filter and the **Either side → Pod** field give the same view. Each `✎ CNP:`/`✎ CCNP:` badge opens that live policy in the **Policy Editor**, ready to fix and run through Verdict.
+### Blame in the UI
 
+In the **Flows** tab, the **Policy verdicts** quick filter and the **Either side → Pod** field give the same view. Each `✎ CNP:`/`✎ CCNP:` badge opens that live policy in the **Policy Editor**, ready to fix and run through Verdict.
+
+<div class="img-row">
 <div class="shot">
-<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — decided by</span></div>
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">flows — decided by</span></div>
 <img src="../images/ui-blame-decided-by.png" alt="Flows tab filtered to postgres policy verdicts: each row shows its direction and which policy decided it, with CNP and CCNP badges that open the live policy in the Policy Editor" />
 </div>
-
 <div class="shot">
-<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · flows — default deny</span></div>
+<div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">flows — default deny</span></div>
 <img src="../images/ui-blame-default-deny.png" alt="Internet traffic into webapp dropped with POLICY_DENIED, shown as default deny: no policy rule allows it" />
+</div>
 </div>
 
 ---
@@ -130,40 +158,88 @@ The engine. Diffs a candidate policy against live traffic — judged once agains
 guardbee verdict [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f] <candidate.yaml>... | -
 ```
 
+**Scope and sampling**
+
 | Flag | Meaning |
 |---|---|
 | `-n`, `--namespace` | Right for a CNP candidate — it can only ever affect its own namespace |
 | `-A`, `--all-namespaces` | Right for a CCNP candidate — it can span namespaces, so sampling needs to as well |
 | `--last N` / `-f`, `--follow` | Same as `flows` |
 | `--pod`, `--from-*`, `--to-*`, `--verdict`, `--drop-reason-desc`, `--type` | Same as `flows`: judge only matching flows. `--verdict` is the flow's verdict *today*, so `--verdict DROPPED` asks which of today's drops the candidate would newly allow |
-| `--show-unchanged` | Also print `UNCHANGED` rows (default: just a count) |
 | `--replace-existing` | Judge the candidate as replacing a live policy with the same kind, namespace and name, instead of adding it on top |
-| `--fail-on-dropped` | Exit `2` if any sampled flow is `NEWLY_DROPPED` |
 | `--per-policy` | Judge each CNP/CCNP document on its own: one section per policy and an overall exit code that is the worst of them. One-shot only |
+
+**Output and CI gates**
+
+| Flag | Meaning |
+|---|---|
+| `--show-unchanged` | Also print `UNCHANGED` rows (default: just a count) |
+| `--format` | Output format: `table` (default), `json` or `markdown`; `json` and `markdown` are one-shot only |
+| `--fail-on-dropped` | Exit `2` if any sampled flow is `NEWLY_DROPPED` |
 | `--fail-on-allowed` | Exit `4` if any sampled flow is `NEWLY_ALLOWED` (a dropped flow outranks it) |
 | `--fail-on-l7` | Exit `5` if any sampled flow is `L7_CHANGED` (dropped and newly allowed flows outrank it) |
 | `--min-flows N` | Exit `3` if fewer than N flows were judged (replies and not-simulated flows don't count) |
-| `--format table\|json\|markdown` | Output format; `json` and `markdown` are one-shot only |
 
-> Output is four buckets: `NEWLY_DROPPED`, `NEWLY_ALLOWED` and `L7_CHANGED` (each with a one-line plain-English reason), and `UNCHANGED`. `L7_CHANGED` means the flow is allowed at L4 either way, but the L7 proxy would check its requests against different rules; the rules are shown in brackets (`[L7 no L7 rules → ingress: HTTP GET /healthz]`). DNS queries Hubble recorded are judged one by one: a query the candidate's DNS rules would refuse is `NEWLY_DROPPED`, named in brackets (`[L7 DNS api.github.com.; egress: DNS * → egress: DNS *.example.com]`). HTTP requests Hubble recorded are judged too, against the exact Envoy rules Cilium generates, and marked `(matched by GuardBee, not Envoy)` since Envoy's own matching is C++ (`--format json`: `"l7Judge": "guardbee"`). If Hubble redacts URL queries on the cluster (`hubble-redact-http-urlquery`), or the `cilium-config` ConfigMap can't be read to check, HTTP requests are left unjudged and the row says why. See [how verdict works](how-it-works.html) for the engine mechanics.
+### Reading the output
 
-`<candidate.yaml>` may hold several `---`-separated policies, like a file for `kubectl apply -f`; they're judged together as one candidate. The items of a list document (`kind: List`, `CiliumNetworkPolicyList`, …) are judged like top-level documents, nested lists included, because `kubectl apply` applies them. On the CLI, documents of any other kind (a ConfigMap or Deployment in rendered kustomize output) are skipped and named in the output (`Not judged …` in the table and markdown, `skippedDocuments` in JSON); a Kubernetes `NetworkPolicy` is named separately, since Cilium enforces it but GuardBee does not simulate it. A file with no policy at all is an error. Pass several files, or `-` to read stdin. A CiliumNetworkPolicy without `metadata.namespace` (kustomize adds it later) can't be placed from the file alone, so pass `-n`. In the UI, a row's **Allow / Deny** button uses this: it shows the affected workload's detected identity labels, and appends a separate exception policy scoped to the labels you pick (with `enableDefaultDeny` off for that direction, so it never default-denies anything on its own). Then it re-runs the verdict.
+Every judged flow lands in one of four results. The first three come with a one-line plain-English reason.
 
-The filters are applied in Hubble's query, not to the results, so all `--last` flows match instead of a quiet destination getting a handful of the cluster-wide buffer. For example, `guardbee verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 candidate.yaml`. The UI's **Filters** section (under Scope, the same component as the Flows tab's) does the same, and each run card shows the filter it ran with. Its fields suggest values seen in earlier runs: workload pod prefixes, entities, Services, labels and ports, most-seen first. Traffic the filter leaves out isn't judged at all, so a filtered run is for investigating one path, not for signing off on a policy.
+| Result | Meaning |
+|---|---|
+| `NEWLY_DROPPED` | Allowed today; the candidate would block it |
+| `NEWLY_ALLOWED` | Blocked today; the candidate would let it through |
+| `L7_CHANGED` | Allowed at L4 either way, but the L7 proxy would check its requests against different rules, shown in brackets: `[L7 no L7 rules → ingress: HTTP GET /healthz]` |
+| `UNCHANGED` | Same decision either way; counted, listed with `--show-unchanged` |
+
+Some flows are judged request by request:
+
+- **DNS queries** Hubble recorded are judged one by one. A query the candidate's DNS rules would refuse is `NEWLY_DROPPED`, named in brackets: `[L7 DNS api.github.com.; egress: DNS * → egress: DNS *.example.com]`.
+- **HTTP requests** Hubble recorded are judged against the exact Envoy rules Cilium generates. Envoy's own matching is C++, so these rows are marked `(matched by GuardBee, not Envoy)` (`--format json`: `"l7Judge": "guardbee"`).
+- **HTTP is left unjudged,** with the reason on the row, when Hubble redacts URL queries on the cluster (`hubble-redact-http-urlquery`) or the `cilium-config` ConfigMap can't be read to check.
+
+> See [how verdict works](how-it-works.html) for the engine mechanics and its known limits.
+
+### What goes in the candidate file
+
+`<candidate.yaml>` works like a file for `kubectl apply -f`:
+
+- **Several `---`-separated policies** are judged together as one candidate. Pass several files, or `-` to read stdin.
+- **List documents** (`kind: List`, `CiliumNetworkPolicyList`, …) are judged like top-level documents, nested lists included, because `kubectl apply` applies them.
+- **Other kinds** (a ConfigMap or Deployment in rendered kustomize output) are skipped and named in the output: `Not judged …` in the table and markdown, `skippedDocuments` in JSON. A Kubernetes `NetworkPolicy` is named separately, since Cilium enforces it but GuardBee does not simulate it.
+- **A file with no policy at all** is an error.
+- **A CiliumNetworkPolicy without `metadata.namespace`** (kustomize adds it later) can't be placed from the file alone, so pass `-n`.
+
+In the UI, a row's **Allow / Deny** button uses this: it shows the affected workload's detected identity labels, and appends a separate exception policy scoped to the labels you pick (with `enableDefaultDeny` off for that direction, so it never default-denies anything on its own). Then it re-runs the verdict.
+
+### Narrowing to one path
+
+The filters are applied in Hubble's query, not to the results, so all `--last` flows match instead of a quiet destination getting a handful of the cluster-wide buffer:
+
+```
+guardbee verdict -n myapp --to-label reserved:kube-apiserver --to-port 443 candidate.yaml
+```
+
+The UI's **Filters** section (under Scope, the same component as the Flows tab's) does the same, and each run card shows the filter it ran with. Its fields suggest values seen in earlier runs: workload pod prefixes, entities, Services, labels and ports, most-seen first.
+
+> Traffic the filter leaves out isn't judged at all, so a filtered run is for investigating one path, not for signing off on a policy.
 
 ### Editing an existing policy
 
-By default the candidate is added on top of the live policy set, including a live policy with the same name. When the candidate is an edit of a live policy, pass `--replace-existing`: the live copy is left out of the candidate side, which is what applying the edit does. Without it, rules the edit removes or narrows still allow traffic, and the regression is not reported. Matching uses the policy labels Cilium's own parser attaches (kind, namespace, name), so a same-name policy in another namespace is never replaced.
+By default the candidate is added on top of the live policy set, including a live policy with the same name. When the candidate is an edit of a live policy, pass `--replace-existing`: the live copy is left out of the candidate side, which is what applying the edit does.
+
+> Without `--replace-existing`, rules the edit removes or narrows still allow traffic, and the regression is not reported. Matching uses the policy labels Cilium's own parser attaches (kind, namespace, name), so a same-name policy in another namespace is never replaced.
 
 ### Several policies in one run
 
-By default every policy document is one merged candidate. For a rendered file with several independent policies, `--per-policy` judges each on its own against the same sampled flows (Hubble is sampled once), prints a section per policy, and exits with the worst result across them, ranked dropped (`2`), then newly allowed (`4`), then L7 changed (`5`), then too few flows (`3`), then pass:
+By default every policy document is one merged candidate. For a rendered file with several independent policies, `--per-policy` judges each on its own against the same sampled flows (Hubble is sampled once) and prints a section per policy:
 
 ```
 kustomize build overlays/prod | guardbee verdict -n myapp --per-policy --replace-existing --fail-on-dropped --min-flows 20 -
 ```
 
-`--format json` then prints `{"policies": [...], "result", "exitCode"}`, each entry the same object a single run prints, and `--format markdown` prints an overall line followed by one section per policy. The shape follows the flag, not the number of policies, so a pipeline parsing it never has to guess. Documents that aren't policies are skipped and named in the output.
+- **Exit code:** the worst result across the policies, ranked dropped (`2`), then newly allowed (`4`), then L7 changed (`5`), then too few flows (`3`), then pass.
+- **`--format json`** prints `{"policies": [...], "result", "exitCode"}`, each entry the same object a single run prints. **`--format markdown`** prints an overall line followed by one section per policy.
+- **The shape follows the flag,** not the number of policies, so a pipeline parsing it never has to guess. Documents that aren't policies are skipped and named in the output.
 
 ### Testing a `toFQDNs` candidate
 
@@ -173,7 +249,7 @@ Cilium labels an IP `fqdn:<selector>` only for selectors already in a live polic
 2. **Check that Hubble has the names.** `--to-fqdn` filters on them, so `guardbee flows -n myapp --to-fqdn api.github.com` shows flows only once the proxy has seen the lookup.
 3. **Run the candidate**, with `--replace-existing` if it edits that live policy: `guardbee verdict -n myapp --replace-existing --to-port 443 candidate.yaml`. Traffic to a name the candidate allows is `UNCHANGED` (or `NEWLY_ALLOWED`), traffic to any other name is `NEWLY_DROPPED`. A world/CIDR destination is shown with its names, `reserved:world (api.github.com)`, and each name gets a row of its own (`--format json`: `destinationNames`).
 
-A flow with no recorded names that the candidate would drop is counted **not simulated**, not reported as a drop, and `--min-flows` doesn't count it. The names are the source pod's own lookups, while Cilium labels an IP from every pod's, so a pod connecting to an IP it never looked up itself also reads as not simulated. A `toFQDNs` with no `rules.dns` anywhere in the candidate gets a warning: Cilium accepts it but can never learn the name's IPs. `examples/webapp-fqdn-with-dns-rule.yaml` shows the working shape, and the Lab's [Step 7](lab.html) walks through it on a real cluster.
+> A flow with no recorded names that the candidate would drop is counted **not simulated**, not reported as a drop, and `--min-flows` doesn't count it. The names are the source pod's own lookups, while Cilium labels an IP from every pod's, so a pod connecting to an IP it never looked up itself also reads as not simulated. A `toFQDNs` with no `rules.dns` anywhere in the candidate gets a warning: Cilium accepts it but can never learn the name's IPs. `examples/webapp-fqdn-with-dns-rule.yaml` shows the working shape, and the Lab's [Step 7](lab.html) walks through it on a real cluster.
 
 ### CI mode
 
@@ -192,9 +268,10 @@ guardbee verdict -n myapp --replace-existing --fail-on-dropped --min-flows 20 --
 | `4` | `--fail-on-allowed`: at least one sampled flow is `NEWLY_ALLOWED` (a dropped flow outranks this) |
 | `5` | `--fail-on-l7`: at least one sampled flow is `L7_CHANGED` (dropped and newly allowed flows outrank this) |
 
-`--format json` prints the same object as the UI's `POST /api/verdict`, plus `candidate`, `replacedPolicies`, `skippedDocuments`, `judgedFlows`, `minFlows`, `result` (`pass`, `dropped`, `allowed`, `l7-changed` or `insufficient-flows`) and `exitCode`. `--format markdown` prints a summary ready to post as a PR comment: a status line, the counts, a table of changed rows, and unchanged rows in a collapsed section.
+- **`--format markdown`** prints a summary ready to post as a PR comment: a status line, the counts, a table of changed rows, and unchanged rows in a collapsed section.
+- **`--format json`** prints the same object as the UI's `POST /api/verdict`, plus `candidate`, `replacedPolicies`, `skippedDocuments`, `judgedFlows`, `minFlows`, `result` (`pass`, `dropped`, `allowed`, `l7-changed` or `insufficient-flows`) and `exitCode`.
 
-A pass only covers flows that were in Hubble's buffer at run time. Always set `--min-flows` in CI: without it, an empty sample, or one where every flow is `not simulated` or a reply, has no `NEWLY_DROPPED` row and exits `0`, so a quiet namespace or a wrong `-n` reads as a clean pass. With it, that run exits `3` (inconclusive).
+> **Always set `--min-flows` in CI.** A pass only covers flows that were in Hubble's buffer at run time. Without it, an empty sample, or one where every flow is `not simulated` or a reply, has no `NEWLY_DROPPED` row and exits `0`, so a quiet namespace or a wrong `-n` reads as a clean pass. With it, that run exits `3` (inconclusive).
 
 The gate covers only the `CiliumNetworkPolicy`/`CiliumClusterwideNetworkPolicy` documents it judged, including those inside a `List`. Check the `Not judged` line (or `skippedDocuments`) for anything else in the file that `kubectl apply` would still apply, especially a Kubernetes `NetworkPolicy`, which Cilium enforces.
 
@@ -208,45 +285,53 @@ A local web UI for the same engine — pick a namespace, build or paste a candid
 guardbee ui [--addr host:port] [--enable-probes [--probe-images-file catalog.yaml | --probe-image repository:tag]]
 ```
 
-`--enable-probes` turns on connectivity tests in Verdict. The browser picks
-the probe image from a catalog the server was started with: the built-in
-vetted one by default, `--probe-images-file` to replace it, or `--probe-image`
-for exactly one image. See [Connectivity tests](tcp-probes.html).
-
-The UI has no authentication, so it listens on `127.0.0.1:4747` by default.
-Every request from another site (`Sec-Fetch-Site: cross-site` or `same-site`)
-is refused, as is a DNS name in `Host` other than `localhost` or the exact
-`--addr`, and the UI can't be framed. With a non-loopback `--addr` (`:4747`,
-`0.0.0.0:4747`, a LAN IP) it prints a warning at startup: anyone who can reach
-that address gets your kubeconfig's view of the cluster.
-
-> Calls the exact same `computeVerdictWithMode`/`fetchFlows`/`flowAttribution` functions the CLI uses — never a parallel implementation, so the UI and CLI can't disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via `go:embed` (the same pattern Argo CD's own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.
-
-Your work in progress is kept in the browser (localStorage), never sent to the cluster. The Policy Editor draft and the Verdict tab's candidate, namespace and scope auto-save, so a reload restores them. Verdict results aren't restored: they're snapshots of live traffic. **💾 Save** (Verdict candidate box or Policy Editor output) adds a named entry to **Saved policies** (header icon). From there you can reopen an entry in Verdict or the Editor, rename, duplicate or delete it, or download it as `.yaml`.
-
-From the Verdict tab, **✎ Edit in Policy Editor** (above the candidate) opens the candidate there to edit visually; **Test in Verdict Simulator** brings it back. A candidate with several policies, or with rules the visual editor can't represent (L7 HTTP/DNS rules, `toFQDNs`, TLS/SNI, scoped deny rules), stays in Verdict with the reason shown instead of losing those rules, and an unsaved editor draft is only replaced after you confirm. To import a policy into the Policy Editor, paste it into **⤢ Expand / Edit**. The text stays exactly as you typed or pasted it, and the editor updates whenever it parses. **💾 Save** inside that box saves the text itself. That includes a policy the visual editor can't represent, and a paste with several `---`-separated policies; those are saved as-is and open in Verdict.
-
-To keep the browser responsive, a graph with more than 150 nodes or 300 edges isn't drawn automatically. You'll see a message instead, naming the filters that narrow the sample, and **Draw anyway** draws it. The table under the graph still lists every row. When runs are stacked, only the 3 newest expanded runs draw their graphs; older runs have a **Show graph** button. The header shows the binary's version and the Cilium engine it embeds.
-
-Both graphs (Verdict and Flows) draw each peer as a round node labelled by
-what it is: `POD`, `HOST`, `WORLD`, `API` (kube-apiserver), `NODE`, `IP`. A
-link that reaches its destination is drawn end to end. A blocked link stops
-at a ✕ on its port label, with a faint line showing where it was going. In
-Verdict, red links are `NEWLY_DROPPED`, amber `NEWLY_ALLOWED`, green still
-allowed, and grey still blocked. In Flows, green is `FORWARDED`, red
-`DROPPED`, and amber `AUDIT` (marked `!`). Only links that matter move:
-in Verdict the links the candidate changes, and in either graph every link of
-the node you select. Everything else stays still, and nothing moves at all
-with reduced motion turned on. The connectivity test result in Verdict uses
-the same picture for its single connection, with one lane for the live
-baseline and one for the candidate.
-
-The Verdict tab puts the scope and the candidate policy side by side, with results and graphs at full width below. Every tab also works at phone width.
-
 <div class="shot">
 <div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict</span></div>
 <img src="../images/ui-verdict-layout.png" alt="Verdict tab: scope on the left, the candidate policy and Run verdict on the right, and a full-width result below with 17 newly dropped flows and the flow graph" />
 </div>
+
+The Verdict tab puts the scope and the candidate policy side by side, with results and graphs at full width below. Every tab also works at phone width.
+
+> Calls the exact same `computeVerdictWithMode`/`fetchFlows`/`flowAttribution` functions the CLI uses — never a parallel implementation, so the UI and CLI can't disagree on an answer for the same input. The React/TypeScript frontend is embedded into the binary via `go:embed` (the same pattern Argo CD's own UI uses), so the shipped artifact is one executable — no separate frontend server or Node runtime at runtime.
+
+### Who can reach it
+
+The UI has no authentication, so it listens on `127.0.0.1:4747` by default.
+
+- Every request from another site (`Sec-Fetch-Site: cross-site` or `same-site`) is refused, as is a DNS name in `Host` other than `localhost` or the exact `--addr`. The UI can't be framed.
+- With a non-loopback `--addr` (`:4747`, `0.0.0.0:4747`, a LAN IP) it prints a warning at startup: anyone who can reach that address gets your kubeconfig's view of the cluster.
+- `--enable-probes` turns on connectivity tests in Verdict. The browser picks the probe image from a catalog the server was started with: the built-in vetted one by default, `--probe-images-file` to replace it, or `--probe-image` for exactly one image. See [Connectivity tests](tcp-probes.html).
+
+### Saving your work
+
+Work in progress is kept in the browser (localStorage), never sent to the cluster.
+
+- **Auto-save:** the Policy Editor draft and the Verdict tab's candidate, namespace and scope survive a reload. Verdict results aren't restored: they're snapshots of live traffic.
+- **💾 Save** (Verdict candidate box or Policy Editor output) adds a named entry to **Saved policies** (header icon). From there you can reopen an entry in Verdict or the Editor, rename, duplicate or delete it, or download it as `.yaml`.
+
+### Moving between Verdict and the Policy Editor
+
+- **✎ Edit in Policy Editor** (above the Verdict candidate) opens the candidate there to edit visually; **Test in Verdict Simulator** brings it back.
+- A candidate with several policies, or with rules the visual editor can't represent (L7 HTTP/DNS rules, `toFQDNs`, TLS/SNI, scoped deny rules), stays in Verdict with the reason shown instead of losing those rules. An unsaved editor draft is only replaced after you confirm.
+- **To import a policy** into the Policy Editor, paste it into **⤢ Expand / Edit**. The text stays exactly as you typed or pasted it, and the editor updates whenever it parses. **💾 Save** inside that box saves the text itself, including a policy the visual editor can't represent and a paste with several `---`-separated policies; those are saved as-is and open in Verdict.
+
+### Reading the graphs
+
+Both graphs (Verdict and Flows) draw each peer as a round node labelled by what it is: `POD`, `HOST`, `WORLD`, `API` (kube-apiserver), `NODE`, `IP`. A link that reaches its destination is drawn end to end. A blocked link stops at a ✕ on its port label, with a faint line showing where it was going.
+
+| Colour | In Verdict | In Flows |
+|---|---|---|
+| Red | `NEWLY_DROPPED` | `DROPPED` |
+| Amber | `NEWLY_ALLOWED` | `AUDIT` (marked `!`) |
+| Green | still allowed | `FORWARDED` |
+| Grey | still blocked | — |
+
+- **Only links that matter move:** in Verdict the links the candidate changes, and in either graph every link of the node you select. Nothing moves at all with reduced motion turned on.
+- **Large samples:** a graph with more than 150 nodes or 300 edges isn't drawn automatically, to keep the browser responsive. A message names the filters that narrow the sample, and **Draw anyway** draws it. The table under the graph still lists every row.
+- **Stacked runs:** only the 3 newest expanded runs draw their graphs; older runs have a **Show graph** button.
+- The connectivity test result in Verdict uses the same picture for its single connection, with one lane for the live baseline and one for the candidate.
+
+The header shows the binary's version and the Cilium engine it embeds.
 
 <div class="shot">
 <div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · phone width</span></div>
@@ -273,9 +358,7 @@ cilium cluster 1.20.4 (context: kind-guardbee-lab)
 
 The cluster line says `unknown` when hubble-relay can't be reached or is too old to report a version, notes when the cluster differs from the pinned engine at major.minor, and lists every version when nodes disagree (a rolling upgrade).
 
-The build version itself:
-
-| Build | Output |
+| Build | Version it prints |
 |---|---|
 | A released binary | the published tag, e.g. `v0.3.0` |
 | `mise run build` | `dev-<short-sha>`, plus `-dirty` if the working tree has uncommitted changes |
