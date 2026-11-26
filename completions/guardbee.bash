@@ -6,9 +6,9 @@ _guardbee_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     subcommands="policies flows blame verdict ui version compat"
-    common_flags="--debug -D --kubeconfig --hubble-namespace --namespace -n --all-namespaces -A"
+    common_flags="--debug -D --kubeconfig --hubble-namespace --hubble-addr --namespace -n --all-namespaces -A"
     # Flow filters (flowFilter in flows.go), shared by flows, blame and verdict.
-    filter_flags="--pod --from-pod --from-label --from-ip --to-pod --to-service --to-label --to-ip --to-port --verdict --drop-reason-desc --type"
+    filter_flags="--pod --from-pod --from-label --from-ip --to-pod --to-service --to-label --to-ip --to-port --verdict --drop-reason-desc --type --to-fqdn --http-method --http-path --http-status"
 
     if [[ "$COMP_CWORD" -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$subcommands --debug -D" -- "$cur"))
@@ -27,16 +27,16 @@ _guardbee_complete() {
             ;;
         verdict)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "$common_flags $filter_flags --last --follow -f --show-unchanged" -- "$cur"))
+                COMPREPLY=($(compgen -W "$common_flags $filter_flags --last --follow -f --show-unchanged --format --replace-existing --per-policy --fail-on-dropped --fail-on-allowed --fail-on-l7 --min-flows" -- "$cur"))
             else
                 COMPREPLY=($(compgen -f -- "$cur"))
             fi
             ;;
         ui)
-            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --hubble-namespace --addr --enable-probes --probe-image --probe-images-file" -- "$cur"))
+            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --hubble-namespace --hubble-addr --addr --enable-probes --probe-image --probe-images-file --templates-dir" -- "$cur"))
             ;;
         version)
-            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --hubble-namespace --client" -- "$cur"))
+            COMPREPLY=($(compgen -W "--debug -D --kubeconfig --hubble-namespace --hubble-addr --client" -- "$cur"))
             ;;
         compat)
             COMPREPLY=($(compgen -W "--debug -D" -- "$cur"))
