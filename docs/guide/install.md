@@ -141,3 +141,20 @@ A flake sees the commit, not the tag name. So a Nix build reports `dev-<commit>`
 ### About `inputs.nixpkgs.follows`
 
 With `follows`, GuardBee builds with your system's Go and Node instead of downloading a second nixpkgs. This works as long as your nixpkgs' Go is at least the `go` version in [`go.mod`](https://github.com/tchellomello/guardbee/blob/main/go.mod). If an older nixpkgs (for example, an older stable release) fails to build with a Go version error, remove the `follows` line. GuardBee then builds with the nixpkgs it pins in its own `flake.lock`.
+
+---
+
+## Versioning
+
+Releases are tagged `v<cilium-version>-<n>`. The first part is the Cilium version whose `pkg/policy` engine and CRD schema GuardBee embeds (`go.mod`'s `github.com/cilium/cilium`). The second part counts GuardBee releases on that engine: `v1.20.4-1` is the first release built on Cilium v1.20.4, and `v1.20.4-2` the next one without a Cilium bump. A Cilium bump starts again at `-1`. You can see which Cilium a release judges with just from its tag.
+
+The engine version and your cluster's version can still differ. `guardbee version` prints both:
+
+```
+cilium engine 1.20.4 (pinned)
+cilium cluster 1.20.4 (context: my-cluster)
+```
+
+`policies`, `flows`, `verdict` and the UI also warn when the two differ at major.minor ([#2](https://github.com/tchellomello/guardbee/issues/2)).
+
+Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the `-<n>` suffix marks a pre-release, so install from the [releases page](https://github.com/tchellomello/guardbee/releases) or the [Nix flake](#nix-flake), not `go install …@latest`.

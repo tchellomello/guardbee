@@ -1,174 +1,145 @@
-# GuardBee
-
 <p align="center">
-  <img src="docs/branding/guardbee-logo.png" alt="GuardBee Logo" width="140" />
+  <img src="docs/branding/guardbee-logo.png" alt="GuardBee" width="132" />
 </p>
 
-<h3 align="center">Ship the policy. Not the outage.</h3>
+<h1 align="center">GuardBee</h1>
 
 <p align="center">
-  Test a CiliumNetworkPolicy against what's actually happening on your cluster —
-  before it merges, not after it pages someone.
-</p>
-
-<p align="center">
-  <a href="https://tchellomello.github.io/guardbee/">Live demo</a> ·
-  <a href="https://tchellomello.github.io/guardbee/guide/index.html">Docs</a> ·
-  <a href="#roadmap">Roadmap</a> ·
-  <a href="LICENSE">License</a>
+  <b>Ship the policy. Not the outage.</b><br/>
+  See which real flows a Cilium network policy would break <i>before</i> it merges.
 </p>
 
 <p align="center">
+  <a href="https://github.com/tchellomello/guardbee/actions/workflows/ci.yml"><img src="https://github.com/tchellomello/guardbee/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/tchellomello/guardbee/releases/latest"><img src="https://img.shields.io/github/v/release/tchellomello/guardbee?label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
+</p>
+
+<p align="center">
+  <a href="https://tchellomello.github.io/guardbee/guide/lab.html"><b>Try the Lab</b></a> ·
+  <a href="https://tchellomello.github.io/guardbee/guide/videos.html">Watch the demo</a> ·
+  <a href="https://tchellomello.github.io/guardbee/guide/index.html">Docs</a> ·
+  <a href="https://tchellomello.github.io/guardbee/">Website</a>
+</p>
+
+<p align="center">
+  <a href="https://tchellomello.github.io/guardbee/guide/videos.html">
+    <img src="docs/images/lab-04-verdict-regression.png" alt="GuardBee's Verdict view: a candidate policy that allows webapp but would silently drop Prometheus's scrape and kubelet's health probe, shown as red dashed edges" width="860" />
+  </a>
 </p>
 
 ---
 
-## The problem
+A `CiliumNetworkPolicy` can pass review, pass CI and still take down
+production. It might lock a database down to "just the app" and forget the
+metrics exporter, or forget the kubelet health probe (`reserved:host`), or
+DNS. Every one of those is valid YAML. Usually the first sign is a page.
 
-A CiliumNetworkPolicy that looks correct in review can still silently break
-production: a forgotten `reserved:host` entity drops kubelet's liveness
-probe, a scoped-too-narrow selector drops an observability sidecar's
-scrape, DNS egress gets missed. None of that shows up in code review or CI
-— every one of those rules is syntactically valid YAML. The first signal is
-usually a page, not a diff.
+**GuardBee replays your cluster's real recent traffic through Cilium's own
+policy engine twice: once with today's policies, once with your
+candidate added. Then it tells you what changes.**
 
-## The solution
+```console
+$ guardbee verdict -n postgres --last 50 looks-correct.yaml
 
-GuardBee diffs a candidate `CiliumNetworkPolicy`/`CiliumClusterwideNetworkPolicy`
-against **real recent traffic** from your cluster, judged by **Cilium's own
-policy engine** (`pkg/policy` — the same code your cluster actually runs,
-embedded directly, not reimplemented). The result is a verdict: which real
-flows would newly break, which would newly be allowed, and which stay
-unchanged — before you merge, not after.
+NEWLY_DROPPED  observability/prometheus-xxxxx -> postgres/postgres-xxxxx
+  TCP:9187  (currently allowed; this candidate would start blocking it)
 
-No in-cluster agent or persisted flow store: GuardBee runs locally with your
-own kubeconfig and read-only RBAC by default. Explicitly enabled TCP/UDP connectivity tests
-are the exception: they append retained ephemeral-container entries to Pods
-and require optional additional RBAC.
+NEWLY_DROPPED  reserved:host -> postgres/postgres-xxxxx
+  TCP:5432  (currently allowed; this candidate would start blocking it)
 
-## What's here today
+50 flows sampled: 15 unchanged, 17 newly dropped, 0 newly allowed, ...
 
-Five subcommands — `policies`, `flows`, `blame`, `verdict`, and a local
-`ui` — all read-only against the cluster by default. Only the UI's explicitly
-enabled connectivity endpoint mutates Pods (see below). `verdict` is the actual engine:
-it diffs a candidate `CiliumNetworkPolicy`/`CiliumClusterwideNetworkPolicy`
-against today's live policy state, judging real recent Hubble flows against
-both, using Cilium's own `pkg/policy` engine. `blame` is for day-2
-debugging: for a pod or namespace, which live policy (or default deny)
-allowed or dropped each real flow, as Cilium itself attributed it. See the
-**[full command reference](https://tchellomello.github.io/guardbee/guide/commands.html)**
-and **[how verdict works](https://tchellomello.github.io/guardbee/guide/how-it-works.html)**
-for flag-by-flag detail, known v1 simplifications, and two real
-regressions it caught.
-
-## Install
-
-- **Release binary**: Linux and macOS tarballs on the
-  [releases page](https://github.com/tchellomello/guardbee/releases).
-- **Nix / NixOS**: the repo is a flake. Try `nix run github:tchellomello/guardbee -- version`,
-  or add it as an input to your system flake. See
-  **[Install](https://tchellomello.github.io/guardbee/guide/install.html)**
-  for NixOS, Home Manager and `nix profile`.
-- **From source**: `mise run build` (see below).
-
-## Quickstart
-
-```
-mise run build
-export KUBECONFIG=/path/to/kubeconfig
-./guardbee verdict -n your-namespace --last 50 your-candidate.yaml
-./guardbee blame your-namespace/your-pod --verdict DROPPED
-./guardbee ui
+17 real flow(s) would BREAK if this candidate merged as-is —
+review the NEWLY_DROPPED rows above before shipping it.
 ```
 
-Needs a kubeconfig with read access to your cluster — either your own, or
-the read-only service account in `kubernetes/rbac.yaml`. Full build options
-(plain Go, shell completions) and run details (RBAC,
-flag conventions) are in the
-**[Build](https://tchellomello.github.io/guardbee/guide/build.html)** and
-**[Run](https://tchellomello.github.io/guardbee/guide/run.html)** guide
-pages.
+The candidate was never applied. GuardBee reads it as a file.
 
-## Versioning
+## Why you can trust the verdict
 
-Releases are tagged `v<cilium-version>-<n>`. The first part is the Cilium version whose `pkg/policy` engine and CRD schema GuardBee embeds (`go.mod`'s `github.com/cilium/cilium`). The second part counts GuardBee releases on that engine: `v1.20.4-1` is the first release built on Cilium v1.20.4, and `v1.20.4-2` the next one without a Cilium bump. A Cilium bump starts again at `-1`. You can see which Cilium a release judges with just from its tag.
+- **It runs Cilium's code, not a reimplementation.** GuardBee embeds Cilium's
+  own `pkg/policy` engine, pinned to an exact Cilium release. The release tag
+  names it, e.g. `v1.20.4-6`.
+- **It judges real traffic.** The flows come straight from Hubble, from your
+  own cluster. Nothing is synthetic.
+- **It stays out of your cluster.** It's a single local binary that uses your
+  kubeconfig. There's no in-cluster agent and no flow database, and it's
+  read-only by default.
+- **It tells you what it can't judge.** Anything it can't simulate faithfully
+  is named, never guessed. For example, live policies using
+  `fromNodes`/`toNodes` are skipped with a warning (Hubble flows carry no node
+  labels), and a Kubernetes `NetworkPolicy` in a candidate file is listed
+  under "Not judged" (only CNP and CCNP are judged). [Known limits →](https://tchellomello.github.io/guardbee/guide/how-it-works.html)
 
-The engine version and your cluster's version can still differ. `guardbee version` prints both:
+## Get started
 
+**1. Install:** grab a [release binary](https://github.com/tchellomello/guardbee/releases/latest) (Linux and macOS, amd64 and arm64), or use Nix:
+
+```sh
+nix run github:tchellomello/guardbee -- version
 ```
-cilium engine 1.20.4 (pinned)
-cilium cluster 1.20.4 (context: my-cluster)
+
+**2. No cluster handy?** The [Lab](https://tchellomello.github.io/guardbee/guide/lab.html)
+brings up a local kind cluster with Cilium and reproduces the regression
+above, step by step:
+
+```sh
+git clone https://github.com/tchellomello/guardbee && cd guardbee
+mise run lab-up
 ```
 
-`policies`, `flows`, `verdict` and the UI also warn when the two differ at major.minor ([#2](https://github.com/tchellomello/guardbee/issues/2)).
+**3. On your own cluster** (Hubble Relay enabled, read-only RBAC in
+[`kubernetes/rbac.yaml`](kubernetes/rbac.yaml)):
 
-Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the `-<n>` suffix marks a pre-release, so install from the [releases page](https://github.com/tchellomello/guardbee/releases) or the [Nix flake](https://tchellomello.github.io/guardbee/guide/install.html), not `go install …@latest`.
+```sh
+guardbee verdict -n my-app my-candidate.yaml   # what would this break?
+guardbee ui                                     # same engine, in the browser
+```
 
-## Roadmap
+## What's in the box
 
-<a name="roadmap"></a>
+| Command | What it answers |
+|---|---|
+| [`verdict`](https://tchellomello.github.io/guardbee/guide/commands.html#verdict) | Which real flows would this candidate newly drop or newly allow? |
+| [`blame`](https://tchellomello.github.io/guardbee/guide/commands.html#blame) | Which live policy (or default deny) allowed or dropped this pod's traffic? |
+| [`flows`](https://tchellomello.github.io/guardbee/guide/commands.html#flows) | What traffic is actually hitting this namespace? Filters follow hubble's flag names. |
+| [`policies`](https://tchellomello.github.io/guardbee/guide/commands.html#policies) | Which CNPs and CCNPs are live right now? |
+| [`ui`](https://tchellomello.github.io/guardbee/guide/commands.html#ui) | All of the above in a local web UI with a graph-based policy editor. It calls the exact same functions as the CLI. |
 
-- [x] CLI verdict engine
-- [x] Web UI with a graph-based policy editor
-- [x] Egress-side evaluation (identity/CIDR/entity/port rules)
-- [x] `toFQDNs` verdicts — a candidate's selector is matched against the
-      names Hubble saw for the destination, even before it is live (needs
-      the source's DNS behind Cilium's DNS proxy; otherwise `not simulated`)
-- [x] L7 rule changes — a flow behind different HTTP/DNS proxy rules is
-      `L7_CHANGED`, not a false drop
-- [x] DNS query verdicts — each DNS query Hubble recorded is judged against
-      the candidate's DNS rules (Cilium's own matchpattern semantics)
-- [x] HTTP request verdicts — each HTTP request Hubble recorded is judged
-      against the exact Envoy rules Cilium generates (matched by GuardBee)
-- [ ] `fromNodes`/`toNodes` policies — today a live policy using them is
-      skipped and named in the UI banner / CLI warning, not simulated
-      (Hubble flows carry no node labels to match them against)
-- [ ] Kubernetes `NetworkPolicy` — Cilium enforces it, but today only
-      CNP/CCNP are simulated; a `NetworkPolicy` in a candidate file is
-      named under "Not judged" in the CLI output, not judged
-- [ ] Natural-language policy authoring — describe the intent in plain
-      English, GuardBee drafts and validates the candidate (exploring)
+`verdict` also handles L7 rules: it judges each DNS query and HTTP request
+Hubble recorded, and it handles `toFQDNs` candidates before they're live.
+`guardbee ui --enable-probes` adds opt-in, bounded
+[TCP/UDP connectivity tests](https://tchellomello.github.io/guardbee/guide/tcp-probes.html).
+That flag is the only feature that changes anything in the cluster.
+
+### Gate pull requests in CI
+
+```sh
+guardbee verdict -n my-app --fail-on-dropped --min-flows 20 --format markdown candidate.yaml
+```
+
+The command exits non-zero if a real flow would break, and `--format markdown`
+prints a summary you can post as a PR comment.
+[Exit codes and JSON output →](https://tchellomello.github.io/guardbee/guide/commands.html#ci-mode)
+
+## Documentation
+
+| | |
+|---|---|
+| [Install](https://tchellomello.github.io/guardbee/guide/install.html) | Release binaries, Nix flake (NixOS, Home Manager), versioning |
+| [Lab](https://tchellomello.github.io/guardbee/guide/lab.html) | Hands-on: catch a real regression on a local kind cluster |
+| [Zero-trust walkthrough](https://tchellomello.github.io/guardbee/guide/zero-trust-walkthrough.html) | Build a least-privilege policy up from default deny |
+| [Commands](https://tchellomello.github.io/guardbee/guide/commands.html) | Every subcommand and flag |
+| [How verdict works](https://tchellomello.github.io/guardbee/guide/how-it-works.html) | The engine, its known simplifications, real catches |
+| [Run](https://tchellomello.github.io/guardbee/guide/run.html) · [Build](https://tchellomello.github.io/guardbee/guide/build.html) | RBAC and kubeconfig · building from source |
 
 ## Contributing
 
-Issues and PRs welcome. See `AGENTS.md` for the project's architecture
-principles, known engine gotchas, and house style before making non-trivial
-changes to the verdict engine (`verdict.go`).
+Issues and PRs are welcome. Before you make a non-trivial change to the engine
+(`verdict.go`), read [`AGENTS.md`](AGENTS.md) for the architecture
+principles, the known Cilium-internals gotchas and the house style.
 
 ## License
 
-[Apache License 2.0](LICENSE).
-## Optional active connectivity tests
-
-The UI's default remains read-only. `guardbee ui --enable-probes` explicitly
-enables a
-cluster-mutating TCP/UDP test using a restricted ephemeral container in a selected
-running Pod. It requires numeric-loopback serving and additional optional RBAC.
-Each terminated ephemeral entry is immutable and remains until the Pod is
-replaced; GuardBee never removes/restarts the Pod. Cancellation stops capture
-but does not kill an injected container; the image's `timeout` bounds
-its command runtime. Targets are IP addresses or Kubernetes Service names (resolved inside the Pod);
-an external hostname is refused before injection, since no flow could be tied to it. Flow attribution is best-effort, not
-proof that a packet came from the probe. CIDR-group identity injection is
-unverified and FQDN/L7 proxy semantics are not reproduced, so those policies
-suppress probe simulation instead of producing a reassuring verdict.
-Authentication, named ports, agent-resolved services, Kubernetes NetworkPolicy
-inventory, and incomplete/lost capture likewise withhold probe predictions
-(scoped to the tested flow's source and destination namespaces, plus every
-CCNP and the candidate). A Service-name target correlates through that
-Service's ClusterIPs and EndpointSlice addresses, read from the API.
-Candidate decisions use the shared real Cilium engine; `UNCHANGED` can be still
-denied, so verdict JSON explicitly includes `baselineAllowed`/`candidateAllowed`.
-UDP requires Python 3 and sends one fixed `guardbee-connectivity-probe`
-marker, never an arbitrary payload. Confirm this unexpected application payload
-and selected operator-owned target before sending. UDP `generated` means only
-that `sendto` returned, not reachability or policy allowance; unresolved captured
-endpoints are not simulated. The legacy TCP API is retained.
-See [connectivity safety, image requirements, and API](docs/guide/tcp-probes.md).
-
-Probe images come from a catalog, never typed in the browser: the built-in
-vetted one (`probes/images.yaml`: digest-pinned netshoot for TCP/UDP, BusyBox
-for TCP), `--probe-images-file` to replace it, or `--probe-image` for one image.
-The test reports its progress live and draws the result as the path the
-traffic took through the baseline and the candidate.
+[Apache License 2.0](LICENSE)
