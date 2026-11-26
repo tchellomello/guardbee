@@ -85,6 +85,7 @@ type commonFlags struct {
 func registerCommonFlags(fs *pflag.FlagSet) *commonFlags {
 	f := &commonFlags{}
 	registerDebugFlag(fs)
+	registerHubbleNamespaceFlag(fs)
 	fs.StringVar(&f.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	fs.StringVarP(&f.namespace, "namespace", "n", "", "namespace to scope the query to; omit (or pass --all-namespaces) to query cluster-wide — needed to see the full blast radius of a CiliumClusterwideNetworkPolicy that spans more than one namespace")
 	fs.BoolVarP(&f.allNamespaces, "all-namespaces", "A", false, "query cluster-wide instead of one namespace — same effect as omitting --namespace, kept as an explicit flag for clarity (matches hubble CLI)")

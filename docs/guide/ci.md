@@ -110,9 +110,9 @@ Documents that aren't CNPs or CCNPs are skipped and named under **Not judged** i
 The job judges against a live cluster, so it needs a kubeconfig.
 
 - **Use the read-only ServiceAccount** in [`kubernetes/rbac.yaml`](https://github.com/tchellomello/guardbee/blob/main/kubernetes/rbac.yaml), not admin credentials. Store its kubeconfig as the `GUARDBEE_KUBECONFIG` secret; never commit it.
-- **Network:** by default GuardBee port-forwards to Hubble Relay *through the Kubernetes API server*, so the runner only needs to reach the API server. That needs `pods/portforward` in `cilium-system`, which the ServiceAccount includes.
-- **A runner inside the cluster** (a self-hosted runner, or Actions Runner Controller) can dial Relay's Service directly with `--hubble-addr hubble-relay.cilium-system.svc:80`, which needs no `pods` or `pods/portforward` RBAC at all.
-- **Cilium in `kube-system`?** See [Run on your cluster](run.html) for the `--hubble-addr` workaround.
+- **Network:** by default GuardBee port-forwards to Hubble Relay *through the Kubernetes API server*, so the runner only needs to reach the API server. That needs `pods/portforward` in Cilium's namespace (`kube-system` by default), which the ServiceAccount includes.
+- **A runner inside the cluster** (a self-hosted runner, or Actions Runner Controller) can dial Relay's Service directly with `--hubble-addr hubble-relay.kube-system.svc:80`, which needs no `pods` or `pods/portforward` RBAC at all.
+- **Cilium in another namespace?** Add `--hubble-namespace <namespace>` to the command, and see [Run on your cluster](run.html).
 
 > GitHub doesn't pass secrets to workflows triggered by pull requests from forks, so this gate suits repositories where policy changes come from branches, not forks.
 

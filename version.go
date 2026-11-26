@@ -34,6 +34,7 @@ func runVersion(args []string) {
 	registerDebugFlag(fs)
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	clientOnly := fs.Bool("client", false, "only print this binary's own versions; don't contact the cluster")
+	registerHubbleNamespaceFlag(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: %[1]s version [--client] [--kubeconfig <path>]
 

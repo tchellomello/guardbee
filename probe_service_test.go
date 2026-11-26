@@ -307,3 +307,36 @@ func TestProbeDebugLogsCorrelationReasonPerFlow(t *testing.T) {
 		}
 	}
 }
+
+// --hubble-namespace decides where hubble-relay is looked up: Cilium's own
+// default (kube-system) unless told otherwise. A relay in another namespace
+// must not be found by accident, and the error must name the flag.
+func TestFindHubbleRelayPodUsesHubbleNamespace(t *testing.T) {
+	saved := hubbleNamespace
+	t.Cleanup(func() { hubbleNamespace = saved })
+
+	relay := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "relay", Namespace: "cilium-system", Labels: relayLabels()},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}
+	core := fake.NewSimpleClientset(relay)
+
+	hubbleNamespace = defaultHubbleNamespace
+	if defaultHubbleNamespace != "kube-system" {
+		t.Fatalf("default hubble namespace = %q, want Cilium's own default kube-system", defaultHubbleNamespace)
+	}
+	_, err := findHubbleRelayPodContext(context.Background(), core)
+	if err == nil || !strings.Contains(err.Error(), "kube-system") || !strings.Contains(err.Error(), "--hubble-namespace") {
+		t.Fatalf("relay only in cilium-system, default namespace: got err %v, want one naming kube-system and --hubble-namespace", err)
+	}
+
+	hubbleNamespace = "cilium-system"
+	if got, err := findHubbleRelayPodContext(context.Background(), core); err != nil || got != "relay" {
+		t.Fatalf("--hubble-namespace cilium-system: got %q %v, want the relay there", got, err)
+	}
+
+	hubbleNamespace = ""
+	if _, err := findHubbleRelayPodContext(context.Background(), core); err == nil {
+		t.Fatalf("empty --hubble-namespace must be an error, not a cluster-wide pod list")
+	}
+}

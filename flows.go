@@ -32,10 +32,29 @@ import (
 )
 
 const (
-	hubbleNamespace  = "cilium-system"
 	hubbleLabel      = "k8s-app=hubble-relay"
 	hubbleRemotePort = 4245 // hubble-relay's grpc containerPort; confirmed live via the K8s API 2026-10-11
+
+	// defaultHubbleNamespace is where Cilium's Helm chart and `cilium
+	// install` put the agent, hubble-relay and the cilium-config ConfigMap
+	// unless told otherwise. Clusters that install Cilium into its own
+	// namespace (cilium-system is common) pass --hubble-namespace.
+	defaultHubbleNamespace = "kube-system"
 )
+
+// hubbleNamespace is --hubble-namespace: the namespace Cilium is installed
+// in, where hubble-relay is port-forwarded to and cilium-config is read
+// (httpverdict.go). Package-level for the same reason as hubbleAddr: it is
+// read deep inside dialHubble and the HTTP gate, and never changes within a
+// process.
+var hubbleNamespace = defaultHubbleNamespace
+
+// registerHubbleNamespaceFlag adds --hubble-namespace to every subcommand
+// that reaches hubble-relay, including through the version-skew check
+// (policies, version) and the UI.
+func registerHubbleNamespaceFlag(fs *pflag.FlagSet) {
+	fs.StringVar(&hubbleNamespace, "hubble-namespace", defaultHubbleNamespace, "namespace Cilium is installed in: where hubble-relay runs and cilium-config lives (e.g. cilium-system). Not needed with --hubble-addr, except that HTTP judging still reads cilium-config from here")
+}
 
 // runFlows streams the most recent real Hubble flows for a namespace, proving the
 // RBAC + port-forward path to hubble-relay works end to end. It does not yet judge
@@ -52,7 +71,8 @@ func runFlows(args []string) {
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: %[1]s flows [-n <namespace>|-A] [--pod|--from-*|--to-*|--verdict|--drop-reason-desc|--type ...] [--last N] [-f]
 
-Port-forwards to the cluster's hubble-relay pod (cilium-system) and streams
+Port-forwards to the cluster's hubble-relay pod (--hubble-namespace, default
+kube-system) and streams
 real flows touching that namespace (or every namespace, with
 --all-namespaces or by omitting --namespace), via Hubble's Observer.GetFlows
 gRPC API. The --pod/--from-*/--to-*/--verdict/--drop-reason-desc/--type flags narrow that,
@@ -565,7 +585,7 @@ var hubbleAddr string
 // registerHubbleAddrFlag adds --hubble-addr to a subcommand that talks to
 // hubble-relay (flows, blame, verdict).
 func registerHubbleAddrFlag(fs *pflag.FlagSet) {
-	fs.StringVar(&hubbleAddr, "hubble-addr", "", "dial hubble-relay at this host:port (plaintext gRPC) instead of port-forwarding to its pod, e.g. hubble-relay.cilium-system.svc:80 from an in-cluster runner; skips the pods and pods/portforward RBAC the port-forward needs")
+	fs.StringVar(&hubbleAddr, "hubble-addr", "", "dial hubble-relay at this host:port (plaintext gRPC) instead of port-forwarding to its pod, e.g. hubble-relay.kube-system.svc:80 from an in-cluster runner; skips the pods and pods/portforward RBAC the port-forward needs")
 }
 
 // checkHubbleAddr exits on a --hubble-addr that isn't host:port, instead of
@@ -627,9 +647,14 @@ func dialHubbleContext(ctx context.Context, core kubernetes.Interface, cfg *rest
 }
 
 func findHubbleRelayPodContext(ctx context.Context, core kubernetes.Interface) (string, error) {
+	// An empty namespace would make client-go list pods cluster-wide and
+	// pick any hubble-relay it finds, silently ignoring the setting.
+	if hubbleNamespace == "" {
+		return "", fmt.Errorf("--hubble-namespace must not be empty")
+	}
 	pods, err := core.CoreV1().Pods(hubbleNamespace).List(ctx, metav1.ListOptions{LabelSelector: hubbleLabel})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("listing hubble-relay pods in namespace %s: %w", hubbleNamespace, err)
 	}
 	// A replica on a NotReady node keeps phase Running for minutes after the
 	// node is gone (until eviction), but its Ready condition flips at once;
@@ -651,7 +676,7 @@ func findHubbleRelayPodContext(ctx context.Context, core kubernetes.Interface) (
 		slog.Default().Debug("no Ready hubble-relay replica; using a Running one", "pod", fallback)
 		return fallback, nil
 	}
-	return "", fmt.Errorf("no running hubble-relay pod found in namespace %s", hubbleNamespace)
+	return "", fmt.Errorf("no running hubble-relay pod (%s) found in namespace %s; if Cilium is installed in another namespace, pass --hubble-namespace <namespace> (or reach relay directly with --hubble-addr)", hubbleLabel, hubbleNamespace)
 }
 
 // startPortForwardContext opens a local port tunneled to the hubble-relay

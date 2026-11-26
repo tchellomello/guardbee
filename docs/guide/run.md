@@ -8,15 +8,14 @@ description: RBAC, kubeconfig, and running GuardBee's subcommands against a real
 
 ## Before you start
 
-- **Hubble and Hubble Relay enabled.** `flows`, `blame` and `verdict` read real traffic from Hubble Relay. GuardBee looks for its pods (label `k8s-app=hubble-relay`, gRPC port 4245) in the **`cilium-system`** namespace.
-- **Cilium in another namespace** (often `kube-system`)? Port-forward Relay yourself and point GuardBee at it with `--hubble-addr`:
+- **Hubble and Hubble Relay enabled.** `flows`, `blame` and `verdict` read real traffic from Hubble Relay. GuardBee port-forwards to its pods (label `k8s-app=hubble-relay`, gRPC port 4245) in the namespace Cilium is installed in: **`kube-system`** by default, Cilium's own default.
+- **Cilium in another namespace** (`cilium-system` is common)? Pass `--hubble-namespace`. It also tells GuardBee where to read `cilium-config`:
 
   ```
-  kubectl -n kube-system port-forward svc/hubble-relay 4245:80
-  guardbee verdict -n myapp --hubble-addr 127.0.0.1:4245 candidate.yaml
+  guardbee verdict -n myapp --hubble-namespace cilium-system candidate.yaml
   ```
 
-  The `cilium-config` check below is also read from `cilium-system`, so on such a cluster HTTP requests are left unjudged, and each row says why. Everything else is judged as usual.
+  Every command that reaches Relay takes it, including `policies`, `ui` and `version`, which use it for the version-skew check. If you apply `kubernetes/rbac.yaml`, change its two `namespace: kube-system` lines to match.
 
 - **A kubeconfig with read access** to your cluster — either your own, or
   a dedicated service account scoped with `kubernetes/rbac.yaml` (this
@@ -27,8 +26,8 @@ description: RBAC, kubeconfig, and running GuardBee's subcommands against a real
 | CNPs, CCNPs, `CiliumIdentity`, `CiliumEndpoint`, namespaces | `get`/`list`/`watch` |
 | Services (all namespaces) | `get` (connectivity tests resolve a Service target) + `list` (the test's Host suggestions; without it the UI suggests Services seen in flows) |
 | Kubernetes `NetworkPolicy` inventory (all namespaces) | `list` for connectivity simulation completeness checks |
-| `cilium-system` (for `hubble-relay`) | pod `get`/`list` + port-forward |
-| `cilium-system/cilium-config` ConfigMap only | `get`, read when judging HTTP requests, to check whether Hubble redacts URL queries (without it, HTTP requests are left unjudged) |
+| Cilium's namespace, `kube-system` by default (for `hubble-relay`) | pod `get`/`list` + port-forward. In `kube-system` that reaches every pod there; to avoid it, reach Relay's Service with `--hubble-addr` instead and drop these two rules |
+| `cilium-config` ConfigMap only, in Cilium's namespace | `get`, read when judging HTTP requests, to check whether Hubble redacts URL queries (without it, HTTP requests are left unjudged) |
 
 <div class="guarantee" markdown="1">
 

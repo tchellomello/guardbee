@@ -52,6 +52,7 @@ func runUI(args []string) {
 	fs.StringVar(&probeImage, "probe-image", "", "offer only this timeout/nc image (Python 3 for UDP), repository:tag or repository@sha256:digest (default: the built-in vetted image catalog)")
 	fs.StringVar(&probeImagesFile, "probe-images-file", "", "YAML/JSON catalog of probe images the UI may pick from, replacing the built-in vetted one (see probes/images.yaml)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
+	registerHubbleNamespaceFlag(fs)
 	fs.StringVar(&addr, "addr", "127.0.0.1:4747", "address to listen on")
 	fs.StringVar(&templatesDir, "templates-dir", "", "directory of generic/ingress/egress CiliumNetworkPolicy YAML presets (default: built-in templates/)")
 	fs.Usage = func() {
