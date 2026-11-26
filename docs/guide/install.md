@@ -25,7 +25,8 @@ guardbee version
 Each [release](https://github.com/tchellomello/guardbee/releases) has tarballs for `linux` and `darwin` on `amd64` and `arm64`, plus a `SHA256SUMS` file:
 
 ```
-VERSION=v1.20.4-1   # see the releases page for the latest
+# The latest release's tag, or set one from the releases page (e.g. VERSION=v1.20.4-6)
+VERSION=$(curl -fsSL https://api.github.com/repos/tchellomello/guardbee/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
 OS=linux ARCH=amd64 # or darwin / arm64
 curl -LO https://github.com/tchellomello/guardbee/releases/download/${VERSION}/guardbee_${VERSION}_${OS}_${ARCH}.tar.gz
 curl -LO https://github.com/tchellomello/guardbee/releases/download/${VERSION}/SHA256SUMS
@@ -127,7 +128,7 @@ The input URL decides what you get:
 | `url =` | You get |
 |---|---|
 | `github:tchellomello/guardbee` | The latest `main`, which updates on `nix flake update guardbee` |
-| `github:tchellomello/guardbee/v1.20.4-1` | Exactly that release, which never changes until you edit the URL |
+| `github:tchellomello/guardbee/<tag>`, e.g. `…/v1.20.4-6` | Exactly that release, which never changes until you edit the URL |
 
 To update after that, run:
 
@@ -155,6 +156,6 @@ cilium engine 1.20.4 (pinned)
 cilium cluster 1.20.4 (context: my-cluster)
 ```
 
-`policies`, `flows`, `verdict` and the UI also warn when the two differ at major.minor ([#2](https://github.com/tchellomello/guardbee/issues/2)).
+`policies`, `flows`, `blame`, `verdict` and the UI also warn when the two differ at major.minor ([#2](https://github.com/tchellomello/guardbee/issues/2)).
 
 Releases before this scheme were `v0.0.1`–`v0.0.7`. To Go's module tooling the `-<n>` suffix marks a pre-release, so install from the [releases page](https://github.com/tchellomello/guardbee/releases) or the [Nix flake](#nix-flake), not `go install …@latest`.

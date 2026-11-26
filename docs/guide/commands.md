@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: Commands
-description: GuardBee's subcommands — policies, flows, blame, verdict, ui, and version.
+description: GuardBee's subcommands — policies, flows, blame, verdict, ui, version, and compat.
 ---
 
 # Commands
@@ -16,6 +16,16 @@ Every command reads the cluster and changes nothing in it. The only exception is
 | [`verdict`](#verdict) | What would this candidate policy break or newly allow? | read-only |
 | [`ui`](#ui) | All of the above in the browser, plus a policy editor | read-only unless `--enable-probes` |
 | [`version`](#version) | Which build is this, and which Cilium does it judge with? | read-only |
+| [`compat`](#compat) | Which policy constructs does this engine refuse to judge, and why? | no cluster access |
+
+### Shared flags
+
+| Flag | Meaning |
+|---|---|
+| `--kubeconfig` | Path to kubeconfig (default: `$KUBECONFIG` or `~/.kube/config`) |
+| `-n`, `--namespace` | Namespace to scope the query to (every command except `ui`, `version` and `compat`) |
+| `-A`, `--all-namespaces` | Query cluster-wide instead of one namespace — needed to see a CCNP's full blast radius |
+| `-D`, `--debug` | Debug logging to stderr: Cilium policy distillation, HTTP requests, connectivity-test rejections, and Hubble port-forward/dial traces |
 
 ---
 
@@ -58,6 +68,8 @@ guardbee flows -A --from-ip 10.0.0.0/8 --verdict DROPPED
 | `--pod` | Only flows where a pod with this name prefix is the source **or** the destination, like `hubble observe --pod` |
 | `--from-pod`, `--from-label`, `--from-ip` | Only flows from that source: a pod name prefix, a label or entity (`k8s:app=web`, `reserved:world`), or an IP/CIDR |
 | `--to-pod`, `--to-service`, `--to-label`, `--to-ip`, `--to-port` | Only flows going to that destination, the same way |
+| `--to-fqdn` | Only flows to this DNS name, as Cilium's DNS proxy learned it (`api.github.com`, `*.example.com`) |
+| `--http-method`, `--http-path`, `--http-status` | Only HTTP requests/responses with this method, a path matching this regex (`/api/.*`), or this status code or class (`5+`, hubble's form). L7 records only exist for traffic already behind Cilium's proxy |
 | `--verdict` | Only flows with this observed verdict: `FORWARDED`, `DROPPED`, `AUDIT`, `ERROR`, `REDIRECTED`, `TRACED`, `TRANSLATED` |
 | `--drop-reason-desc` | Only flows dropped for this reason, e.g. `POLICY_DENIED`, `POLICY_DENY` (Cilium's `flow.DropReason` names) |
 | `--type` | Only events of this Hubble type: `policy-verdict`, `drop`, `trace`, `l7`, … (hubble's own names) |
@@ -285,6 +297,14 @@ A local web UI for the same engine — pick a namespace, build or paste a candid
 guardbee ui [--addr host:port] [--enable-probes [--probe-images-file catalog.yaml | --probe-image repository:tag]]
 ```
 
+| Flag | Meaning |
+|---|---|
+| `--addr host:port` | Address to listen on (default `127.0.0.1:4747`) |
+| `--enable-probes` | Opt in to [connectivity tests](tcp-probes.html), which append ephemeral containers to running Pods |
+| `--probe-images-file` | YAML/JSON catalog of probe images the UI may pick from, replacing the built-in vetted one |
+| `--probe-image` | Offer only this one image (`repository:tag` or `repository@sha256:digest`) |
+| `--templates-dir` | Directory of generic/ingress/egress CiliumNetworkPolicy YAML presets for the Policy Editor (default: the built-in `templates/`) |
+
 <div class="shot">
 <div class="shot-titlebar"><span class="shot-dot red"></span><span class="shot-dot yellow"></span><span class="shot-dot green"></span><span class="shot-label">guardbee ui · verdict</span></div>
 <img src="../images/ui-verdict-layout.png" alt="Verdict tab: scope on the left, the candidate policy and Run verdict on the right, and a full-width result below with 17 newly dropped flows and the flow graph" />
@@ -360,6 +380,37 @@ The cluster line says `unknown` when hubble-relay can't be reached or is too old
 
 | Build | Version it prints |
 |---|---|
-| A released binary | the published tag, e.g. `v0.3.0` |
+| A released binary | the published tag, e.g. `v1.20.4-6` (see [versioning](install.html#versioning)) |
 | `mise run build` | `dev-<short-sha>`, plus `-dirty` if the working tree has uncommitted changes |
 | Plain `go build` (no `-ldflags`) | `dev-unknown` |
+
+---
+
+## `compat`
+
+Lists the policy constructs this build's engine refuses to judge, which Cilium versions each applies to, and why. Needs no kubeconfig and never touches the cluster.
+
+```
+guardbee compat
+```
+
+The engine is pinned to one Cilium version. A candidate using a construct that is deprecated or removed as of that version is **rejected** rather than parsed into a verdict that would misrepresent what it actually does: Cilium's own parser silently drops some of these fields, so the policy would look fine and judge wrong. Output as of the Cilium 1.20.4 engine, trimmed:
+
+```
+guardbee: engine pinned to Cilium 1.20.4
+
+fromRequires/toRequires
+  gated: Cilium 1.20 onward
+  why:   FromRequires/ToRequires are deprecated from Cilium 1.20 onward and silently
+         dropped by ParseToCiliumRule before the real policy engine ever sees them …
+
+toPorts[].rules.l7 (generic L7 rules)
+  gated: Cilium 1.20 onward
+  why:   The generic key-value L7 rule type (PortRuleL7, L7Rules.L7) was removed …
+
+toPorts[].rules.kafka
+  gated: Cilium 1.20 onward
+  why:   Kafka-aware L7 rules (L7Rules.Kafka, kafka.PortRule) were removed …
+```
+
+The UI shows the same table in its **Compatibility** dialog (header icon), from `GET /api/compat`, so "why was this rejected" never has to be reverse-engineered from an error message. When the cluster runs a different Cilium than the engine (at major.minor), `policies`, `flows`, `blame`, `verdict` and the UI also warn about the skew, and [`version`](#version) prints both versions.

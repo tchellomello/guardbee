@@ -8,8 +8,8 @@ description: GuardBee documentation — commands, the verdict engine, building, 
 
 - **[Install](install.html)** — release binaries, or the Nix flake for NixOS,
   Home Manager and `nix profile`.
-- **[Commands](commands.html)** — what `policies`, `flows`, `verdict`, `ui`,
-  and `version` each do.
+- **[Commands](commands.html)** — what `policies`, `flows`, `blame`,
+  `verdict`, `ui`, `version` and `compat` each do.
 - **[How verdict works](how-it-works.html)** — the engine mechanics, known v1
   simplifications, and two real regressions it caught.
 - **[Build](build.html)** — building with `mise` or plain Go.

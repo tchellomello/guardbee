@@ -51,7 +51,7 @@ Prometheus scrape and kubelet's own health probe on the same pod. The
 [Lab](lab.html) walks through this exact candidate end to end:
 
 <p class="img-row">
-  <img src="../images/lab-04-verdict-regression.png" alt="Verdict tab showing 12 NEWLY_DROPPED flows for the looks-correct candidate, with red dashed edges on the flow graph" />
+  <img src="../images/lab-04-verdict-regression.png" alt="Verdict tab showing 17 NEWLY_DROPPED flows for the looks-correct candidate, with red dashed edges on the flow graph" />
   <img src="../images/lab-06-verdict-clean.png" alt="Verdict tab showing the corrected policy: zero newly dropped, zero newly allowed" />
 </p>
 

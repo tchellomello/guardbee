@@ -6,9 +6,21 @@ description: RBAC, kubeconfig, and running GuardBee's subcommands against a real
 
 # Run
 
-Needs a kubeconfig with read access to your cluster — either your own, or
-a dedicated service account scoped with `kubernetes/rbac.yaml` (this
-repo):
+## Before you start
+
+- **Hubble and Hubble Relay enabled.** `flows`, `blame` and `verdict` read real traffic from Hubble Relay. GuardBee looks for its pods (label `k8s-app=hubble-relay`, gRPC port 4245) in the **`cilium-system`** namespace.
+- **Cilium in another namespace** (often `kube-system`)? Port-forward Relay yourself and point GuardBee at it with `--hubble-addr`:
+
+  ```
+  kubectl -n kube-system port-forward svc/hubble-relay 4245:80
+  guardbee verdict -n myapp --hubble-addr 127.0.0.1:4245 candidate.yaml
+  ```
+
+  The `cilium-config` check below is also read from `cilium-system`, so on such a cluster HTTP requests are left unjudged, and each row says why. Everything else is judged as usual.
+
+- **A kubeconfig with read access** to your cluster — either your own, or
+  a dedicated service account scoped with `kubernetes/rbac.yaml` (this
+  repo):
 
 | Scope | Access |
 |---|---|
@@ -21,8 +33,8 @@ repo):
 <div class="guarantee" markdown="1">
 
 Default GuardBee commands do not change workload or policy objects. The optional connectivity-test
-backend is a deliberate exception, disabled unless explicitly enabled with an
-operator-selected image (tag or digest) and additional RBAC.
+backend is a deliberate exception, disabled unless the UI is started with
+`--enable-probes` and given additional RBAC.
 
 </div>
 
@@ -35,8 +47,10 @@ export KUBECONFIG=/path/to/kubeconfig
 ./guardbee policies -n your-namespace
 ./guardbee flows -n your-namespace --last 20
 ./guardbee policies --all-namespaces
+./guardbee blame your-namespace/your-pod --verdict DROPPED
 ./guardbee verdict -n your-namespace --last 50 your-candidate.yaml
 ./guardbee ui
+./guardbee compat
 ```
 
 ### Optional connectivity tests in Verdict
