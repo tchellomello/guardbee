@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GuardBee — Ship the policy. Not the outage.</title>
 <meta name="description" content="Test a CiliumNetworkPolicy against real cluster traffic before it merges. GuardBee: open source CLI + web UI embedding Cilium's own policy engine.">
+<meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/svg+xml" href="branding/guardbee-logo.svg">
+<!-- Sets the theme before first paint; same script as _layouts/doc.html. -->
+<script>(function(){var d=document.documentElement,t;d.classList.add('js');try{t=localStorage.getItem('cilium-theme')}catch(e){}if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';d.setAttribute('data-theme',t)})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -15,11 +18,15 @@
 
 <nav class="nav">
   <div class="nav-inner">
-    <div class="brand"><img src="branding/guardbee-logo.svg" style="width:24px;height:24px;border-radius:4px" alt="GuardBee">GUARDBEE</div>
-    <div style="display:flex;align-items:center;gap:20px">
-      <a href="guide/videos.html" style="font-size:14px;color:var(--ink-dim);text-decoration:none">Videos</a>
-      <a href="guide/index.html" style="font-size:14px;color:var(--ink-dim);text-decoration:none">Docs</a>
-      <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">View on GitHub</a>
+    <div class="brand"><img src="branding/guardbee-logo.svg" class="brand-logo" alt="GuardBee">GUARDBEE</div>
+    <div class="nav-actions">
+      <a class="nav-link optional" href="guide/videos.html">Videos</a>
+      <a class="nav-link" href="guide/index.html">Docs</a>
+      <button type="button" class="icon-btn theme-toggle" aria-label="Switch between light and dark theme" title="Switch theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      </button>
+      <a class="nav-cta" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener"><span class="hide-sm">View on </span>GitHub</a>
     </div>
   </div>
 </nav>
@@ -29,7 +36,7 @@
   <h1>Ship the policy.<br>Not <span class="accent">the outage</span>.</h1>
   <p class="sub">Test a CiliumNetworkPolicy against what's actually happening on your cluster — before it merges, not after it pages someone.</p>
   <div class="hero-ctas">
-    <a class="btn btn-primary" href="https://github.com/tchellomello/guardbee" target="_blank" rel="noopener">Try it →</a>
+    <a class="btn btn-primary" href="guide/lab.html">Try it →</a>
     <a class="btn btn-ghost" href="#demo">See it catch a real regression</a>
   </div>
   <p class="sub" style="margin-top:-8px">Go CLI + embedded web UI. One binary.<br>Your kubeconfig, read-only RBAC. No new cluster footprint.</p>
@@ -95,8 +102,8 @@
 <section class="band">
   <div class="wrap">
     <div class="section-head reveal">
-      <div style="display:flex;justify-content:center;margin-bottom:16px;">
-        <img src="branding/guardbee-logo.svg" alt="GuardBee Logo" style="width:120px;height:120px;filter:drop-shadow(0 0 16px rgba(34,233,199,0.3));border-radius:16px;">
+      <div class="intro-logo">
+        <img src="branding/guardbee-logo.svg" alt="GuardBee Logo">
       </div>
       <p class="mono-eyebrow">introducing</p>
       <h2 style="margin-top:14px">GuardBee</h2>
@@ -250,6 +257,7 @@
     vio.observe(video);
   }
 </script>
+<script src="assets/theme.js"></script>
 <script src="assets/lightbox.js"></script>
 <script src="assets/video-links.js"></script>
 

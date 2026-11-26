@@ -1,0 +1,20 @@
+# Single source for the docs sidebar and the prev/next links at the bottom
+# of every guide page (_layouts/doc.html walks this list in order). `url`
+# is the page's file name under guide/, which is how the layout recognises
+# the current page.
+- title: Get started
+  pages:
+    - { title: Overview, url: index.html }
+    - { title: Install, url: install.html }
+    - { title: Lab, url: lab.html }
+    - { title: Zero-trust lab, url: zero-trust-walkthrough.html }
+    - { title: Videos, url: videos.html }
+- title: Use it
+  pages:
+    - { title: Commands, url: commands.html }
+    - { title: Run, url: run.html }
+    - { title: Connectivity tests, url: tcp-probes.html }
+    - { title: How it works, url: how-it-works.html }
+- title: Contribute
+  pages:
+    - { title: Build, url: build.html }
