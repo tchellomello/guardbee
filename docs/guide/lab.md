@@ -627,3 +627,13 @@ mise run lab-down
 
 Deletes the `guardbee-lab` kind cluster. Nothing else on your machine was
 touched by any of the steps above.
+
+---
+
+## Next
+
+| To | Read |
+|---|---|
+| Run the same checks against your own cluster | [Run on your cluster](run.html) |
+| Fail pull requests that would break real traffic | [Gate PRs in CI](ci.html) |
+| Build a least-privilege policy from default deny, layer by layer | [Zero-trust walkthrough](zero-trust-walkthrough.html) |

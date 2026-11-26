@@ -121,18 +121,20 @@ guardbee verdict -n my-app --fail-on-dropped --min-flows 20 --format markdown ca
 
 The command exits non-zero if a real flow would break, and `--format markdown`
 prints a summary you can post as a PR comment.
-[Exit codes and JSON output →](https://tchellomello.github.io/guardbee/guide/commands.html#ci-mode)
+[A ready-made GitHub Actions workflow →](https://tchellomello.github.io/guardbee/guide/ci.html) · [Exit codes and JSON output →](https://tchellomello.github.io/guardbee/guide/commands.html#ci-mode)
 
 ## Documentation
 
 | | |
 |---|---|
+| [Quickstart](https://tchellomello.github.io/guardbee/guide/quickstart.html) | Catch a real regression on a local kind cluster in about ten minutes |
 | [Install](https://tchellomello.github.io/guardbee/guide/install.html) | Release binaries, Nix flake (NixOS, Home Manager), versioning |
-| [Lab](https://tchellomello.github.io/guardbee/guide/lab.html) | Hands-on: catch a real regression on a local kind cluster |
-| [Zero-trust walkthrough](https://tchellomello.github.io/guardbee/guide/zero-trust-walkthrough.html) | Build a least-privilege policy up from default deny |
+| [Run on your cluster](https://tchellomello.github.io/guardbee/guide/run.html) | Prerequisites, read-only RBAC, kubeconfig |
+| [Gate PRs in CI](https://tchellomello.github.io/guardbee/guide/ci.html) | A copy-paste GitHub Actions workflow that comments and fails on regressions |
+| [Lab](https://tchellomello.github.io/guardbee/guide/lab.html) · [Zero-trust walkthrough](https://tchellomello.github.io/guardbee/guide/zero-trust-walkthrough.html) | Hands-on deep dives: L7, `toFQDNs`, connectivity tests, least privilege from default deny |
 | [Commands](https://tchellomello.github.io/guardbee/guide/commands.html) | Every subcommand and flag |
-| [How verdict works](https://tchellomello.github.io/guardbee/guide/how-it-works.html) | The engine, its known simplifications, real catches |
-| [Run](https://tchellomello.github.io/guardbee/guide/run.html) · [Build](https://tchellomello.github.io/guardbee/guide/build.html) | RBAC and kubeconfig · building from source |
+| [How it works](https://tchellomello.github.io/guardbee/guide/how-it-works.html) · [FAQ](https://tchellomello.github.io/guardbee/guide/faq.html) | The engine, its known limits, how it differs from hubble, dry-run and audit mode |
+| [Build from source](https://tchellomello.github.io/guardbee/guide/build.html) | `mise` or plain Go |
 
 ## Contributing
 

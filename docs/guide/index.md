@@ -1,26 +1,29 @@
 ---
 layout: doc
 title: Guide
-description: GuardBee documentation — commands, the verdict engine, building, and running against a real cluster.
+description: GuardBee documentation — quickstart, running against your cluster, gating pull requests in CI, commands, and how the verdict engine works.
 ---
 
-# Guide
+# GuardBee docs
 
-- **[Install](install.html)** — release binaries, or the Nix flake for NixOS,
-  Home Manager and `nix profile`.
-- **[Commands](commands.html)** — what `policies`, `flows`, `blame`,
-  `verdict`, `ui`, `version` and `compat` each do.
-- **[How verdict works](how-it-works.html)** — the engine mechanics, known v1
-  simplifications, and two real regressions it caught.
-- **[Build](build.html)** — building with `mise` or plain Go.
-- **[Run](run.html)** — RBAC, kubeconfig, and running each subcommand against
-  a real cluster.
-- **[Connectivity tests](tcp-probes.html)** — explicitly authorized, bounded traffic
-  generation through an ephemeral container in an existing workload Pod.
-- **[Lab](lab.html)** — a self-paced, copy-paste lab that reproduces a real
-  catch end-to-end on your own machine, no cluster of your own required.
-- **[Zero-trust walkthrough](zero-trust-walkthrough.html)** — build an
-  accumulative least-privilege policy from full Default Deny up in the Lab,
-  proving every layer with `NEWLY_ALLOWED` verdicts and live TCP/UDP probes.
-- **[Videos](videos.html)** — direct-linkable showcase videos (full Lab
-  walkthrough and zero-trust accumulative walkthrough).
+GuardBee tells you which real flows on your cluster a CiliumNetworkPolicy would break or newly allow, before it merges — judged by Cilium's own policy engine, against traffic Hubble actually saw.
+
+## Start here
+
+<div class="guide-grid">
+<a class="guide-card" href="quickstart.html"><strong>Quickstart</strong><span>Watch it catch a real regression on a disposable local cluster. About ten minutes, no cluster of your own needed.</span><em>Try it →</em></a>
+<a class="guide-card" href="run.html"><strong>Run on your cluster</strong><span>Prerequisites, read-only RBAC, and your first verdict against real traffic.</span><em>Set up →</em></a>
+<a class="guide-card" href="ci.html"><strong>Gate PRs in CI</strong><span>Fail a pull request when a policy change would break real flows, and post the verdict as a comment.</span><em>Automate →</em></a>
+</div>
+
+## All pages
+
+| Get started | Use it | Understand it |
+|---|---|---|
+| [Quickstart](quickstart.html) | [Run on your cluster](run.html) | [How it works](how-it-works.html) |
+| [Install](install.html) | [Gate PRs in CI](ci.html) | [FAQ](faq.html) |
+| [Lab](lab.html) | [Connectivity tests](tcp-probes.html) | [Commands](commands.html) |
+| [Zero-trust walkthrough](zero-trust-walkthrough.html) | | [Build from source](build.html) |
+| [Videos](videos.html) | | |
+
+> New to it? The [Quickstart](quickstart.html) and the [Videos](videos.html) show the whole idea in a few minutes. Deciding whether it fits your team? Start with [How it works](how-it-works.html) and the [FAQ](faq.html).

@@ -143,6 +143,16 @@ A flake sees the commit, not the tag name. So a Nix build reports `dev-<commit>`
 
 With `follows`, GuardBee builds with your system's Go and Node instead of downloading a second nixpkgs. This works as long as your nixpkgs' Go is at least the `go` version in [`go.mod`](https://github.com/tchellomello/guardbee/blob/main/go.mod). If an older nixpkgs (for example, an older stable release) fails to build with a Go version error, remove the `follows` line. GuardBee then builds with the nixpkgs it pins in its own `flake.lock`.
 
+
+---
+
+## Next
+
+| To | Read |
+|---|---|
+| See it catch a real regression in about ten minutes, no cluster needed | [Quickstart](quickstart.html) |
+| Point it at your own cluster | [Run on your cluster](run.html) |
+
 ---
 
 ## Versioning

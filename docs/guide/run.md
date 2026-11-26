@@ -1,10 +1,10 @@
 ---
 layout: doc
-title: Run
+title: Run on your cluster
 description: RBAC, kubeconfig, and running GuardBee's subcommands against a real cluster.
 ---
 
-# Run
+# Run on your cluster
 
 ## Before you start
 

@@ -31,6 +31,8 @@
   --drop:#ff5d5d;
   --drop-bg:#2a0f12;
   --unchanged:#5ee8a5;
+  --allow:#ffb648;
+  --l7:#c4a1ff;
   color-scheme:dark;
 }
 :root{
@@ -63,6 +65,8 @@
     --drop:#c81e1e;
     --drop-bg:#fdecec;
     --unchanged:#11733a;
+    --allow:#a14a07;
+    --l7:#6d28d9;
     --grid-line:rgba(14,116,144,0.05);
     --shadow:0 24px 60px -24px rgba(9,22,23,0.28);
     --shadow-strong:0 30px 80px -24px rgba(9,22,23,0.35);
@@ -86,6 +90,8 @@
   --drop:#c81e1e;
   --drop-bg:#fdecec;
   --unchanged:#11733a;
+  --allow:#a14a07;
+  --l7:#6d28d9;
   --grid-line:rgba(14,116,144,0.05);
   --shadow:0 24px 60px -24px rgba(9,22,23,0.28);
   --shadow-strong:0 30px 80px -24px rgba(9,22,23,0.35);
@@ -759,3 +765,45 @@ body.docs{font-family:var(--font-sans)}
   .docs-page .pager{grid-template-columns:1fr}
   .docs-page .pager-next{grid-column:auto}
 }
+
+/* ---------- VERDICT DIAGRAM (how-it-works.md) ---------- */
+.docs-page .verdict-diagram{
+  display:flex;flex-direction:column;align-items:center;gap:6px;margin:28px 0 28px;padding:24px;
+  border:1px solid var(--line);border-radius:14px;background:var(--panel);text-align:center;
+}
+.docs-page .verdict-diagram small{display:block;font-size:13px;font-weight:400;color:var(--ink-dim);margin-top:4px}
+.docs-page .vd-source,.docs-page .vd-engine{
+  border:1px solid var(--line);border-radius:10px;padding:12px 16px;background:var(--panel-raised);font-weight:600;color:var(--ink);
+}
+.docs-page .vd-source{min-width:240px}
+.docs-page .vd-arrow{font-family:var(--font-mono);font-size:12.5px;color:var(--signal)}
+.docs-page .vd-split{display:grid;grid-template-columns:1fr 1fr;gap:14px;width:100%}
+.docs-page .vd-candidate{border-color:var(--signal)}
+.docs-page .vd-tag{
+  display:block;margin-bottom:4px;font-family:var(--font-display);font-size:10.5px;font-weight:700;
+  letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-dim);
+}
+.docs-page .vd-candidate .vd-tag{color:var(--signal)}
+.docs-page .vd-buckets{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;width:100%}
+.docs-page .vd-b{border:1px solid;border-radius:10px;padding:10px 8px;font-size:13px}
+.docs-page .vd-b b{font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:inherit;overflow-wrap:anywhere}
+.docs-page .vd-drop{color:var(--drop);border-color:var(--drop);background:color-mix(in srgb, var(--drop) 8%, transparent)}
+.docs-page .vd-allow{color:var(--allow);border-color:var(--allow);background:color-mix(in srgb, var(--allow) 8%, transparent)}
+.docs-page .vd-l7{color:var(--l7);border-color:var(--l7);background:color-mix(in srgb, var(--l7) 8%, transparent)}
+.docs-page .vd-same{color:var(--unchanged);border-color:var(--unchanged);background:color-mix(in srgb, var(--unchanged) 8%, transparent)}
+@media (max-width:600px){
+  .docs-page .verdict-diagram{padding:16px}
+  .docs-page .vd-split{grid-template-columns:1fr}
+  .docs-page .vd-buckets{grid-template-columns:1fr 1fr}
+}
+
+/* ---------- GUIDE INDEX CARDS (guide/index.md) ---------- */
+.docs-page .guide-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:0 0 28px}
+.docs-page a.guide-card{
+  display:flex;flex-direction:column;gap:6px;padding:18px 20px;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel-raised);color:var(--ink);text-decoration:none;transition:border-color .15s ease, transform .15s ease;
+}
+.docs-page a.guide-card:hover{border-color:var(--signal);transform:translateY(-2px)}
+.docs-page a.guide-card strong{font-size:17px;color:var(--ink)}
+.docs-page a.guide-card span{font-size:15px;line-height:1.5;color:var(--ink-dim)}
+.docs-page a.guide-card em{font-style:normal;font-family:var(--font-display);font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--signal);margin-top:auto;padding-top:4px}

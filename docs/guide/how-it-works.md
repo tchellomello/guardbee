@@ -13,6 +13,24 @@ a reimplementation). Flow identities come directly from Hubble's own
 resolved `Endpoint.Identity`, so no separate `CiliumIdentity` lookup is
 needed.
 
+<div class="verdict-diagram" role="img" aria-label="Real recent flows from Hubble are judged twice by Cilium's engine: once with the live policies (baseline) and once with the live policies plus your candidate. Comparing the two decisions puts each flow in one of four results: newly dropped, newly allowed, L7 changed, or unchanged.">
+  <div class="vd-source">Real recent flows<small>from Hubble Relay</small></div>
+  <div class="vd-arrow" aria-hidden="true">↓ judged twice ↓</div>
+  <div class="vd-split">
+    <div class="vd-engine"><span class="vd-tag">baseline</span>Cilium's engine<small>the live policies</small></div>
+    <div class="vd-engine vd-candidate"><span class="vd-tag">candidate</span>Cilium's engine<small>the live policies + your candidate</small></div>
+  </div>
+  <div class="vd-arrow" aria-hidden="true">↓ compare each flow's two decisions ↓</div>
+  <div class="vd-buckets">
+    <div class="vd-b vd-drop"><b>NEWLY_DROPPED</b><small>allowed → blocked</small></div>
+    <div class="vd-b vd-allow"><b>NEWLY_ALLOWED</b><small>blocked → allowed</small></div>
+    <div class="vd-b vd-l7"><b>L7_CHANGED</b><small>allowed both ways, under different L7 rules</small></div>
+    <div class="vd-b vd-same"><b>UNCHANGED</b><small>same decision</small></div>
+  </div>
+</div>
+
+Reply packets are skipped, since connection tracking allows them anyway, and a flow the engine can't judge faithfully is counted **not simulated** instead of guessed. `--replace-existing` takes a same-name live policy out of the candidate side, for when the candidate is an edit.
+
 ---
 
 ## Known v1 simplifications

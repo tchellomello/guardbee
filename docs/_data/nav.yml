@@ -5,16 +5,23 @@
 - title: Get started
   pages:
     - { title: Overview, url: index.html }
+    - { title: Quickstart, url: quickstart.html }
     - { title: Install, url: install.html }
     - { title: Lab, url: lab.html }
     - { title: Zero-trust lab, url: zero-trust-walkthrough.html }
     - { title: Videos, url: videos.html }
-- title: Use it
+- title: Guides
+  pages:
+    - { title: Run on your cluster, url: run.html }
+    - { title: Gate PRs in CI, url: ci.html }
+    - { title: Connectivity tests, url: tcp-probes.html }
+- title: Reference
   pages:
     - { title: Commands, url: commands.html }
-    - { title: Run, url: run.html }
-    - { title: Connectivity tests, url: tcp-probes.html }
+- title: Concepts
+  pages:
     - { title: How it works, url: how-it-works.html }
+    - { title: FAQ, url: faq.html }
 - title: Contribute
   pages:
-    - { title: Build, url: build.html }
+    - { title: Build from source, url: build.html }

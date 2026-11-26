@@ -1,10 +1,10 @@
 ---
 layout: doc
-title: Build
+title: Build from source
 description: Building GuardBee with mise or plain Go.
 ---
 
-# Build
+# Build from source
 
 ## Quickstart (mise)
 
