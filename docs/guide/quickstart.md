@@ -125,6 +125,7 @@ When you're done, `mise run lab-down` deletes the cluster. Nothing else on your 
 
 | To | Read |
 |---|---|
-| Go deeper on the same cluster: L7 rules, `toFQDNs`, connectivity tests | [Lab](lab.html) |
+| The same story with the UI's editor and more detail | [Lab](lab.html) |
+| Go deeper on the same cluster: connectivity tests, L7 rules, `toFQDNs` | [Lab extras](lab-extras.html) |
 | Run it against your own cluster | [Run on your cluster](run.html) |
 | Fail pull requests that would break real traffic | [Gate PRs in CI](ci.html) |

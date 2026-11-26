@@ -22,7 +22,7 @@ GuardBee tells you which real flows on your cluster a CiliumNetworkPolicy would 
 |---|---|---|
 | [Quickstart](quickstart.html) | [Run on your cluster](run.html) | [How it works](how-it-works.html) |
 | [Install](install.html) | [Gate PRs in CI](ci.html) | [FAQ](faq.html) |
-| [Lab](lab.html) | [Connectivity tests](tcp-probes.html) | [Commands](commands.html) |
+| [Lab](lab.html) · [Lab extras](lab-extras.html) | [Connectivity tests](tcp-probes.html) | [Commands](commands.html) |
 | [Zero-trust walkthrough](zero-trust-walkthrough.html) | | [Build from source](build.html) |
 | [Videos](videos.html) | | |
 
