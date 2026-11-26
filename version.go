@@ -18,6 +18,7 @@ import (
 //     never needs git installed to report its own version.
 //   - .github/workflows/release.yml sets it to the published release's own
 //     tag instead (e.g. "v0.3.0").
+//
 // Plain `go build` (no ldflags) leaves it at this fallback, which is an
 // honest answer for that case too: an ad-hoc build with no version wired in.
 var version = "dev-unknown"
@@ -35,6 +36,7 @@ func runVersion(args []string) {
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: KUBECONFIG env or ~/.kube/config)")
 	clientOnly := fs.Bool("client", false, "only print this binary's own versions; don't contact the cluster")
 	registerHubbleNamespaceFlag(fs)
+	registerHubbleAddrFlag(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: %[1]s version [--client] [--kubeconfig <path>]
 
@@ -48,6 +50,7 @@ Flags:
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
+	checkHubbleAddr("version")
 
 	fmt.Printf("%s %s\n", binName, version)
 	// Cilium engine version, not the binary's own — pinnedCiliumVersion

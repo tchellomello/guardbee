@@ -26,6 +26,7 @@ Every command reads the cluster and changes nothing in it. The only exception is
 | `-n`, `--namespace` | Namespace to scope the query to (every command except `ui`, `version` and `compat`) |
 | `-A`, `--all-namespaces` | Query cluster-wide instead of one namespace — needed to see a CCNP's full blast radius |
 | `--hubble-namespace` | Namespace Cilium is installed in, where `hubble-relay` runs and `cilium-config` lives (default `kube-system`; every command except `compat`) |
+| `--hubble-addr host:port` | Dial hubble-relay at this address (plaintext gRPC) instead of port-forwarding to its pod, so no `pods` or `pods/portforward` RBAC is needed. Every command except `compat` |
 | `-D`, `--debug` | Debug logging to stderr: Cilium policy distillation, HTTP requests, connectivity-test rejections, and Hubble port-forward/dial traces |
 
 ---
@@ -74,7 +75,6 @@ guardbee flows -A --from-ip 10.0.0.0/8 --verdict DROPPED
 | `--verdict` | Only flows with this observed verdict: `FORWARDED`, `DROPPED`, `AUDIT`, `ERROR`, `REDIRECTED`, `TRACED`, `TRANSLATED` |
 | `--drop-reason-desc` | Only flows dropped for this reason, e.g. `POLICY_DENIED`, `POLICY_DENY` (Cilium's `flow.DropReason` names) |
 | `--type` | Only events of this Hubble type: `policy-verdict`, `drop`, `trace`, `l7`, … (hubble's own names) |
-| `--hubble-addr host:port` | Dial hubble-relay at this address instead of port-forwarding to its pod. Plaintext gRPC, like the port-forward. Also on `blame` and `verdict` |
 
 ### How the filters combine
 

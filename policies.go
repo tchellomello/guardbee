@@ -29,6 +29,7 @@ func namespaceLabel(namespace string) string {
 func runPolicies(args []string) {
 	fs := pflag.NewFlagSet("policies", pflag.ExitOnError)
 	flags := registerCommonFlags(fs)
+	registerHubbleAddrFlag(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: %[1]s policies [-n <namespace>|-A]
 
@@ -42,6 +43,7 @@ Flags:
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  %[1]s policies -n testing\n  %[1]s policies --all-namespaces\n", binName)
 	}
 	_ = fs.Parse(args)
+	checkHubbleAddr("policies")
 	namespace := flags.resolveNamespace()
 
 	core, cilium, cfg, err := newClientsets(flags.kubeconfig)
