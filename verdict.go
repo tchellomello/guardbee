@@ -1432,7 +1432,7 @@ func (o verdictOwner) PolicyDebug(msg string, attrs ...any) {
 	}
 }
 func (verdictOwner) IsHost() bool                                { return false }
-func (verdictOwner) PreviousMapStateSizes() policy.MapStateSizes                   { return policy.MapStateSizes{} }
+func (verdictOwner) PreviousMapStateSizes() policy.MapStateSizes { return policy.MapStateSizes{} }
 func (verdictOwner) RegenerateIfAlive(_ *regeneration.ExternalRegenerationMetadata) <-chan bool {
 	return nil
 }
