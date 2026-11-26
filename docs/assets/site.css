@@ -199,6 +199,34 @@
   .btn-ghost{border:1px solid var(--line);color:var(--ink)}
   .btn-ghost:hover{border-color:var(--signal);color:var(--signal)}
 
+  .hero-note{color:var(--ink-dim);font-size:15px;line-height:1.6;max-width:640px}
+
+  /* Split hero: copy on the left, the demo video on the right, the four
+     steps underneath. One column, centred, below 1100px. */
+  .hero.hero-split{
+    display:grid;grid-template-columns:minmax(0,0.95fr) minmax(0,1.2fr);gap:32px 56px;align-items:center;
+    padding:72px 0 64px;text-align:left;
+  }
+  .hero-split .hero-copy{display:flex;flex-direction:column;align-items:flex-start;gap:22px}
+  .hero-split h1{font-size:clamp(40px,4.4vw,72px);max-width:none}
+  .hero-split .hero-ctas{justify-content:flex-start;margin-top:4px}
+  .hero-demo{min-width:0;scroll-margin-top:84px}
+  .hero-demo .demo-player{margin:0;max-width:none}
+  /* margin:0 auto from .demo-steps would shrink a grid item to its
+     content width (four 240px cards in a row, even on a phone). */
+  .hero .hero-steps{grid-column:1 / -1;width:100%;max-width:none;margin:8px 0 0;min-width:0}
+  @media (max-width:1099px){
+    .hero.hero-split{grid-template-columns:minmax(0,1fr);text-align:center;padding:64px 0 56px}
+    .hero-split .hero-copy{align-items:center}
+    .hero-split .hero-ctas{justify-content:center}
+    .hero-split h1{font-size:clamp(40px,8vw,72px)}
+  }
+  @media (max-width:600px){
+    .hero .hero-steps{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;text-align:left}
+    .hero .hero-steps .step-card{padding:14px}
+    .hero .hero-steps .step-card p{display:none}
+  }
+
   .hero-badges{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:4px}
   .pill{
     font-size:13px;color:var(--ink-dim);border:1px solid var(--line);background:var(--panel);
@@ -210,10 +238,10 @@
   .reveal.is-visible{opacity:1;transform:translateY(0)}
 
   /* ---------- WAR STORY ---------- */
-  .story{padding:96px 0;border-top:1px solid var(--line)}
-  .story-eyebrow{text-align:center;margin-bottom:28px}
+  .story{padding:80px 0;border-top:1px solid var(--line)}
+  .story-eyebrow{text-align:center;margin-bottom:20px}
   .story-stat{
-    font-family:var(--font-display);font-size:clamp(72px,16vw,180px);font-weight:800;
+    font-family:var(--font-display);font-size:clamp(64px,12vw,150px);font-weight:800;
     color:var(--drop);text-align:center;line-height:1;letter-spacing:-0.02em;
   }
   .story-stat .blink{display:inline-block;animation:blink 1.1s steps(1) infinite}
@@ -235,15 +263,25 @@
   .story-damage li{margin-bottom:14px;font-size:17px;color:var(--ink)}
   .story-damage li:last-child{margin-bottom:0}
   .story-damage .lede{color:var(--ink-dim);font-size:15px;margin-top:20px;border-top:1px solid var(--line);padding-top:20px}
+  /* Story in one screen: the checks and "Then it shipped." beside the damage. */
+  .story-body{display:grid;grid-template-columns:minmax(0,0.8fr) minmax(0,1.2fr);gap:48px;align-items:center;max-width:1080px;margin:48px auto 0}
+  .story-body .story-checks{margin:0}
+  .story-body .story-then{margin-top:28px;text-align:left}
+  .story-body .story-damage{margin:0;max-width:none}
+  @media (max-width:900px){
+    .story-body{grid-template-columns:minmax(0,1fr);gap:32px}
+    .story-body .story-checks{margin:0 auto}
+    .story-body .story-then{text-align:center}
+    .story-damage{padding:28px 24px}
+  }
 
   /* ---------- CARD GRID (sound familiar / why different) ---------- */
   .section-head{text-align:center;max-width:720px;margin:0 auto 48px}
   .section-head h2{font-size:clamp(28px,4vw,44px);line-height:1.2}
   .section-head p{color:var(--ink-dim);font-size:17px;margin-top:14px}
-  .intro-logo{display:flex;justify-content:center;margin-bottom:16px}
-  .intro-logo img{width:120px;height:120px;border-radius:16px;filter:drop-shadow(0 0 16px color-mix(in srgb, var(--signal) 30%, transparent))}
+  .section-head .section-title{margin-top:14px}
+  .section-head code{font-size:0.9em;color:var(--ink)}
 
-  .grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(260px,1fr));gap:20px}
   .card{
     background:var(--panel-raised);border:1px solid var(--line);border-radius:14px;padding:28px;
     transition:border-color .15s ease, transform .15s ease;
@@ -254,15 +292,30 @@
 
   .band{padding:72px 0;border-top:1px solid var(--line)}
 
-  /* ---------- ACCENT STATEMENT ---------- */
-  .statement{
-    background:var(--signal);color:var(--on-signal);padding:96px 0;text-align:center;
-  }
-  .statement h2{
-    color:var(--on-signal);font-size:clamp(30px,5vw,56px);line-height:1.25;max-width:20ch;margin-inline:auto;
-  }
-
   /* ---------- HOW IT WORKS ---------- */
+  .how-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:40px;align-items:center}
+  .how-cards{display:flex;flex-direction:column;gap:16px}
+  .how-cards .card{padding:22px 24px}
+  @media (max-width:900px){.how-grid{grid-template-columns:minmax(0,1fr)}}
+
+  /* ---------- CLOSING CALL TO ACTION ---------- */
+  .cta-grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(260px,1fr));gap:20px}
+  .cta-card{display:flex;flex-direction:column;gap:10px;color:inherit;text-decoration:none}
+  .cta-card h3{margin-bottom:0}
+  .cta-card code{
+    display:block;overflow-x:auto;white-space:nowrap;font-size:12.5px;color:var(--ink);
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+  }
+  .cta-card .go{
+    margin-top:auto;padding-top:6px;font-family:var(--font-display);font-size:12px;font-weight:700;
+    letter-spacing:0.06em;text-transform:uppercase;color:var(--signal);
+  }
+  .table-scroll{overflow-x:auto}
+  .footer-links{display:flex;gap:22px;justify-content:center;flex-wrap:wrap;margin-bottom:12px;font-size:14px}
+  .footer-links a{color:var(--ink-dim);text-decoration:none}
+  .footer-links a:hover{color:var(--signal)}
+
+  /* ---------- FLOW DIAGRAM ---------- */
   .flow{display:flex;flex-direction:column;align-items:center;gap:0;max-width:760px;margin-inline:auto}
   .flow-box{
     width:100%;background:var(--panel-raised);border:1px solid var(--line);border-radius:14px;
@@ -312,6 +365,8 @@
     border:1px solid var(--line);
     border-radius:999px;
     padding:4px 12px;
+    white-space:nowrap;
+    flex:none;
     cursor:pointer;
     transition:border-color .15s ease, color .15s ease;
   }
